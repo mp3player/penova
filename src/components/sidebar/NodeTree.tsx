@@ -13,6 +13,7 @@ import {
 import { SceneNode, ThemeId } from '../../model/scene';
 import { ShapePlugin } from '../../plugins';
 import { resolveColorHex } from '../../engine/render/themes';
+import { useI18n } from '../../i18n';
 import { NodeInspector } from './NodeInspector';
 
 interface NodeTreeProps {
@@ -63,6 +64,7 @@ export const NodeTree: React.FC<NodeTreeProps> = ({
   onDeleteNode,
   onAddChildToGroup,
 }) => {
+  const { t } = useI18n();
   return (
     <>
       {nodes.map((node, idx) => {
@@ -73,7 +75,7 @@ export const NodeTree: React.FC<NodeTreeProps> = ({
 
         let displayTitle = node.name;
         if (node.type === 'text') {
-          displayTitle = node.text.trim() || '（空文本）';
+          displayTitle = node.text.trim() || t('tree.emptyText');
         } else if (node.type === 'connector') {
           if (node.fromId && node.toId) {
             const fromN = nodeNameMap.get(node.fromId) ?? node.fromId;
@@ -82,7 +84,9 @@ export const NodeTree: React.FC<NodeTreeProps> = ({
               node.style === 'dashed' ? '-.->' : '→'
             } ${toN}${node.label ? ` (${node.label})` : ''}`;
           } else {
-            displayTitle = node.label ? `自由箭头 (${node.label})` : '自由箭头';
+            displayTitle = node.label
+              ? t('tree.freeArrowWithLabel', { label: node.label })
+              : t('tree.freeArrow');
           }
         }
 
@@ -149,7 +153,11 @@ export const NodeTree: React.FC<NodeTreeProps> = ({
                         justifyContent: 'center',
                         flexShrink: 0,
                       }}
-                      title={isExpanded ? '收起子节点' : '展开子节点'}
+                      title={
+                        isExpanded
+                          ? t('tree.collapseChildren')
+                          : t('tree.expandChildren')
+                      }
                     >
                       {isExpanded ? (
                         <ChevronDown size={13} />
@@ -209,7 +217,7 @@ export const NodeTree: React.FC<NodeTreeProps> = ({
                     style={{ width: 21, height: 21, padding: 0 }}
                     disabled={idx === 0}
                     onClick={() => onMoveNode(node.id, -1)}
-                    title="上移（调整绘制顺序）"
+                    title={t('tree.moveUp')}
                   >
                     <ArrowUp size={11} />
                   </button>
@@ -219,7 +227,7 @@ export const NodeTree: React.FC<NodeTreeProps> = ({
                     style={{ width: 21, height: 21, padding: 0 }}
                     disabled={idx === nodes.length - 1}
                     onClick={() => onMoveNode(node.id, 1)}
-                    title="下移（调整绘制顺序）"
+                    title={t('tree.moveDown')}
                   >
                     <ArrowDown size={11} />
                   </button>
@@ -228,7 +236,7 @@ export const NodeTree: React.FC<NodeTreeProps> = ({
                     className="studio-btn danger"
                     style={{ width: 21, height: 21, padding: 0 }}
                     onClick={() => onDeleteNode(node.id)}
-                    title="删除节点"
+                    title={t('tree.deleteNode')}
                   >
                     <Trash2 size={11} />
                   </button>

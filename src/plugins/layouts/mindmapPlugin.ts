@@ -22,7 +22,7 @@ import {
 
 export const mindmapPlugin: LayoutPlugin = {
   id: 'mindmap',
-  name: '思维导图',
+  name: 'Mind Map',
   category: 'diagram',
   icon: 'mindmap',
   dragMode: 'offset',

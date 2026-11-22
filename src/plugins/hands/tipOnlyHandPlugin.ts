@@ -2,7 +2,7 @@ import { HandPlugin } from '../contracts';
 
 export const tipOnlyHandPlugin: HandPlugin = {
   id: 'tip-only',
-  name: '仅笔杆',
+  name: 'Pen Only',
   draw({ ctx, screenX, screenY, presentation, colorHex, lift, alpha, penDown, velocity, tMs }) {
     if (alpha <= 0.01) return;
 

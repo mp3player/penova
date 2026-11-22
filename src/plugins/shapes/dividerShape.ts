@@ -10,7 +10,7 @@ import { clipRayToRect } from './clipHelpers';
 
 export const dividerShapePlugin: ShapePlugin = {
   id: 'divider',
-  name: '手绘分割线',
+  name: 'Divider',
   measureBox(contentW, contentH) {
     const padX = 16;
     const padY = 8;

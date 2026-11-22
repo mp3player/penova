@@ -14,9 +14,9 @@ const encoder = new TextEncoder();
 
 export const pngSequenceTarExporterPlugin: ExportPlugin = {
   id: 'png-sequence-tar',
-  name: '离线帧包 (FFmpeg .tar)',
-  shortLabel: 'FFmpeg 帧包',
-  description: '逐帧无丢帧渲染 PNG 序列与 FFmpeg 合成指令并打包为 .tar',
+  name: 'Offline Frames (FFmpeg .tar)',
+  shortLabel: 'FFmpeg Tar',
+  description: 'Render lossless PNG frame sequence and FFmpeg script into a .tar bundle',
   isSupported() {
     return typeof document !== 'undefined';
   },
@@ -79,13 +79,13 @@ export const pngSequenceTarExporterPlugin: ExportPlugin = {
       name: 'README-ffmpeg.txt',
       data: encoder.encode(
         [
-          `Penova 离线无损帧序列包 · ${source.title}`,
-          `分辨率: ${width}x${height}, 帧率: ${TAR_EXPORT_FPS} fps, 共 ${frameCount} 帧`,
+          `Penova Offline Lossless Frame Bundle · ${source.title}`,
+          `Resolution: ${width}x${height}, FPS: ${TAR_EXPORT_FPS} fps, Frames: ${frameCount}`,
           '',
-          '解压后在当前目录执行以下命令即可合成高画质 MP4：',
+          'Extract this archive and run the following command in the extracted folder to build MP4:',
           manifest.ffmpegCommand,
           '',
-          '若需同时混入本地配音或背景音乐（例如 audio.mp3）：',
+          'To mux a local voiceover or background audio track (e.g. audio.mp3):',
           `ffmpeg -framerate ${TAR_EXPORT_FPS} -i frames/frame_%05d.png -i audio.mp3 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest output_with_audio.mp4`,
         ].join('\n')
       ),
@@ -98,7 +98,7 @@ export const pngSequenceTarExporterPlugin: ExportPlugin = {
       blob: new Blob([tarBytes.slice()], { type: 'application/x-tar' }),
       filename: safeFilename(source.title, 'tar'),
       mimeType: 'application/x-tar',
-      summary: `${frameCount} 帧 @ ${TAR_EXPORT_FPS}fps`,
+      summary: `${frameCount} frames @ ${TAR_EXPORT_FPS}fps`,
     };
   },
 };

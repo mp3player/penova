@@ -8,9 +8,9 @@ import {
 
 export const posterPngExporterPlugin: ExportPlugin = {
   id: 'poster-png',
-  name: '高清成品图 (1080P PNG)',
-  shortLabel: '高清 PNG',
-  description: '瞬时导出最终板书高清无损 PNG 静态海报',
+  name: 'HD Poster (1080P PNG)',
+  shortLabel: 'HD PNG',
+  description: 'Instantly export the final board frame as a lossless 1080P PNG',
   isSupported() {
     return typeof document !== 'undefined';
   },

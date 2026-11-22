@@ -5,7 +5,7 @@ import { clipRayToRect } from './clipHelpers';
 
 export const underlineShapePlugin: ShapePlugin = {
   id: 'underline',
-  name: '双下划线',
+  name: 'Underline',
   measureBox(contentW, contentH) {
     const padX = 20;
     const padY = 14;

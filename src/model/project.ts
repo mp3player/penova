@@ -58,16 +58,20 @@ export function cloneProject(project: LessonProject): LessonProject {
 
 export function createBlankScene(
   template: LessonScene,
-  index: number
+  index: number,
+  locale: 'en' | 'zh-CN' = 'en'
 ): LessonScene {
   const uid = `${Date.now().toString(36)}-${index + 1}`;
   const isDoc = template.layoutMode === 'document';
+  const isEn = locale === 'en';
   const starterNodes: SceneNode[] = isDoc
     ? [
         createTextNode({
           id: `scene-${uid}-p1`,
-          name: '新段落',
-          text: `第 ${index + 1} 幕正文内容，可直接在右侧或文稿视图中编辑。`,
+          name: isEn ? 'New Paragraph' : '新段落',
+          text: isEn
+            ? `Scene ${index + 1} body paragraph. Edit directly in the Outline or Document tab.`
+            : `第 ${index + 1} 幕正文内容，可直接在右侧或文稿视图中编辑。`,
           align: 'left',
           indentChars: 2,
           fontSize: 21,
@@ -78,8 +82,10 @@ export function createBlankScene(
     : [
         createCardNode({
           id: `scene-${uid}-root`,
-          label: `第 ${index + 1} 幕核心主题`,
-          subtitle: '双击或展开大纲继续细化节点',
+          label: isEn ? `Scene ${index + 1} Topic` : `第 ${index + 1} 幕核心主题`,
+          subtitle: isEn
+            ? 'Double-click or expand outline to add nodes'
+            : '双击或展开大纲继续细化节点',
           role: 'root',
           color: 'yellow',
           shape: 'rounded',
@@ -88,7 +94,7 @@ export function createBlankScene(
 
   return {
     id: `scene-${uid}`,
-    title: `第 ${index + 1} 幕`,
+    title: isEn ? `Scene ${index + 1}` : `第 ${index + 1} 幕`,
     theme: template.theme,
     layoutMode: template.layoutMode,
     cameraMode: template.cameraMode,

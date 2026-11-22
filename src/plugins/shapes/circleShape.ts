@@ -6,7 +6,7 @@ import { clipRayToEllipse } from './clipHelpers';
 
 export const circleShapePlugin: ShapePlugin = {
   id: 'circle',
-  name: '椭圆圈',
+  name: 'Ellipse',
   maxTextWidth() {
     return 162;
   },

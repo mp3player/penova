@@ -34,6 +34,7 @@ import {
   CompiledProjectTimeline,
   evaluateProjectAt,
 } from '../engine/timeline/projectTimeline';
+import { useI18n } from '../i18n';
 
 interface CanvasStageProps {
   scene: LessonScene;
@@ -83,6 +84,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   onNudgeNode,
   onResetAdjustments,
 }) => {
+  const { t, pluginName } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -385,7 +387,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           zIndex: 10,
         }}
       >
-        <div className="studio-pill-group" title="默认图式布局算法">
+        <div className="studio-pill-group" title={t('canvas.layoutGroupTitle')}>
           {layouts.map((plugin) => (
             <button
               key={plugin.id}
@@ -396,12 +398,12 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
               onClick={() => onChangeLayoutMode(plugin.id)}
             >
               {renderLayoutIcon(plugin.icon)}
-              {plugin.name}
+              {pluginName(plugin.id, plugin.name)}
             </button>
           ))}
         </div>
 
-        <div className="studio-pill-group" title="智能运镜策略">
+        <div className="studio-pill-group" title={t('canvas.cameraGroupTitle')}>
           <span
             style={{
               display: 'inline-flex',
@@ -424,12 +426,12 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
                 onChangeCameraMode(camPlugin.id);
               }}
             >
-              {camPlugin.name}
+              {pluginName(camPlugin.id, camPlugin.name)}
             </button>
           ))}
         </div>
 
-        <div className="studio-pill-group" title="执笔显示">
+        <div className="studio-pill-group" title={t('canvas.handGroupTitle')}>
           <span
             style={{
               display: 'inline-flex',
@@ -449,7 +451,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
               }`}
               onClick={() => onChangeHandStyle(hand.id)}
             >
-              {hand.name}
+              {pluginName(hand.id, hand.name)}
             </button>
           ))}
         </div>
@@ -458,10 +460,12 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           type="button"
           className={`studio-btn ${soundEnabled ? 'active' : ''}`}
           onClick={onToggleSound}
-          title={soundEnabled ? '关闭粉笔书写音效' : '开启粉笔书写音效'}
+          title={
+            soundEnabled ? t('canvas.soundOnTitle') : t('canvas.soundOffTitle')
+          }
         >
           {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
-          <span>音效</span>
+          <span>{t('canvas.soundBtn')}</span>
         </button>
 
         {showReset && (
@@ -472,10 +476,10 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
               setManualCamera(null);
               onResetAdjustments();
             }}
-            title="重置拖拽节点偏移与画布视角"
+            title={t('canvas.resetAdjustmentsTitle')}
           >
             <RotateCcw size={13} />
-            重置微调
+            {t('canvas.resetAdjustmentsBtn')}
           </button>
         )}
       </div>
@@ -540,10 +544,15 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
         }}
       >
         {evalState.kind === 'transition'
-          ? `当前处于转场动画（${evalState.transitionName}） · 拖动时间轴或点击分幕标签可进入节点编辑`
+          ? t('canvas.hintTransition', {
+              name: pluginName(
+                evalState.transitionId,
+                evalState.transitionName
+              ),
+            })
           : isPlaying
-          ? '正在播放板书动画 · 按 Space 暂停并进入自由微调'
-          : '暂停时可拖拽节点微调位置、滚轮缩放画布，双击空白恢复自动运镜 · 按 Space 播放/暂停'}
+          ? t('canvas.hintPlaying')
+          : t('canvas.hintPaused')}
       </div>
     </main>
   );

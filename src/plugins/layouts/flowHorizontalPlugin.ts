@@ -5,7 +5,7 @@ import { computeDagreFlowLayout } from './dagreFlow';
 
 export const flowHorizontalPlugin: LayoutPlugin = {
   id: 'flow-horizontal',
-  name: '横向流程',
+  name: 'Horizontal Flow',
   category: 'diagram',
   icon: 'flow-lr',
   dragMode: 'offset',

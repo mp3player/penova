@@ -9,7 +9,7 @@ import {
 
 export const freeformLayoutPlugin: LayoutPlugin = {
   id: 'freeform',
-  name: '自由画布',
+  name: 'Freeform',
   category: 'basic',
   icon: 'freeform',
   dragMode: 'absolute',

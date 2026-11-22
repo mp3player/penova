@@ -29,7 +29,8 @@ import {
   saveProjectDraft,
   serializeProjectToJson,
 } from '../model/projectStorage';
-import { PRESET_PROJECTS } from '../model/presets';
+import { getPresetProjects } from '../model/presets';
+import { Locale, useI18n } from '../i18n';
 import {
   compileProjectTimeline,
   evaluateProjectAt,
@@ -47,6 +48,28 @@ export interface UseProjectWorkspaceParams {
   showToast: (msg: string) => void;
 }
 
+function isUnmodifiedPreset(
+  current: LessonProject,
+  preset: LessonProject
+): boolean {
+  if (
+    current.id !== preset.id ||
+    current.scenes.length !== preset.scenes.length ||
+    (current.subtitles && current.subtitles.length > 0)
+  ) {
+    return false;
+  }
+  const normalize = (proj: LessonProject) =>
+    proj.scenes.map((s) => ({
+      ...s,
+      aspectRatio: '16:9' as const,
+      handStyle: 'hand-chalk' as const,
+    }));
+  return (
+    JSON.stringify(normalize(current)) === JSON.stringify(normalize(preset))
+  );
+}
+
 export function useProjectWorkspace({
   tMs,
   setTMs,
@@ -55,11 +78,13 @@ export function useProjectWorkspace({
   setSelectedNodeId,
   showToast,
 }: UseProjectWorkspaceParams) {
+  const { locale, t } = useI18n();
   const [history, setHistory] = useState<HistoryState<LessonProject>>(() =>
-    createHistory(loadProjectDraft() ?? cloneProject(PRESET_PROJECTS[0]))
+    createHistory(loadProjectDraft() ?? cloneProject(getPresetProjects(locale)[0]))
   );
   const project = history.present;
   const [activeSceneIndex, setActiveSceneIndex] = useState(0);
+  const prevLocaleRef = useRef<Locale>(locale);
 
   const pendingSceneSeekRef = useRef<number | null>(null);
   const lastCoalesceRef = useRef<{ key: string | null; at: number }>({
@@ -185,11 +210,44 @@ export function useProjectWorkspace({
     [commitProject]
   );
 
+  // When switching UI language on an untouched built-in preset, swap to its localized version
+  useEffect(() => {
+    const oldLocale = prevLocaleRef.current;
+    if (oldLocale === locale) return;
+    prevLocaleRef.current = locale;
+
+    const oldPreset = getPresetProjects(oldLocale).find(
+      (p) => p.id === project.id
+    );
+    const nextPreset = getPresetProjects(locale).find(
+      (p) => p.id === project.id
+    );
+    if (!oldPreset || !nextPreset || !isUnmodifiedPreset(project, oldPreset)) {
+      return;
+    }
+
+    const cloned = cloneProject(nextPreset);
+    const currentHand = project.scenes[activeSceneIndexRef.current]?.handStyle;
+    const localized: LessonProject = {
+      ...cloned,
+      aspectRatio: project.aspectRatio,
+      scenes: cloned.scenes.map((s) => ({
+        ...s,
+        aspectRatio: project.aspectRatio,
+        handStyle: currentHand ?? s.handStyle,
+      })),
+    };
+    setHistory((prev) => ({
+      ...prev,
+      present: localized,
+    }));
+  }, [locale, project]);
+
   const applyPreset = (
     presetId: string,
     options?: { clearDraft?: boolean }
   ) => {
-    const found = PRESET_PROJECTS.find((p) => p.id === presetId);
+    const found = getPresetProjects(locale).find((p) => p.id === presetId);
     if (!found) return;
     if (options?.clearDraft) {
       clearProjectDraft();
@@ -214,7 +272,7 @@ export function useProjectWorkspace({
     setTMs(0);
     setIsPlaying(true);
     if (options?.clearDraft) {
-      showToast(`已恢复模板默认内容：${found.title}`);
+      showToast(t('toast.presetReset', { title: found.title }));
     }
   };
 
@@ -240,7 +298,8 @@ export function useProjectWorkspace({
       const nextIdx = prev.scenes.length;
       const newScene = createBlankScene(
         prev.scenes[activeSceneIndexRef.current] ?? prev.scenes[0],
-        nextIdx
+        nextIdx,
+        locale
       );
       const nextScenes = prev.scenes.map((s, i) =>
         i === prev.scenes.length - 1 && !s.transitionOut
@@ -271,7 +330,7 @@ export function useProjectWorkspace({
       if (!target) return prev;
       const cloned = cloneSceneWithDetails(target);
       cloned.id = `${target.id}-copy-${Date.now().toString(36)}`;
-      cloned.title = `${target.title}（副本）`;
+      cloned.title = `${target.title}${t('workspace.sceneCopySuffix')}`;
       cloned.transitionOut = target.transitionOut ?? {
         type:
           target.theme === 'letter-paper' ? 'page-turn' : 'chalkboard-eraser',
@@ -378,7 +437,7 @@ export function useProjectWorkspace({
       new Blob([json], { type: 'application/json;charset=utf-8' }),
       filename
     );
-    showToast(`已保存工程：${filename}`);
+    showToast(t('toast.projectSaved', { filename }));
   };
 
   const handleImportProjectJson = async (file: File) => {
@@ -394,11 +453,13 @@ export function useProjectWorkspace({
       setTMs(0);
       showToast(
         warnings.length > 0
-          ? `已导入工程（${warnings[0]}）`
-          : `已导入工程：${imported.title}`
+          ? t('toast.projectImportedWarning', { warning: warnings[0] })
+          : t('toast.projectImported', { title: imported.title })
       );
     } catch (err) {
-      showToast(err instanceof Error ? err.message : '导入工程文件失败');
+      showToast(
+        err instanceof Error ? err.message : t('toast.projectImportFailed')
+      );
     }
   };
 
@@ -419,7 +480,7 @@ export function useProjectWorkspace({
       new Blob([srt], { type: 'application/x-subrip;charset=utf-8' }),
       filename
     );
-    showToast(`已导出字幕：${filename}`);
+    showToast(t('toast.srtExported', { filename }));
   };
 
   return {

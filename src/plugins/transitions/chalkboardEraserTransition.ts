@@ -136,7 +136,7 @@ function drawFeltEraser(
 
 export const chalkboardEraserTransitionPlugin: TransitionPlugin = {
   id: 'chalkboard-eraser',
-  name: '黑板擦擦除',
+  name: 'Chalkboard Eraser',
   defaultDurationMs: 1150,
   render({ ctx, width, height, progress, fromCanvas, toCanvas }) {
     const p = Math.max(0, Math.min(1, progress));

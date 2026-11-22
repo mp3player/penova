@@ -148,6 +148,12 @@ button {
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
+.studio-select {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .studio-input:focus,
 .studio-select:focus,
 .studio-textarea:focus {

@@ -29,9 +29,9 @@ function pickSupportedMimeType(): string {
 
 export const mediaRecorderExporterPlugin: ExportPlugin = {
   id: 'mediarecorder-video',
-  name: '1080P 视频 (WebM/MP4)',
-  shortLabel: '1080P 视频',
-  description: '浏览器实时编码 1080P 全高清动画视频',
+  name: '1080P Video (WebM/MP4)',
+  shortLabel: '1080P Video',
+  description: 'Encode 1080P animation video in browser via MediaRecorder',
   isSupported() {
     return (
       typeof document !== 'undefined' && typeof MediaRecorder !== 'undefined'

@@ -11,6 +11,7 @@ import {
   CompiledProjectTimeline,
   evaluateProjectAt,
 } from '../engine/timeline/projectTimeline';
+import { useI18n } from '../i18n';
 
 interface TimelineBarProps {
   compiledProject: CompiledProjectTimeline;
@@ -44,6 +45,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
   onSeek,
   onChangeSpeed,
 }) => {
+  const { t, pluginName, transitionShort } = useI18n();
   const trackRef = useRef<HTMLDivElement | null>(null);
   const total = Math.max(1, compiledProject.totalDurationMs);
   const evalState = evaluateProjectAt(compiledProject, tMs);
@@ -102,14 +104,19 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
 
   let statusLabel = '';
   if (evalState.kind === 'transition') {
-    statusLabel = `转场切换 · ${evalState.transitionName}`;
+    statusLabel = t('timeline.statusTransition', {
+      name: pluginName(evalState.transitionId, evalState.transitionName),
+    });
   } else if (evalState.segment) {
     const segTimeline = evalState.segment.timeline;
     const localMs = evalState.localTMs;
     if (localMs >= segTimeline.outroStartMs && segTimeline.steps.length > 0) {
       statusLabel = isMultiScene
-        ? `第 ${evalState.sceneIndex + 1}/${compiledProject.segments.length} 幕 · 全景回顾`
-        : '全景回顾';
+        ? t('timeline.statusMultiOverview', {
+            current: evalState.sceneIndex + 1,
+            total: compiledProject.segments.length,
+          })
+        : t('timeline.statusOverview');
     } else if (segTimeline.steps.length > 0) {
       let sIdx = 0;
       for (let i = 0; i < segTimeline.steps.length; i++) {
@@ -117,8 +124,18 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
       }
       const stepTitle = segTimeline.steps[sIdx].step.title;
       statusLabel = isMultiScene
-        ? `第 ${evalState.sceneIndex + 1}/${compiledProject.segments.length} 幕 (${sIdx + 1}/${segTimeline.steps.length}) · ${stepTitle}`
-        : `${sIdx + 1}/${segTimeline.steps.length} · ${stepTitle}`;
+        ? t('timeline.statusMultiStep', {
+            scene: evalState.sceneIndex + 1,
+            totalScenes: compiledProject.segments.length,
+            step: sIdx + 1,
+            totalSteps: segTimeline.steps.length,
+            title: stepTitle,
+          })
+        : t('timeline.statusSingleStep', {
+            step: sIdx + 1,
+            totalSteps: segTimeline.steps.length,
+            title: stepTitle,
+          });
     } else {
       statusLabel = evalState.segment.scene.title;
     }
@@ -154,17 +171,17 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
             style={{ width: 82 }}
           >
             {isPlaying ? <Pause size={14} /> : <Play size={14} />}
-            {isPlaying ? '暂停' : '播放'}
+            {isPlaying ? t('timeline.pause') : t('timeline.play')}
           </button>
 
           <button
             type="button"
             className="studio-btn"
             onClick={onRestart}
-            title="从头重放"
+            title={t('timeline.restartTitle')}
           >
             <RotateCcw size={13} />
-            重放
+            {t('timeline.restart')}
           </button>
 
           <button
@@ -172,7 +189,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
             className="studio-btn"
             onClick={() => jumpStep(-1)}
             disabled={stepStarts.length === 0}
-            title="上一步"
+            title={t('timeline.prevStepTitle')}
           >
             <SkipBack size={13} />
           </button>
@@ -181,7 +198,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
             className="studio-btn"
             onClick={() => jumpStep(1)}
             disabled={stepStarts.length === 0}
-            title="下一步"
+            title={t('timeline.nextStepTitle')}
           >
             <SkipForward size={13} />
           </button>
@@ -201,14 +218,14 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {statusLabel && (
             <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              当前讲解：
+              {t('timeline.nowPrefix')}
               <strong style={{ color: 'var(--accent)', fontWeight: 600 }}>
                 {statusLabel}
               </strong>
             </span>
           )}
 
-          <div className="studio-pill-group" title="播放倍速">
+          <div className="studio-pill-group" title={t('timeline.speedTitle')}>
             {SPEED_OPTIONS.map((sp) => (
               <button
                 key={sp}
@@ -252,7 +269,10 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
               return (
                 <div
                   key={step.step.id}
-                  title={`第 ${idx + 1} 步：${step.step.title}`}
+                  title={t('timeline.stepTitle', {
+                    num: idx + 1,
+                    title: step.step.title,
+                  })}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     onSeek(step.startMs);
@@ -314,7 +334,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
                       : 'rgba(255, 255, 255, 0.02)',
                 }}
               >
-                全景收尾
+                {t('timeline.outroLabel')}
               </div>
             )}
           </>
@@ -331,11 +351,17 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
             const isCurrentTrans =
               evalState.kind === 'transition' &&
               evalState.fromSegment.sceneIndex === idx;
+            const transDisplayName = trans
+              ? pluginName(trans.id, trans.name)
+              : '';
 
             return (
               <React.Fragment key={seg.scene.id}>
                 <div
-                  title={`第 ${idx + 1} 幕：${seg.scene.title}`}
+                  title={t('timeline.sceneBlockTitle', {
+                    num: idx + 1,
+                    title: seg.scene.title,
+                  })}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     onSeek(seg.startMs);
@@ -389,13 +415,18 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    第 {idx + 1} 幕 · {seg.scene.title}
+                    {t('timeline.sceneBlockLabel', {
+                      num: idx + 1,
+                      title: seg.scene.title,
+                    })}
                   </span>
                 </div>
 
                 {trans && (
                   <div
-                    title={`转场：${trans.name}`}
+                    title={t('timeline.transitionBlockTitle', {
+                      name: transDisplayName,
+                    })}
                     onDoubleClick={(e) => {
                       e.stopPropagation();
                       onSeek((trans.startMs + trans.endMs) / 2);
@@ -418,7 +449,7 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
                       padding: '0 3px',
                     }}
                   >
-                    {trans.name.slice(0, 2)}
+                    {transitionShort(trans.id, transDisplayName)}
                   </div>
                 )}
               </React.Fragment>

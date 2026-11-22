@@ -3,7 +3,7 @@ import { evaluateStepCamera } from './helpers';
 
 export const autoFollowCameraPlugin: CameraPlugin = {
   id: 'auto-follow',
-  name: '智能聚焦',
+  name: 'Auto Follow',
   evaluate(ctx) {
     return evaluateStepCamera(ctx, {
       boundsMode: 'focus',

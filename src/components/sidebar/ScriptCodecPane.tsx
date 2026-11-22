@@ -2,6 +2,7 @@ import React from 'react';
 import { AlertTriangle, Info } from 'lucide-react';
 import { LessonScene } from '../../model/scene';
 import { SceneTextCodec } from '../../plugins';
+import { useI18n } from '../../i18n';
 
 interface ScriptCodecPaneProps {
   scene: LessonScene;
@@ -31,6 +32,8 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
   onBlur,
   onChange,
 }) => {
+  const { t, codecMeta } = useI18n();
+  const meta = codecMeta(codec);
   const showAtomNotice = hasNonCardNodes(scene);
 
   return (
@@ -62,9 +65,9 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
             marginBottom: 3,
           }}
         >
-          {codec.hintTitle}
+          {meta.hintTitle}
         </div>
-        {codec.hintLines.map((hint, idx) => (
+        {meta.hintLines.map((hint, idx) => (
           <div key={idx}>
             <code>{hint}</code>
           </div>
@@ -87,9 +90,7 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
           }}
         >
           <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>
-            当前包含独立文字/图形或自由箭头；直接修改此图谱脚本会将其转为标准卡片并忽略自由坐标箭头。
-          </span>
+          <span>{t('script.nonCardNotice')}</span>
         </div>
       )}
 

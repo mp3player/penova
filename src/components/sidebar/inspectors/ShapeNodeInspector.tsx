@@ -6,6 +6,7 @@ import {
   ShapeSceneNode,
 } from '../../../model/scene';
 import { ShapePlugin } from '../../../plugins';
+import { useI18n } from '../../../i18n';
 import { COLOR_OPTIONS } from '../constants';
 
 interface ShapeNodeInspectorProps {
@@ -19,6 +20,7 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
   shapeOptions,
   onUpdateNode,
 }) => {
+  const { t, pluginName } = useI18n();
   const isFixed = node.fitMode === 'fixed';
   return (
     <div
@@ -45,14 +47,18 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
             const nextShape = e.target.value as NodeShape;
             onUpdateNode(node.id, (c) =>
               c.type === 'shape'
-                ? { ...c, shape: nextShape, name: `图形 (${nextShape})` }
+                ? {
+                    ...c,
+                    shape: nextShape,
+                    name: t('inspector.shapeNamePrefix', { shape: nextShape }),
+                  }
                 : c
             );
           }}
         >
           {shapeOptions.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.name}
+              {pluginName(s.id, s.name)}
             </option>
           ))}
         </select>
@@ -69,7 +75,7 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
         >
           {COLOR_OPTIONS.map((c) => (
             <option key={c.id} value={c.id}>
-              颜色：{c.label}
+              {t('inspector.colorOption', { label: t(c.key) })}
             </option>
           ))}
         </select>
@@ -97,8 +103,8 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
             )
           }
         >
-          <option value="auto-group">随组合适配</option>
-          <option value="fixed">固定尺寸</option>
+          <option value="auto-group">{t('inspector.fitAutoGroup')}</option>
+          <option value="fixed">{t('inspector.fitFixed')}</option>
         </select>
 
         <label
@@ -122,7 +128,7 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
               )
             }
           />
-          强调
+          {t('inspector.emphasize')}
         </label>
 
         <label
@@ -144,7 +150,7 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
               )
             }
           />
-          虚线
+          {t('inspector.dashed')}
         </label>
       </div>
 
@@ -165,7 +171,7 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
               color: 'var(--text-secondary)',
             }}
           >
-            宽
+            {t('inspector.width')}
             <input
               type="number"
               className="studio-input"
@@ -194,7 +200,7 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
               color: 'var(--text-secondary)',
             }}
           >
-            高
+            {t('inspector.height')}
             <input
               type="number"
               className="studio-input"

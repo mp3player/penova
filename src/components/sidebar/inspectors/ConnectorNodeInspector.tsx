@@ -4,6 +4,7 @@ import {
   ConnectorSceneNode,
   SceneNode,
 } from '../../../model/scene';
+import { useI18n } from '../../../i18n';
 import { COLOR_OPTIONS } from '../constants';
 
 interface ConnectorNodeInspectorProps {
@@ -17,6 +18,7 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
   topVertices,
   onUpdateNode,
 }) => {
+  const { t } = useI18n();
   const isBound = Boolean(node.fromId && node.toId);
   return (
     <div
@@ -60,10 +62,10 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
             );
           }}
         >
-          <option value="__free__">起点：自由坐标</option>
+          <option value="__free__">{t('inspector.fromFree')}</option>
           {topVertices.map((v) => (
             <option key={v.id} value={v.id}>
-              起点：{v.name}
+              {t('inspector.fromNode', { name: v.name })}
             </option>
           ))}
         </select>
@@ -93,10 +95,10 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
             );
           }}
         >
-          <option value="__free__">终点：自由坐标</option>
+          <option value="__free__">{t('inspector.toFree')}</option>
           {topVertices.map((v) => (
             <option key={v.id} value={v.id}>
-              终点：{v.name}
+              {t('inspector.toNode', { name: v.name })}
             </option>
           ))}
         </select>
@@ -113,7 +115,7 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
           <input
             type="number"
             className="studio-input"
-            title="起点 X"
+            title={t('inspector.fromXTitle')}
             value={node.fromPoint?.x ?? -90}
             onChange={(e) =>
               onUpdateNode(node.id, (c) =>
@@ -133,7 +135,7 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
           <input
             type="number"
             className="studio-input"
-            title="起点 Y"
+            title={t('inspector.fromYTitle')}
             value={node.fromPoint?.y ?? 0}
             onChange={(e) =>
               onUpdateNode(node.id, (c) =>
@@ -153,7 +155,7 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
           <input
             type="number"
             className="studio-input"
-            title="终点 X"
+            title={t('inspector.toXTitle')}
             value={node.toPoint?.x ?? 90}
             onChange={(e) =>
               onUpdateNode(node.id, (c) =>
@@ -173,7 +175,7 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
           <input
             type="number"
             className="studio-input"
-            title="终点 Y"
+            title={t('inspector.toYTitle')}
             value={node.toPoint?.y ?? 0}
             onChange={(e) =>
               onUpdateNode(node.id, (c) =>
@@ -204,12 +206,14 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
                 ? {
                     ...c,
                     label,
-                    name: label ? `连线 · ${label}` : '连线箭头',
+                    name: label
+                      ? t('inspector.edgeNamePrefix', { label })
+                      : t('inspector.edgeDefaultName'),
                   }
                 : c
             );
           }}
-          placeholder="连线说明文字（可选）"
+          placeholder={t('inspector.edgeLabelPlaceholder')}
           style={{ flex: 1 }}
         />
         <select
@@ -225,7 +229,7 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
         >
           {COLOR_OPTIONS.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.label}
+              {t(c.key)}
             </option>
           ))}
         </select>
@@ -251,7 +255,7 @@ export const ConnectorNodeInspector: React.FC<ConnectorNodeInspectorProps> = ({
               )
             }
           />
-          虚线
+          {t('inspector.dashed')}
         </label>
       </div>
     </div>

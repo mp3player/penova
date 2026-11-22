@@ -10,7 +10,7 @@ const WHITEBOARD_FONT =
 
 const palette: ThemePalette = {
   id: 'whiteboard',
-  label: '白板马克笔',
+  label: 'Whiteboard',
   bgPrimary: '#fbfcfe',
   bgSecondary: '#eef2f6',
   vignetteColor: 'rgba(148, 163, 184, 0.14)',
@@ -29,7 +29,7 @@ const palette: ThemePalette = {
 
 export const whiteboardPlugin: PresentationPlugin = {
   id: 'whiteboard',
-  name: '白板马克笔',
+  name: 'Whiteboard',
   palette,
   fontFamily: WHITEBOARD_FONT,
   shadowColor: 'rgba(15, 23, 42, 0.14)',

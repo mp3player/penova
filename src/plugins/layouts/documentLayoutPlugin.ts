@@ -11,7 +11,7 @@ import {
 
 export const documentLayoutPlugin: LayoutPlugin = {
   id: 'document',
-  name: '信纸文稿',
+  name: 'Letter / Doc',
   category: 'basic',
   icon: 'document',
   dragMode: 'offset',

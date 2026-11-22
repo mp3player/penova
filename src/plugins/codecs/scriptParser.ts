@@ -378,11 +378,11 @@ export function serializeSceneToScript(scene: LessonScene): string {
 
 export const graphScriptCodec: SceneTextCodec = {
   id: 'graph-dsl',
-  label: '板书脚本',
-  hintTitle: '快速脚本语法（实时双向同步）',
+  label: 'Graph Script',
+  hintTitle: 'Quick Graph Script (Live Two-Way Sync)',
   hintLines: [
-    '# 标题 · [kind] 节点 | 副标题 {color: yellow, shape: circle}',
-    'A -> B : 关系（实线） · A -.-> B : 虚线',
+    '# Title · [kind] Label | Subtitle {color: yellow, shape: circle}',
+    'A -> B : Relation (solid) · A -.-> B : Dashed edge',
   ],
   parse: parseScriptToScene,
   serialize: serializeSceneToScript,

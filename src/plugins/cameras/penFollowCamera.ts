@@ -8,7 +8,7 @@ import {
 
 export const penFollowCameraPlugin: CameraPlugin = {
   id: 'pen-follow',
-  name: '跟写滚屏',
+  name: 'Pen Follow',
   evaluate(ctx) {
     const overviewCam = fitBounds(
       ctx.fullBounds,

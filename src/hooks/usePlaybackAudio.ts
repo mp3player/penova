@@ -10,6 +10,7 @@ import {
   AudioTrackState,
   VoiceTrackPlayer,
 } from '../engine/audio/voiceTrackPlayer';
+import { useI18n } from '../i18n';
 
 export interface UsePlaybackAudioParams {
   compiledProject: CompiledProjectTimeline;
@@ -40,6 +41,7 @@ export function usePlaybackAudio({
   onRedo,
   showToast,
 }: UsePlaybackAudioParams) {
+  const { t } = useI18n();
   const [speed, setSpeed] = useState(1);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [audioTrack, setAudioTrack] = useState<AudioTrackState | null>(null);
@@ -242,7 +244,7 @@ export function usePlaybackAudio({
       volume: 0.9,
       muted: false,
     });
-    showToast(`已导入音频：${file.name}`);
+    showToast(t('toast.audioImported', { name: file.name }));
   };
 
   return {

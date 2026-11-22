@@ -21,6 +21,7 @@ import { layoutRegistry, shapeRegistry, useRegistryList } from '../plugins';
 import { MediaTrackPane } from './sidebar/MediaTrackPane';
 import { NodeTree } from './sidebar/NodeTree';
 import { ScriptCodecPane } from './sidebar/ScriptCodecPane';
+import { useI18n } from '../i18n';
 
 interface SidebarEditorProps {
   project: LessonProject;
@@ -57,12 +58,14 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
   onRemoveAudioTrack,
   onExportSrt,
 }) => {
+  const { t, codecMeta } = useI18n();
   const layoutOptions = useRegistryList(layoutRegistry);
   const shapeOptions = useRegistryList(shapeRegistry);
   const activeLayout =
     layoutOptions.find((l) => l.id === scene.layoutMode) ??
     layoutRegistry.getOrDefault(scene.layoutMode);
   const activeCodec = activeLayout.textCodec;
+  const activeCodecMeta = activeCodec ? codecMeta(activeCodec) : null;
   const defaultShapeId = shapeOptions[0]?.id ?? 'rounded';
 
   const [tab, setTab] = useState<'outline' | 'script' | 'media'>('outline');
@@ -143,7 +146,7 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
       const isDoc = scene.layoutMode === 'document';
       newNode = createTextNode({
         id,
-        text: '新文本内容',
+        text: t('sidebar.newTextDefault'),
         color: 'white',
         align: isDoc ? 'left' : 'center',
         fontSize: isDoc ? 21 : 20,
@@ -180,10 +183,10 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
         .find((n) => typeof n.meta?.zone === 'string')?.meta?.zone;
       newNode = createCardNode({
         id,
-        label: `新知识卡片 ${
-          scene.nodes.filter((n) => n.type !== 'connector').length + 1
-        }`,
-        subtitle: '点击展开内部节点',
+        label: t('sidebar.newCardDefaultLabel', {
+          num: scene.nodes.filter((n) => n.type !== 'connector').length + 1,
+        }),
+        subtitle: t('sidebar.newCardDefaultSubtitle'),
         role: 'concept',
         color: 'cyan',
         shape: defaultShapeId,
@@ -205,7 +208,7 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
       childKind === 'text'
         ? createTextNode({
             id: childId,
-            text: '新增文字',
+            text: t('sidebar.newChildTextDefault'),
             color: 'white',
             fontSize: 15,
             maxWidth: 220,
@@ -260,9 +263,9 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
           }}
         >
           <Layers size={12} />
-          结构大纲
+          {t('sidebar.tabOutline')}
         </button>
-        {activeCodec && (
+        {activeCodec && activeCodecMeta && (
           <button
             type="button"
             className={`studio-btn ${tab === 'script' ? 'active' : ''}`}
@@ -273,7 +276,7 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
             }}
           >
             <Code2 size={12} />
-            {activeCodec.label}
+            {activeCodecMeta.label}
           </button>
         )}
         <button
@@ -286,7 +289,7 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
           }}
         >
           <Subtitles size={12} />
-          字幕音轨
+          {t('sidebar.tabMedia')}
         </button>
       </div>
 
@@ -334,7 +337,7 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
                 marginBottom: 5,
               }}
             >
-              场景标题
+              {t('sidebar.sceneTitleLabel')}
             </label>
             <input
               className="studio-input"
@@ -342,7 +345,7 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
               onChange={(e) =>
                 onUpdateScene((prev) => ({ ...prev, title: e.target.value }))
               }
-              placeholder="输入标题..."
+              placeholder={t('sidebar.sceneTitlePlaceholder')}
             />
           </div>
 
@@ -363,7 +366,7 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
                   color: 'var(--text-secondary)',
                 }}
               >
-                绘制节点树 ({scene.nodes.length})
+                {t('sidebar.nodeTreeHeading', { count: scene.nodes.length })}
               </span>
             </div>
 
@@ -380,40 +383,40 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
                 className="studio-btn"
                 onClick={() => addTopNode('text')}
                 style={{ height: 26, padding: '0 4px', fontSize: 11 }}
-                title="添加纯文字节点"
+                title={t('sidebar.addTextTitle')}
               >
                 <Plus size={11} />
-                文字
+                {t('sidebar.addTextBtn')}
               </button>
               <button
                 type="button"
                 className="studio-btn"
                 onClick={() => addTopNode('shape')}
                 style={{ height: 26, padding: '0 4px', fontSize: 11 }}
-                title="添加独立图形节点"
+                title={t('sidebar.addShapeTitle')}
               >
                 <Plus size={11} />
-                图形
+                {t('sidebar.addShapeBtn')}
               </button>
               <button
                 type="button"
                 className="studio-btn"
                 onClick={() => addTopNode('connector')}
                 style={{ height: 26, padding: '0 4px', fontSize: 11 }}
-                title="添加连线/箭头节点"
+                title={t('sidebar.addArrowTitle')}
               >
                 <Plus size={11} />
-                箭头
+                {t('sidebar.addArrowBtn')}
               </button>
               <button
                 type="button"
                 className="studio-btn"
                 onClick={() => addTopNode('card')}
                 style={{ height: 26, padding: '0 4px', fontSize: 11 }}
-                title="添加组合知识卡片"
+                title={t('sidebar.addCardTitle')}
               >
                 <Plus size={11} />
-                卡片
+                {t('sidebar.addCardBtn')}
               </button>
             </div>
 

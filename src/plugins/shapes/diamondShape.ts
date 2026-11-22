@@ -5,7 +5,7 @@ import { clipRayToDiamond } from './clipHelpers';
 
 export const diamondShapePlugin: ShapePlugin = {
   id: 'diamond',
-  name: '菱形判断',
+  name: 'Diamond',
   maxTextWidth() {
     return 168;
   },

@@ -6,7 +6,7 @@ import { clipRayToRect } from './clipHelpers';
 
 export const cloudShapePlugin: ShapePlugin = {
   id: 'cloud',
-  name: '云朵框',
+  name: 'Cloud',
   measureBox(contentW, contentH) {
     const padX = 38;
     const padY = 26;

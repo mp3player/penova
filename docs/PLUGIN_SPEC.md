@@ -1,34 +1,36 @@
-# Penova 插件架构与通用节点服务规范 (`PLUGIN_SPEC`)
+# Penova Plugin Architecture & Universal SceneNode Specification (`PLUGIN_SPEC`)
 
-Penova 采用 **两层分离** 的编译器架构：
+**English** | [简体中文](PLUGIN_SPEC.zh-CN.md)
 
-- **第一层（通用核心服务层）**：统一把一切可绘制对象抽象为 **`SceneNode` 组合节点树**（`text`、`shape`、`connector`、`group`），经 `LayoutPlugin` 排版后编译为底层绘制原语，再交由 `PresentationPlugin` 渲染与导出视频。
-- **第二层（领域封装与语法糖层，可选）**：如 [src/model/builders.ts](../src/model/builders.ts) 的 `createCardNode`、教学预设模板及 `graphScriptCodec`（`A -> B` 板书脚本），均只是在第一层之上组合 `SceneNode` 的便捷封装。
+Penova uses a **two-layer compiler architecture**:
+
+- **Core Layer (Universal Scene Service)**: Abstracts every drawable entity as a **`SceneNode` composite tree** (`text`, `shape`, `connector`, `group`), runs a `LayoutPlugin` to resolve coordinates, compiles nodes into timed strokes, and renders frames/videos via a `PresentationPlugin`.
+- **Domain Sugar Layer (Optional Helpers)**: Conveniences such as `createCardNode` in [src/model/builders.ts](../src/model/builders.ts), showcase presets, and `graphScriptCodec` (`A -> B` board script) simply assemble `SceneNode` objects on top of the core layer.
 
 ---
 
-## 一、通用场景树 (`SceneNode` IR)
+## 1. Universal Scene Tree (`SceneNode` IR)
 
-定义在 [src/model/scene.ts](../src/model/scene.ts)：
+Defined in [src/model/scene.ts](../src/model/scene.ts):
 
-| 节点类型 (`type`) | 定位 | 核心属性 |
+| Node Type (`type`) | Purpose | Key Fields |
 | :--- | :--- | :--- |
-| `text` | 纯文本节点（字、词、句、段落） | `text`、`fontSize`、`fontWeight`、`maxWidth`、`align`（`left`/`center`/`right`）、`indentChars` |
-| `shape` | 图形/装饰节点（框、圆、云、菱形、下划线、分割线） | `shape`、`fitMode`（`auto-group` 随父组适配 / `fixed` 固定宽高）、`width`、`height`、`emphasized`、`dashed` |
-| `connector` | 连线与指向箭头 | 支持绑定 `fromId` → `toId`，或独立自由坐标 `fromPoint` → `toPoint`，支持 `label` 与 `style` |
-| `group` | 组合节点（可嵌套、子元素顺序即绘制顺序） | `children: SceneNode[]`、`arrange`（`card` / `stack` / `free`）、`gap` |
+| `text` | Pure text block (word, heading, paragraph, sign-off) | `text`, `fontSize`, `fontWeight`, `maxWidth`, `align` (`left`/`center`/`right`), `indentChars` |
+| `shape` | Geometric or decorative frame/mark (box, ellipse, cloud, diamond, underline, divider) | `shape`, `fitMode` (`auto-group` wraps sibling bounds / `fixed` explicit dimensions), `width`, `height`, `emphasized`, `dashed` |
+| `connector` | Edges and arrows | Supports bound `fromId` -> `toId` or free coordinates `fromPoint` -> `toPoint`, with optional `label` & `style` |
+| `group` | Nestable container node (child array order = draw order) | `children: SceneNode[]`, `arrange` (`card` / `stack` / `free`), `gap` |
 
-> **绘制顺序由子节点数组顺序自然决定**：例如在 `card` 组合中，把 `shape` 放在 `text` 前面就是“先画框再写字”；把 `shape(underline)` 放在 `text` 后面就是“先写字再画下划线”。
+> **Paint order follows array order**: In a `card` group, putting `shape` before `text` draws the frame first and writes text inside; placing `shape(underline)` after `text` writes the label first and draws the underline afterward.
 
 ---
 
-## 二、八大插件契约
+## 2. The 8 Plugin Contracts
 
-所有公开契约与注册表统一从 [src/plugins/index.ts](../src/plugins/index.ts) 导出（接口定义见 [contracts.ts](../src/plugins/contracts.ts)）。
+All public contracts and registries are exported from [src/plugins/index.ts](../src/plugins/index.ts) (interface definitions in [contracts.ts](../src/plugins/contracts.ts)).
 
-### 1. 外形插件 (`ShapePlugin`)
+### 1. `ShapePlugin`
 
-纯几何与笔画协议，不绑定任何卡片角色或文字渲染顺序（内置提供 `rounded`、`circle`、`cloud`、`underline`、`diamond`、`divider`）：
+Pure geometry and stroke synthesis decoupled from card roles or text ordering. Built-ins: `rounded`, `circle`, `cloud`, `underline`, `diamond`, `divider`.
 
 ```ts
 export interface ShapePlugin {
@@ -54,9 +56,9 @@ export interface ShapePlugin {
 }
 ```
 
-### 2. 布局插件 (`LayoutPlugin`)
+### 2. `LayoutPlugin`
 
-接收通用 `SceneNode[]` 树，返回 `ComputedLayout`（含坐标化节点树 `nodes`、扁平检索表 `nodeMap`、可选分区框 `zones` 与包围盒 `bounds`）：
+Receives `SceneNode[]` and returns `ComputedLayout` (positioned tree `nodes`, lookup map `nodeMap`, optional zone frames `zones`, and `bounds`):
 
 ```ts
 export interface LayoutPlugin {
@@ -73,13 +75,13 @@ export interface LayoutPlugin {
 }
 ```
 
-- 通过 `helpers.measureNode(node)` 测量任意节点（`text` / `shape` / `group`），通过 `helpers.positionGroupChildren(...)` 一键展开并定位组内子节点（含自适应 `auto-group` 外框）。
-- 复用了 [src/plugins/layouts/shared.ts](../src/plugins/layouts/shared.ts) 的 `splitSceneNodes`、`buildConnectorNode` 与 `finalizeLayout`。
-- 内置提供 6 种布局：`flow-horizontal`、`flow-vertical`、`mindmap`、`concept-graph`、`document`（信纸文稿，配套 `documentScriptCodec`）、`freeform`（自由画布）。
+- Uses `helpers.measureNode(node)` to measure arbitrary nodes (`text` / `shape` / `group`) and `helpers.positionGroupChildren(...)` to expand group children (including `auto-group` frames).
+- Built-in layout utilities live in [src/plugins/layouts/shared.ts](../src/plugins/layouts/shared.ts) (`splitSceneNodes`, `buildConnectorNode`, `finalizeLayout`).
+- Built-ins: `flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, `document` (paired with `documentScriptCodec`), `freeform`.
 
-### 3. 表现形式插件 (`PresentationPlugin`)
+### 3. `PresentationPlugin`
 
-封装画板底面材质、笔刷质感、执笔造型、粒子特效与书写摩擦音色（内置提供 `chalkboard` 黑板粉笔、`whiteboard` 白板马克笔、`blueprint` 工程蓝图、`letter-paper` 信纸钢笔）：
+Encapsulates board surface texture, stroke brush look, drawing instrument illustration, particle effects, and friction sound profile. Built-ins: `chalkboard`, `whiteboard`, `blueprint`, `letter-paper`.
 
 ```ts
 export interface PresentationPlugin {
@@ -99,11 +101,11 @@ export interface PresentationPlugin {
 
 ---
 
-### 4. 字形笔画源插件 (`GlyphProviderPlugin`)
+### 4. `GlyphProviderPlugin`
 
-按 `priority` 从高到低依次解析单个字符的书写轨迹。内置提供两级链：
-1. `stroke-order-dict`（`priority: 80`）：内置拉丁字母、数字及基础汉字标准笔顺骨架，映射至字体实际墨迹 `inkBounds`，并支持通过 `registerStrokeOrderGlyphs` 批量注入扩展字库；
-2. `ink-grid-fallback`（`priority: 10`）：对字库未收录的任意 Unicode 字符自动执行 14×14 墨迹网格动量追踪兜底。
+Resolves per-character writing paths by descending `priority`. Built-in two-tier chain:
+1. `stroke-order-dict` (`priority: 80`): Latin letters, numerals, and foundational CJK stroke skeletons mapped into each glyph's measured `inkBounds`; extensible via `registerStrokeOrderGlyphs`.
+2. `ink-grid-fallback` (`priority: 10`): Automatic 14×14 momentum-guided ink grid tracing for any unmapped Unicode character.
 
 ```ts
 export interface GlyphProviderPlugin {
@@ -114,13 +116,13 @@ export interface GlyphProviderPlugin {
 }
 ```
 
-向 `glyphProviderRegistry` 注册或注销插件时，引擎会自动失效并重建字形笔画缓存。
+Registering or unregistering a glyph provider automatically invalidates and rebuilds glyph stroke caches.
 
 ---
 
-### 5. 执笔手势插件 (`HandPlugin`)
+### 5. `HandPlugin`
 
-控制屏幕空间的执笔手势与跟随微摆动画（笔尖精确锚定在 `(screenX, screenY - lift * 0.8)`）。内置提供 `hand-chalk`（手握画笔）、`hand-minimal`（极简线稿手）、`tip-only`（仅笔杆）与 `hidden`（隐藏），并导出工厂函数 `createImageHandPlugin` 支持 5 行接入自定义真实手图 PNG：
+Renders screen-space drawing hand gestures and micro-sway animation with the nib anchored at `(screenX, screenY - lift * 0.8)`. Built-ins: `hand-chalk`, `hand-minimal`, `tip-only`, `hidden`, plus the `createImageHandPlugin` factory to mount custom transparent hand PNGs:
 
 ```ts
 import { handRegistry, createImageHandPlugin } from '../plugins';
@@ -128,7 +130,7 @@ import { handRegistry, createImageHandPlugin } from '../plugins';
 handRegistry.register(
   createImageHandPlugin({
     id: 'real-hand-1',
-    name: '实拍手势',
+    name: 'Real Hand PNG',
     imageSrc: '/assets/hand-chalk.png',
     tipAnchorX: 18,
     tipAnchorY: 22,
@@ -139,9 +141,9 @@ handRegistry.register(
 
 ---
 
-### 6. 运镜策略插件 (`CameraPlugin`)
+### 6. `CameraPlugin`
 
-每帧根据时间轴状态、包围盒与当前笔尖位置计算世界坐标摄像机 `(cx, cy, zoom)`。内置提供 `auto-follow`（智能聚焦）、`progressive-fit`（渐进全景）、`static-overview`（固定全景）与 `pen-follow`（跟写滚屏，适合竖向文稿与长信书写）：
+Computes world-space camera `(cx, cy, zoom)` every frame from timeline progress, bounds, and the live nib position. Built-ins: `auto-follow`, `progressive-fit`, `static-overview`, and `pen-follow` (vertical scroll-chase director for letters and long documents):
 
 ```ts
 export interface CameraPlugin {
@@ -151,13 +153,11 @@ export interface CameraPlugin {
 }
 ```
 
-向 `cameraRegistry` 注册自定义运镜插件后，画布工具栏会自动显示并支持一键切换与导出。
-
 ---
 
-### 7. 切幕转场插件 (`TransitionPlugin`)
+### 7. `TransitionPlugin`
 
-当工程包含多幕场景（[LessonProject](../src/model/project.ts)）时，每一幕结尾可通过 `scene.transitionOut` 指定转场效果，引擎自动合成上一幕末帧 `fromCanvas` 与下一幕首帧 `toCanvas`。内置提供 `chalkboard-eraser`（黑板擦擦除）、`page-turn`（翻页滑切）、`crossfade`（柔和淡化）与 `cut`（直接硬切）：
+Blends `fromCanvas` (end of scene *i*) and `toCanvas` (start of scene *i+1*) across `scene.transitionOut` in multi-scene [LessonProject](../src/model/project.ts) timelines. Built-ins: `chalkboard-eraser`, `page-turn`, `crossfade`, `cut`.
 
 ```ts
 export interface TransitionPlugin {
@@ -168,18 +168,18 @@ export interface TransitionPlugin {
 }
 ```
 
-向 `transitionRegistry` 注册自定义转场后，分幕条（[SceneStrip](../src/components/SceneStrip.tsx)）之间的转场下拉列表与视频导出器会自动识别并应用。
+Custom transitions registered on `transitionRegistry` automatically appear in [SceneStrip](../src/components/SceneStrip.tsx) and work seamlessly in exports.
 
 ---
 
-### 8. 视频/成品导出插件 (`ExportPlugin`)
+### 8. `ExportPlugin`
 
-通过 `ExportFrameSource` 将画布逐帧渲染与输出编码完全解耦。内置提供三种零后端依赖导出插件：
-1. `mediarecorder-video`（1080P 视频：浏览器实时编码 WebM / MP4）
-2. `poster-png`（高清成品图：瞬时导出终幕无损 1080P PNG 海报）
-3. `png-sequence-tar`（离线帧包：无丢帧导出 PNG 序列、`manifest.json` 及可执行的 FFmpeg 合成指令）
+Decouples frame rendering (`ExportFrameSource`) from output encoding. Three zero-backend exporters ship out of the box:
+1. `mediarecorder-video` (1080P real-time WebM/MP4 in-browser recording)
+2. `poster-png` (instant lossless 1080P final-frame PNG poster)
+3. `png-sequence-tar` (lossless PNG frame sequence, `manifest.json`, and FFmpeg script bundled as `.tar`)
 
-此外提供 `createHttpBridgeExportPlugin` 工厂函数，5 行即可将本地 FFmpeg 服务或云端合成接口接入 `exportRegistry`，顶栏导出下拉框会自动识别并展示：
+Use `createHttpBridgeExportPlugin` to connect a local FFmpeg bridge or cloud encoder in 5 lines—it automatically appears in the TopBar exporter selector:
 
 ```ts
 export interface ExportPlugin {
@@ -194,7 +194,7 @@ export interface ExportPlugin {
 
 ---
 
-## 三、扩展一个纯文字文稿布局的极简示例
+## 3. Minimal Custom Document Layout Example
 
 ```ts
 import { layoutRegistry, LayoutPlugin } from '../plugins';
@@ -202,7 +202,7 @@ import { finalizeLayout, makePositionedNode } from '../plugins/layouts/shared';
 
 const verticalDocLayout: LayoutPlugin = {
   id: 'doc-flow',
-  name: '信纸文稿',
+  name: 'Document Flow',
   category: 'basic',
   icon: 'document',
   dragMode: 'offset',

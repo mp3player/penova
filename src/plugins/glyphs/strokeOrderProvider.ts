@@ -624,7 +624,7 @@ function resolveTargetBounds(
 
 export const strokeOrderGlyphProvider: GlyphProviderPlugin = {
   id: 'stroke-order-dict',
-  name: '标准笔顺骨架库',
+  name: 'Standard Stroke Order',
   priority: 80,
   resolveStrokes(ctx): GlyphStrokeSegment[] | null {
     const normStrokes = STROKE_ORDER_DICT[ctx.char];

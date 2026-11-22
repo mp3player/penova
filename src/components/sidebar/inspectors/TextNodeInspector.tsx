@@ -5,6 +5,7 @@ import {
   TextAlign,
   TextSceneNode,
 } from '../../../model/scene';
+import { useI18n } from '../../../i18n';
 import { ALIGN_OPTIONS, COLOR_OPTIONS } from '../constants';
 
 interface TextNodeInspectorProps {
@@ -16,6 +17,7 @@ export const TextNodeInspector: React.FC<TextNodeInspectorProps> = ({
   node,
   onUpdateNode,
 }) => {
+  const { t } = useI18n();
   return (
     <div
       style={{
@@ -38,12 +40,12 @@ export const TextNodeInspector: React.FC<TextNodeInspectorProps> = ({
               ? {
                   ...curr,
                   text: val,
-                  name: val.trim().slice(0, 20) || '文本',
+                  name: val.trim().slice(0, 20) || t('inspector.defaultTextName'),
                 }
               : curr
           );
         }}
-        placeholder="输入文字内容..."
+        placeholder={t('inspector.textPlaceholder')}
         style={{ resize: 'vertical', lineHeight: 1.4 }}
       />
 
@@ -66,7 +68,7 @@ export const TextNodeInspector: React.FC<TextNodeInspectorProps> = ({
         >
           {COLOR_OPTIONS.map((c) => (
             <option key={c.id} value={c.id}>
-              颜色：{c.label}
+              {t('inspector.colorOption', { label: t(c.key) })}
             </option>
           ))}
         </select>
@@ -84,7 +86,7 @@ export const TextNodeInspector: React.FC<TextNodeInspectorProps> = ({
         >
           {ALIGN_OPTIONS.map((a) => (
             <option key={a.id} value={a.id}>
-              对齐：{a.label}
+              {t('inspector.alignOption', { label: t(a.key) })}
             </option>
           ))}
         </select>
@@ -107,7 +109,7 @@ export const TextNodeInspector: React.FC<TextNodeInspectorProps> = ({
             color: 'var(--text-secondary)',
           }}
         >
-          字号
+          {t('inspector.fontSize')}
           <input
             type="number"
             className="studio-input"
@@ -136,7 +138,7 @@ export const TextNodeInspector: React.FC<TextNodeInspectorProps> = ({
             color: 'var(--text-secondary)',
           }}
         >
-          行宽
+          {t('inspector.lineWidth')}
           <input
             type="number"
             className="studio-input"
@@ -178,7 +180,7 @@ export const TextNodeInspector: React.FC<TextNodeInspectorProps> = ({
               )
             }
           />
-          加粗
+          {t('inspector.bold')}
         </label>
       </div>
     </div>

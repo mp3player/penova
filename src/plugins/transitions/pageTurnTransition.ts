@@ -3,7 +3,7 @@ import { TransitionPlugin } from '../contracts';
 
 export const pageTurnTransitionPlugin: TransitionPlugin = {
   id: 'page-turn',
-  name: '翻页滑切',
+  name: 'Page Turn',
   defaultDurationMs: 800,
   render({ ctx, width, height, progress, fromCanvas, toCanvas }) {
     const u = easeInOutCubic(progress);

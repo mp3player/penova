@@ -10,7 +10,7 @@ const BLUEPRINT_FONT =
 
 const palette: ThemePalette = {
   id: 'blueprint',
-  label: '蓝图线稿',
+  label: 'Blueprint',
   bgPrimary: '#102644',
   bgSecondary: '#09172b',
   vignetteColor: 'rgba(4, 10, 22, 0.55)',
@@ -29,7 +29,7 @@ const palette: ThemePalette = {
 
 export const blueprintPlugin: PresentationPlugin = {
   id: 'blueprint',
-  name: '蓝图线稿',
+  name: 'Blueprint',
   palette,
   fontFamily: BLUEPRINT_FONT,
   shadowColor: 'rgba(0, 0, 0, 0.28)',

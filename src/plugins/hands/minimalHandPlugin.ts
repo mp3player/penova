@@ -2,7 +2,7 @@ import { HandPlugin } from '../contracts';
 
 export const minimalHandPlugin: HandPlugin = {
   id: 'hand-minimal',
-  name: '极简线稿手',
+  name: 'Minimal Hand',
   draw({ ctx, screenX, screenY, presentation, colorHex, lift, alpha, penDown, velocity, tMs }) {
     if (alpha <= 0.01) return;
 

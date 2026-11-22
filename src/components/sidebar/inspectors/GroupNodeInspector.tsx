@@ -1,6 +1,7 @@
 import React from 'react';
 import { Plus } from 'lucide-react';
 import { ChalkColor, GroupSceneNode, SceneNode } from '../../../model/scene';
+import { useI18n } from '../../../i18n';
 import { ARRANGE_OPTIONS, COLOR_OPTIONS } from '../constants';
 
 interface GroupNodeInspectorProps {
@@ -16,6 +17,7 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
   onUpdateNode,
   onAddChildToGroup,
 }) => {
+  const { t } = useI18n();
   const zoneVal = typeof node.meta?.zone === 'string' ? node.meta.zone : '';
   return (
     <div
@@ -34,7 +36,7 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
         onChange={(e) =>
           onUpdateNode(node.id, (c) => ({ ...c, name: e.target.value }))
         }
-        placeholder="组合节点名称"
+        placeholder={t('inspector.groupNamePlaceholder')}
       />
 
       <div
@@ -60,7 +62,7 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
         >
           {ARRANGE_OPTIONS.map((a) => (
             <option key={a.id} value={a.id}>
-              组合：{a.label}
+              {t('inspector.groupArrangeOption', { label: t(a.key) })}
             </option>
           ))}
         </select>
@@ -77,7 +79,7 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
         >
           {COLOR_OPTIONS.map((c) => (
             <option key={c.id} value={c.id}>
-              色调：{c.label}
+              {t('inspector.groupToneOption', { label: t(c.key) })}
             </option>
           ))}
         </select>
@@ -94,7 +96,7 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
               meta: { ...(c.meta ?? {}), zone: nextZone },
             }));
           }}
-          placeholder="所属分区名称（概念图谱分框用）"
+          placeholder={t('inspector.zonePlaceholder')}
         />
       )}
 
@@ -106,7 +108,7 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
           onClick={() => onAddChildToGroup(node.id, 'text')}
         >
           <Plus size={12} />
-          子文字
+          {t('inspector.addChildText')}
         </button>
         <button
           type="button"
@@ -115,7 +117,7 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
           onClick={() => onAddChildToGroup(node.id, 'shape')}
         >
           <Plus size={12} />
-          子图形
+          {t('inspector.addChildShape')}
         </button>
       </div>
     </div>

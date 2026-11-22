@@ -3,7 +3,7 @@ import { GlyphProviderPlugin, GlyphStrokeSegment } from '../contracts';
 
 export const inkGridGlyphProvider: GlyphProviderPlugin = {
   id: 'ink-grid-fallback',
-  name: '通用墨迹网格追踪',
+  name: 'Ink Grid Fallback',
   priority: 10,
   resolveStrokes(ctx): GlyphStrokeSegment[] | null {
     const { imgData, pixelW, pixelH, boxW, boxH } = ctx;

@@ -9,7 +9,7 @@ import { clipRayToRect } from './clipHelpers';
 
 export const roundedShapePlugin: ShapePlugin = {
   id: 'rounded',
-  name: '圆角框',
+  name: 'Rounded Box',
   measureBox(contentW, contentH) {
     const padX = 28;
     const padY = 18;

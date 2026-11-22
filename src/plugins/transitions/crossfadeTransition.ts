@@ -3,7 +3,7 @@ import { TransitionPlugin } from '../contracts';
 
 export const crossfadeTransitionPlugin: TransitionPlugin = {
   id: 'crossfade',
-  name: '柔和淡化',
+  name: 'Crossfade',
   defaultDurationMs: 650,
   render({ ctx, width, height, progress, fromCanvas, toCanvas }) {
     const u = easeInOutCubic(progress);

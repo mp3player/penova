@@ -14,7 +14,7 @@ const CHALKBOARD_FONT =
 
 const palette: ThemePalette = {
   id: 'chalkboard',
-  label: '黑板粉笔',
+  label: 'Chalkboard',
   bgPrimary: '#192e25',
   bgSecondary: '#0f1d17',
   vignetteColor: 'rgba(5, 11, 8, 0.52)',
@@ -33,7 +33,7 @@ const palette: ThemePalette = {
 
 export const chalkboardPlugin: PresentationPlugin = {
   id: 'chalkboard',
-  name: '黑板粉笔',
+  name: 'Chalkboard',
   palette,
   fontFamily: CHALKBOARD_FONT,
   glyphGrain: {

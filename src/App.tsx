@@ -16,8 +16,10 @@ import { SidebarEditor } from './components/SidebarEditor';
 import { CanvasStage } from './components/CanvasStage';
 import { SceneStrip } from './components/SceneStrip';
 import { TimelineBar } from './components/TimelineBar';
+import { useI18n } from './i18n';
 
 export const App: React.FC = () => {
+  const { t } = useI18n();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -80,13 +82,18 @@ export const App: React.FC = () => {
       });
       triggerBlobDownload(result.blob, result.filename);
       showToast(
-        `已导出：${result.filename}${result.summary ? `（${result.summary}）` : ''}`
+        result.summary
+          ? t('toast.exportedVideoWithSummary', {
+              filename: result.filename,
+              summary: result.summary,
+            })
+          : t('toast.exportedVideo', { filename: result.filename })
       );
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        showToast('已取消导出');
+        showToast(t('toast.exportCanceled'));
       } else {
-        const msg = err instanceof Error ? err.message : '导出失败';
+        const msg = err instanceof Error ? err.message : t('toast.exportFailed');
         showToast(msg);
       }
     } finally {

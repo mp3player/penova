@@ -2,7 +2,7 @@ import { HandPlugin } from '../contracts';
 
 export const illustratedHandPlugin: HandPlugin = {
   id: 'hand-chalk',
-  name: '手握画笔',
+  name: 'Drawing Hand',
   draw({ ctx, screenX, screenY, presentation, colorHex, lift, alpha, penDown, velocity, tMs }) {
     if (alpha <= 0.01) return;
 

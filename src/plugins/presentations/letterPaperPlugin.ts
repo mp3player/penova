@@ -11,7 +11,7 @@ const LETTER_PAPER_FONT =
 
 const palette: ThemePalette = {
   id: 'letter-paper',
-  label: '信纸钢笔',
+  label: 'Letter Paper',
   bgPrimary: '#fcf6e8',
   bgSecondary: '#efe2c6',
   vignetteColor: 'rgba(138, 108, 68, 0.2)',
@@ -30,7 +30,7 @@ const palette: ThemePalette = {
 
 export const letterPaperPlugin: PresentationPlugin = {
   id: 'letter-paper',
-  name: '信纸钢笔',
+  name: 'Letter Paper',
   palette,
   fontFamily: LETTER_PAPER_FONT,
   shadowColor: 'rgba(68, 48, 24, 0.16)',

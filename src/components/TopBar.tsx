@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import {
   Download,
   FolderOpen,
+  Globe,
   Monitor,
   Palette,
   PanelLeftClose,
@@ -16,12 +17,13 @@ import {
 } from 'lucide-react';
 import { AspectRatio, LessonScene, ThemeId } from '../model/scene';
 import { LessonProject } from '../model/project';
-import { PRESET_PROJECTS } from '../model/presets';
+import { getPresetProjects } from '../model/presets';
 import {
   exportRegistry,
   presentationRegistry,
   useRegistryList,
 } from '../plugins';
+import { useI18n } from '../i18n';
 
 interface TopBarProps {
   project: LessonProject;
@@ -68,10 +70,12 @@ export const TopBar: React.FC<TopBarProps> = ({
   onStartExport,
   onCancelExport,
 }) => {
+  const { locale, setLocale, t, pluginName, exporterShort } = useI18n();
   const projectFileInputRef = useRef<HTMLInputElement | null>(null);
   const presentations = useRegistryList(presentationRegistry);
   const exporters = useRegistryList(exportRegistry);
-  const activePresetId = PRESET_PROJECTS.some((p) => p.id === project.id)
+  const presetProjects = getPresetProjects(locale);
+  const activePresetId = presetProjects.some((p) => p.id === project.id)
     ? project.id
     : 'custom';
 
@@ -98,7 +102,11 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           className="studio-btn"
           onClick={onToggleSidebar}
-          title={sidebarOpen ? '收起侧边栏' : '展开侧边栏'}
+          title={
+            sidebarOpen
+              ? t('topbar.collapseSidebar')
+              : t('topbar.expandSidebar')
+          }
           style={{ width: 32, padding: 0 }}
         >
           {sidebarOpen ? (
@@ -143,7 +151,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 whiteSpace: 'nowrap',
               }}
             >
-              手绘笔迹动画工作室
+              {t('topbar.brandSubtitle')}
             </span>
           </div>
         </div>
@@ -156,7 +164,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               whiteSpace: 'nowrap',
             }}
           >
-            教学模板
+            {t('topbar.templatesLabel')}
           </span>
           <select
             className="studio-select"
@@ -166,23 +174,23 @@ export const TopBar: React.FC<TopBarProps> = ({
                 onSelectPreset(e.target.value);
               }
             }}
-            style={{ width: 158, height: 30, padding: '0 8px' }}
+            style={{ width: 184, height: 30, padding: '0 8px' }}
           >
-            {PRESET_PROJECTS.map((preset) => (
+            {presetProjects.map((preset) => (
               <option key={preset.id} value={preset.id}>
                 {preset.title}
               </option>
             ))}
             {activePresetId === 'custom' && (
-              <option value="custom">自定义板书</option>
+              <option value="custom">{t('topbar.customTemplate')}</option>
             )}
           </select>
           {activePresetId !== 'custom' && (
             <button
               type="button"
               className="studio-btn"
-              aria-label="重置当前模板"
-              title="恢复当前模板初始内容并清除本地草稿"
+              aria-label={t('topbar.resetTemplateAria')}
+              title={t('topbar.resetTemplateTitle')}
               onClick={() => onResetPreset(activePresetId)}
               style={{ width: 28, height: 30, padding: 0, flexShrink: 0 }}
             >
@@ -194,7 +202,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {/* Center: Theme & Aspect Ratio */}
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <div className="studio-pill-group" title="画板视觉风格">
+        <div className="studio-pill-group" title={t('topbar.themeGroupTitle')}>
           <span
             style={{
               display: 'inline-flex',
@@ -212,19 +220,19 @@ export const TopBar: React.FC<TopBarProps> = ({
               className={`studio-pill-item ${scene.theme === p.id ? 'active' : ''}`}
               onClick={() => onChangeTheme(p.id)}
             >
-              {p.name}
+              {pluginName(p.id, p.name)}
             </button>
           ))}
         </div>
 
-        <div className="studio-pill-group" title="画幅比例">
+        <div className="studio-pill-group" title={t('topbar.aspectGroupTitle')}>
           <button
             type="button"
             className={`studio-pill-item ${scene.aspectRatio === '16:9' ? 'active' : ''}`}
             onClick={() => onChangeAspectRatio('16:9')}
           >
             <Monitor size={13} />
-            16:9 横屏
+            {t('topbar.aspectLandscape')}
           </button>
           <button
             type="button"
@@ -232,13 +240,42 @@ export const TopBar: React.FC<TopBarProps> = ({
             onClick={() => onChangeAspectRatio('9:16')}
           >
             <Smartphone size={13} />
-            9:16 竖屏
+            {t('topbar.aspectPortrait')}
           </button>
         </div>
       </div>
 
-      {/* Right: Undo/Redo, Save/Import Project JSON & Exporters */}
+      {/* Right: Language Switcher, Undo/Redo, Save/Import Project JSON & Exporters */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        <div className="studio-pill-group" title={t('topbar.languageTitle')}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '0 4px 0 5px',
+              color: 'var(--text-muted)',
+            }}
+          >
+            <Globe size={12} />
+          </span>
+          <button
+            type="button"
+            className={`studio-pill-item ${locale === 'en' ? 'active' : ''}`}
+            onClick={() => setLocale('en')}
+            style={{ padding: '0 6px', fontSize: 11 }}
+          >
+            EN
+          </button>
+          <button
+            type="button"
+            className={`studio-pill-item ${locale === 'zh-CN' ? 'active' : ''}`}
+            onClick={() => setLocale('zh-CN')}
+            style={{ padding: '0 6px', fontSize: 11 }}
+          >
+            中文
+          </button>
+        </div>
+
         <input
           ref={projectFileInputRef}
           type="file"
@@ -253,12 +290,12 @@ export const TopBar: React.FC<TopBarProps> = ({
           }}
         />
 
-        <div className="studio-pill-group" title="历史操作与工程读写">
+        <div className="studio-pill-group" title={t('topbar.historyGroupTitle')}>
           <button
             type="button"
             className="studio-pill-item"
-            aria-label="撤销"
-            title="撤销 (Ctrl+Z)"
+            aria-label={t('topbar.undoAria')}
+            title={t('topbar.undoTitle')}
             disabled={!canUndo}
             onClick={onUndo}
             style={{
@@ -272,8 +309,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           <button
             type="button"
             className="studio-pill-item"
-            aria-label="重做"
-            title="重做 (Ctrl+Y)"
+            aria-label={t('topbar.redoAria')}
+            title={t('topbar.redoTitle')}
             disabled={!canRedo}
             onClick={onRedo}
             style={{
@@ -287,8 +324,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           <button
             type="button"
             className="studio-pill-item"
-            aria-label="保存工程"
-            title="保存工程文件 (.penova.json)"
+            aria-label={t('topbar.saveAria')}
+            title={t('topbar.saveTitle')}
             onClick={onSaveProjectJson}
             style={{ padding: '0 6px' }}
           >
@@ -297,8 +334,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           <button
             type="button"
             className="studio-pill-item"
-            aria-label="导入工程"
-            title="导入本地工程文件 (.json)"
+            aria-label={t('topbar.importAria')}
+            title={t('topbar.importTitle')}
             onClick={() => projectFileInputRef.current?.click()}
             style={{ padding: '0 6px' }}
           >
@@ -324,34 +361,39 @@ export const TopBar: React.FC<TopBarProps> = ({
                 whiteSpace: 'nowrap',
               }}
             >
-              <span>正在导出 · {exportProgress}%</span>
+              <span>{t('topbar.exportingPct', { pct: exportProgress })}</span>
             </div>
             <button
               type="button"
               className="studio-btn danger"
               onClick={onCancelExport}
-              title="取消导出"
+              title={t('topbar.cancelExportTitle')}
             >
               <X size={14} />
-              取消
+              {t('topbar.cancel')}
             </button>
           </div>
         ) : (
           <>
             <select
               className="studio-select"
-              aria-label="导出格式"
-              title="选择导出插件"
+              aria-label={t('topbar.exportFormatAria')}
+              title={t('topbar.exportFormatTitle')}
               value={exporterId}
               onChange={(e) => onChangeExporterId(e.target.value)}
-              style={{ width: 122, height: 30, padding: '0 7px', fontSize: 12 }}
+              style={{ width: 118, height: 30, padding: '0 7px', fontSize: 12 }}
             >
               {exporters.map((exp) => {
                 const supported = exp.isSupported ? exp.isSupported() : true;
+                const label = exporterShort(
+                  exp.id,
+                  exp.shortLabel ?? pluginName(exp.id, exp.name)
+                );
                 return (
                   <option key={exp.id} value={exp.id} disabled={!supported}>
-                    {exp.shortLabel ?? exp.name}
-                    {supported ? '' : '（不可用）'}
+                    {supported
+                      ? label
+                      : t('topbar.exporterUnavailable', { label })}
                   </option>
                 );
               })}
@@ -363,7 +405,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
             >
               <Download size={14} />
-              导出
+              {t('topbar.exportBtn')}
             </button>
           </>
         )}

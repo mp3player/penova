@@ -21,7 +21,7 @@ import {
 
 export const conceptGraphPlugin: LayoutPlugin = {
   id: 'concept-graph',
-  name: '概念图谱',
+  name: 'Concept Graph',
   category: 'diagram',
   icon: 'concept-graph',
   dragMode: 'offset',

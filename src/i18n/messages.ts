@@ -1,0 +1,622 @@
+import { Locale, LocalizedCodecMeta } from './types';
+
+export const MESSAGES_EN = {
+  'app.documentTitle': 'Penova · Hand-Drawn Animation Studio',
+
+  'topbar.brandSubtitle': 'Hand-Drawn Studio',
+  'topbar.collapseSidebar': 'Collapse Sidebar',
+  'topbar.expandSidebar': 'Expand Sidebar',
+  'topbar.templatesLabel': 'Templates',
+  'topbar.customTemplate': 'Custom Board',
+  'topbar.resetTemplateAria': 'Reset current template',
+  'topbar.resetTemplateTitle': 'Restore default template content and clear local draft',
+  'topbar.themeGroupTitle': 'Board Presentation Style',
+  'topbar.aspectGroupTitle': 'Canvas Aspect Ratio',
+  'topbar.aspectLandscape': '16:9',
+  'topbar.aspectPortrait': '9:16',
+  'topbar.historyGroupTitle': 'History & Project Files',
+  'topbar.undoAria': 'Undo',
+  'topbar.undoTitle': 'Undo (Ctrl+Z)',
+  'topbar.redoAria': 'Redo',
+  'topbar.redoTitle': 'Redo (Ctrl+Y)',
+  'topbar.saveAria': 'Save Project',
+  'topbar.saveTitle': 'Save project file (.penova.json)',
+  'topbar.importAria': 'Import Project',
+  'topbar.importTitle': 'Import local project file (.json)',
+  'topbar.exportingPct': 'Exporting · {pct}%',
+  'topbar.cancelExportTitle': 'Cancel Export',
+  'topbar.cancel': 'Cancel',
+  'topbar.exportFormatAria': 'Export Format',
+  'topbar.exportFormatTitle': 'Select export plugin',
+  'topbar.exporterUnavailable': '{label} (N/A)',
+  'topbar.exportBtn': 'Export',
+  'topbar.languageTitle': 'Switch interface language (EN / 中文)',
+
+  'toast.exportedVideoWithSummary': 'Exported: {filename} ({summary})',
+  'toast.exportedVideo': 'Exported: {filename}',
+  'toast.exportCanceled': 'Export canceled',
+  'toast.exportFailed': 'Export failed',
+  'toast.presetReset': 'Restored default template: {title}',
+  'toast.projectSaved': 'Project saved: {filename}',
+  'toast.projectImportedWarning': 'Project imported ({warning})',
+  'toast.projectImported': 'Project imported: {title}',
+  'toast.projectImportFailed': 'Failed to import project file',
+  'toast.srtExported': 'Subtitles exported: {filename}',
+  'toast.audioImported': 'Audio imported: {name}',
+  'workspace.sceneCopySuffix': ' (Copy)',
+
+  'canvas.layoutGroupTitle': 'Diagram Layout',
+  'canvas.cameraGroupTitle': 'Camera Strategy',
+  'canvas.handGroupTitle': 'Hand Style',
+  'canvas.soundOnTitle': 'Mute writing sound effects',
+  'canvas.soundOffTitle': 'Enable writing sound effects',
+  'canvas.soundBtn': 'Sound',
+  'canvas.resetAdjustmentsTitle': 'Reset dragged node offsets and manual camera',
+  'canvas.resetAdjustmentsBtn': 'Reset View',
+  'canvas.hintTransition':
+    'Transition active ({name}) · Scrub timeline or click a scene tab to edit nodes',
+  'canvas.hintPlaying': 'Playing animation · Press Space to pause and fine-tune',
+  'canvas.hintPaused':
+    'Paused: drag nodes to adjust, scroll to zoom, double-click canvas to reset view · Space to play',
+
+  'scenes.stripLabel': 'Scenes',
+  'scenes.switchTitle': 'Switch to Scene {num}: {title}',
+  'scenes.fallbackTitle': 'Scene {num}',
+  'scenes.duplicateTitle': 'Duplicate Scene',
+  'scenes.movePrevTitle': 'Move Scene Left',
+  'scenes.moveNextTitle': 'Move Scene Right',
+  'scenes.deleteTitle': 'Delete Scene',
+  'scenes.transitionAria': 'Scene {num} transition',
+  'scenes.transitionTitle': 'Scene {from} -> Scene {to} transition',
+  'scenes.newSceneTitle': 'Append a new scene to continue the lesson',
+  'scenes.newSceneBtn': 'New Scene',
+
+  'timeline.statusTransition': 'Transition · {name}',
+  'timeline.statusMultiOverview': 'Scene {current}/{total} · Overview',
+  'timeline.statusOverview': 'Overview',
+  'timeline.statusMultiStep':
+    'Scene {scene}/{totalScenes} ({step}/{totalSteps}) · {title}',
+  'timeline.statusSingleStep': '{step}/{totalSteps} · {title}',
+  'timeline.pause': 'Pause',
+  'timeline.play': 'Play',
+  'timeline.restartTitle': 'Restart from beginning',
+  'timeline.restart': 'Restart',
+  'timeline.prevStepTitle': 'Previous step',
+  'timeline.nextStepTitle': 'Next step',
+  'timeline.nowPrefix': 'Now: ',
+  'timeline.speedTitle': 'Playback Speed',
+  'timeline.stepTitle': 'Step {num}: {title}',
+  'timeline.outroLabel': 'Overview',
+  'timeline.sceneBlockTitle': 'Scene {num}: {title}',
+  'timeline.sceneBlockLabel': 'Scene {num} · {title}',
+  'timeline.transitionBlockTitle': 'Transition: {name}',
+
+  'sidebar.tabOutline': 'Outline',
+  'sidebar.tabMedia': 'Media',
+  'sidebar.sceneTitleLabel': 'Scene Title',
+  'sidebar.sceneTitlePlaceholder': 'Enter scene title...',
+  'sidebar.nodeTreeHeading': 'Scene Nodes ({count})',
+  'sidebar.addTextTitle': 'Add text node',
+  'sidebar.addTextBtn': 'Text',
+  'sidebar.addShapeTitle': 'Add shape node',
+  'sidebar.addShapeBtn': 'Shape',
+  'sidebar.addArrowTitle': 'Add connector arrow',
+  'sidebar.addArrowBtn': 'Arrow',
+  'sidebar.addCardTitle': 'Add grouped card node',
+  'sidebar.addCardBtn': 'Card',
+  'sidebar.newTextDefault': 'New text',
+  'sidebar.newCardDefaultLabel': 'New Card {num}',
+  'sidebar.newCardDefaultSubtitle': 'Click to expand children',
+  'sidebar.newChildTextDefault': 'New label',
+
+  'tree.emptyText': '(Empty text)',
+  'tree.freeArrowWithLabel': 'Free Arrow ({label})',
+  'tree.freeArrow': 'Free Arrow',
+  'tree.collapseChildren': 'Collapse children',
+  'tree.expandChildren': 'Expand children',
+  'tree.moveUp': 'Move up (draw order)',
+  'tree.moveDown': 'Move down (draw order)',
+  'tree.deleteNode': 'Delete node',
+
+  'script.nonCardNotice':
+    'Standalone text/shapes or free arrows detected; editing this graph script converts them into standard cards and drops free coordinates.',
+
+  'media.subtitlesHeading': 'Subtitles ({count})',
+  'media.showSubtitles': 'Show on Canvas',
+  'media.autoGenTitle':
+    'Auto-generate subtitles from scene nodes and step timings',
+  'media.autoGenBtn': 'Auto',
+  'media.addCueTitle': 'Add a subtitle cue manually',
+  'media.addCueBtn': 'Add',
+  'media.exportSrtTitle': 'Export standard .srt subtitles',
+  'media.emptySubtitlesHint':
+    'No subtitles yet. Click "Auto" to extract cues from scene nodes and burn them into preview & exported video.',
+  'media.newCueDefaultText': 'New subtitle cue',
+  'media.seekCueTitle': 'Seek and preview this cue',
+  'media.cueStartAria': 'Cue {num} start time (seconds)',
+  'media.cueStartTitle': 'Start time (s)',
+  'media.cueEndAria': 'Cue {num} end time (seconds)',
+  'media.cueEndTitle': 'End time (s)',
+  'media.deleteCueTitle': 'Delete subtitle cue',
+  'media.cuePlaceholder': 'Enter subtitle text...',
+  'media.audioHeading': 'Voiceover / Audio Track',
+  'media.replaceAudio': 'Replace',
+  'media.importAudio': 'Import Audio',
+  'media.audioEmptyHint':
+    'Import MP3 / WAV / M4A voiceover or BGM to sync with playback (0.75x–2x). Note: live MediaRecorder captures canvas frames only; use "FFmpeg Tar" to mux audio offline.',
+  'media.removeAudioTitle': 'Remove audio track',
+  'media.audioOffsetLabel': 'Offset (ms)',
+  'media.audioMuted': 'Muted',
+  'media.audioActive': 'Active',
+  'media.audioVolumeLabel': 'Volume {pct}%',
+
+  'color.white': 'White / Ink',
+  'color.yellow': 'Yellow',
+  'color.cyan': 'Cyan',
+  'color.pink': 'Coral Pink',
+  'color.green': 'Mint Green',
+  'color.orange': 'Amber Orange',
+
+  'align.left': 'Left',
+  'align.center': 'Center',
+  'align.right': 'Right',
+
+  'arrange.card': 'Card Auto-Fit',
+  'arrange.stack': 'Vertical Stack',
+  'arrange.free': 'Free Group',
+
+  'inspector.textPlaceholder': 'Enter text...',
+  'inspector.defaultTextName': 'Text',
+  'inspector.colorOption': 'Color: {label}',
+  'inspector.alignOption': 'Align: {label}',
+  'inspector.fontSize': 'Size',
+  'inspector.lineWidth': 'Width',
+  'inspector.bold': 'Bold',
+  'inspector.shapeNamePrefix': 'Shape ({shape})',
+  'inspector.fitAutoGroup': 'Auto-Fit Group',
+  'inspector.fitFixed': 'Fixed Size',
+  'inspector.emphasize': 'Emphasize',
+  'inspector.dashed': 'Dashed',
+  'inspector.width': 'W',
+  'inspector.height': 'H',
+  'inspector.fromFree': 'From: Free Coords',
+  'inspector.fromNode': 'From: {name}',
+  'inspector.toFree': 'To: Free Coords',
+  'inspector.toNode': 'To: {name}',
+  'inspector.fromXTitle': 'From X',
+  'inspector.fromYTitle': 'From Y',
+  'inspector.toXTitle': 'To X',
+  'inspector.toYTitle': 'To Y',
+  'inspector.edgeNamePrefix': 'Edge · {label}',
+  'inspector.edgeDefaultName': 'Connector Arrow',
+  'inspector.edgeLabelPlaceholder': 'Edge label (optional)',
+  'inspector.groupNamePlaceholder': 'Group node name',
+  'inspector.groupArrangeOption': 'Arrange: {label}',
+  'inspector.groupToneOption': 'Tone: {label}',
+  'inspector.zonePlaceholder': 'Zone name (used in Concept Graph)',
+  'inspector.addChildText': 'Text Child',
+  'inspector.addChildShape': 'Shape Child',
+} as const;
+
+export type MessageKey = keyof typeof MESSAGES_EN;
+
+export const MESSAGES_ZH_CN: Record<MessageKey, string> = {
+  'app.documentTitle': 'Penova · 手绘笔迹动画工作室',
+
+  'topbar.brandSubtitle': '手绘笔迹动画工作室',
+  'topbar.collapseSidebar': '收起侧边栏',
+  'topbar.expandSidebar': '展开侧边栏',
+  'topbar.templatesLabel': '教学模板',
+  'topbar.customTemplate': '自定义板书',
+  'topbar.resetTemplateAria': '重置当前模板',
+  'topbar.resetTemplateTitle': '恢复当前模板初始内容并清除本地草稿',
+  'topbar.themeGroupTitle': '画板视觉风格',
+  'topbar.aspectGroupTitle': '画幅比例',
+  'topbar.aspectLandscape': '16:9 横屏',
+  'topbar.aspectPortrait': '9:16 竖屏',
+  'topbar.historyGroupTitle': '历史操作与工程读写',
+  'topbar.undoAria': '撤销',
+  'topbar.undoTitle': '撤销 (Ctrl+Z)',
+  'topbar.redoAria': '重做',
+  'topbar.redoTitle': '重做 (Ctrl+Y)',
+  'topbar.saveAria': '保存工程',
+  'topbar.saveTitle': '保存工程文件 (.penova.json)',
+  'topbar.importAria': '导入工程',
+  'topbar.importTitle': '导入本地工程文件 (.json)',
+  'topbar.exportingPct': '正在导出 · {pct}%',
+  'topbar.cancelExportTitle': '取消导出',
+  'topbar.cancel': '取消',
+  'topbar.exportFormatAria': '导出格式',
+  'topbar.exportFormatTitle': '选择导出插件',
+  'topbar.exporterUnavailable': '{label}（不可用）',
+  'topbar.exportBtn': '导出',
+  'topbar.languageTitle': '切换界面语言 (EN / 中文)',
+
+  'toast.exportedVideoWithSummary': '已导出：{filename}（{summary}）',
+  'toast.exportedVideo': '已导出：{filename}',
+  'toast.exportCanceled': '已取消导出',
+  'toast.exportFailed': '导出失败',
+  'toast.presetReset': '已恢复模板默认内容：{title}',
+  'toast.projectSaved': '已保存工程：{filename}',
+  'toast.projectImportedWarning': '已导入工程（{warning}）',
+  'toast.projectImported': '已导入工程：{title}',
+  'toast.projectImportFailed': '导入工程文件失败',
+  'toast.srtExported': '已导出字幕：{filename}',
+  'toast.audioImported': '已导入音频：{name}',
+  'workspace.sceneCopySuffix': '（副本）',
+
+  'canvas.layoutGroupTitle': '默认图式布局算法',
+  'canvas.cameraGroupTitle': '智能运镜策略',
+  'canvas.handGroupTitle': '执笔显示',
+  'canvas.soundOnTitle': '关闭粉笔书写音效',
+  'canvas.soundOffTitle': '开启粉笔书写音效',
+  'canvas.soundBtn': '音效',
+  'canvas.resetAdjustmentsTitle': '重置拖拽节点偏移与画布视角',
+  'canvas.resetAdjustmentsBtn': '重置微调',
+  'canvas.hintTransition':
+    '当前处于转场动画（{name}） · 拖动时间轴或点击分幕标签可进入节点编辑',
+  'canvas.hintPlaying': '正在播放板书动画 · 按 Space 暂停并进入自由微调',
+  'canvas.hintPaused':
+    '暂停时可拖拽节点微调位置、滚轮缩放画布，双击空白恢复自动运镜 · 按 Space 播放/暂停',
+
+  'scenes.stripLabel': '分幕',
+  'scenes.switchTitle': '切换至第 {num} 幕：{title}',
+  'scenes.fallbackTitle': '第 {num} 幕',
+  'scenes.duplicateTitle': '复制当前一幕',
+  'scenes.movePrevTitle': '前移此幕',
+  'scenes.moveNextTitle': '后移此幕',
+  'scenes.deleteTitle': '删除此幕',
+  'scenes.transitionAria': '第 {num} 幕转场效果',
+  'scenes.transitionTitle': '第 {from} 幕 → 第 {to} 幕转场效果',
+  'scenes.newSceneTitle': '追加新的一幕继续讲解',
+  'scenes.newSceneBtn': '新建一幕',
+
+  'timeline.statusTransition': '转场切换 · {name}',
+  'timeline.statusMultiOverview': '第 {current}/{total} 幕 · 全景回顾',
+  'timeline.statusOverview': '全景回顾',
+  'timeline.statusMultiStep':
+    '第 {scene}/{totalScenes} 幕 ({step}/{totalSteps}) · {title}',
+  'timeline.statusSingleStep': '{step}/{totalSteps} · {title}',
+  'timeline.pause': '暂停',
+  'timeline.play': '播放',
+  'timeline.restartTitle': '从头重放',
+  'timeline.restart': '重放',
+  'timeline.prevStepTitle': '上一步',
+  'timeline.nextStepTitle': '下一步',
+  'timeline.nowPrefix': '当前讲解：',
+  'timeline.speedTitle': '播放倍速',
+  'timeline.stepTitle': '第 {num} 步：{title}',
+  'timeline.outroLabel': '全景收尾',
+  'timeline.sceneBlockTitle': '第 {num} 幕：{title}',
+  'timeline.sceneBlockLabel': '第 {num} 幕 · {title}',
+  'timeline.transitionBlockTitle': '转场：{name}',
+
+  'sidebar.tabOutline': '结构大纲',
+  'sidebar.tabMedia': '字幕音轨',
+  'sidebar.sceneTitleLabel': '场景标题',
+  'sidebar.sceneTitlePlaceholder': '输入标题...',
+  'sidebar.nodeTreeHeading': '绘制节点树 ({count})',
+  'sidebar.addTextTitle': '添加纯文字节点',
+  'sidebar.addTextBtn': '文字',
+  'sidebar.addShapeTitle': '添加独立图形节点',
+  'sidebar.addShapeBtn': '图形',
+  'sidebar.addArrowTitle': '添加连线/箭头节点',
+  'sidebar.addArrowBtn': '箭头',
+  'sidebar.addCardTitle': '添加组合知识卡片',
+  'sidebar.addCardBtn': '卡片',
+  'sidebar.newTextDefault': '新文本内容',
+  'sidebar.newCardDefaultLabel': '新知识卡片 {num}',
+  'sidebar.newCardDefaultSubtitle': '点击展开内部节点',
+  'sidebar.newChildTextDefault': '新增文字',
+
+  'tree.emptyText': '（空文本）',
+  'tree.freeArrowWithLabel': '自由箭头 ({label})',
+  'tree.freeArrow': '自由箭头',
+  'tree.collapseChildren': '收起子节点',
+  'tree.expandChildren': '展开子节点',
+  'tree.moveUp': '上移（调整绘制顺序）',
+  'tree.moveDown': '下移（调整绘制顺序）',
+  'tree.deleteNode': '删除节点',
+
+  'script.nonCardNotice':
+    '当前包含独立文字/图形或自由箭头；直接修改此图谱脚本会将其转为标准卡片并忽略自由坐标箭头。',
+
+  'media.subtitlesHeading': '字幕轨 ({count} 条)',
+  'media.showSubtitles': '画面显示字幕',
+  'media.autoGenTitle': '按当前各幕节点与步骤时间自动生成字幕',
+  'media.autoGenBtn': '自动生成',
+  'media.addCueTitle': '手动添加一条字幕',
+  'media.addCueBtn': '新增',
+  'media.exportSrtTitle': '导出通用 .srt 字幕文件',
+  'media.emptySubtitlesHint':
+    '暂无字幕，点击「自动生成」即可一键提取各节点讲解词并同步写入预览与导出视频。',
+  'media.newCueDefaultText': '新字幕讲解内容',
+  'media.seekCueTitle': '跳转并预览此字幕',
+  'media.cueStartAria': '字幕 {num} 开始时间(秒)',
+  'media.cueStartTitle': '开始时间（秒）',
+  'media.cueEndAria': '字幕 {num} 结束时间(秒)',
+  'media.cueEndTitle': '结束时间（秒）',
+  'media.deleteCueTitle': '删除此字幕',
+  'media.cuePlaceholder': '输入字幕内容...',
+  'media.audioHeading': '配音 / 背景音轨',
+  'media.replaceAudio': '替换音频',
+  'media.importAudio': '导入音频',
+  'media.audioEmptyHint':
+    '支持导入 MP3 / WAV / M4A 等配音或背景音乐，工作室播放及 0.75x~2x 倍速预览时会自动与画板时间轴同步（注：浏览器实时视频导出目前仅含画面，如需合成音轨可使用顶栏「FFmpeg 帧包」按包内命令混流）。',
+  'media.removeAudioTitle': '移除音轨',
+  'media.audioOffsetLabel': '起始偏移(ms)',
+  'media.audioMuted': '已静音',
+  'media.audioActive': '开启',
+  'media.audioVolumeLabel': '音量 {pct}%',
+
+  'color.white': '纯白/墨',
+  'color.yellow': '亮黄',
+  'color.cyan': '青蓝',
+  'color.pink': '珊瑚粉',
+  'color.green': '薄荷绿',
+  'color.orange': '琥珀橙',
+
+  'align.left': '左对齐',
+  'align.center': '居中',
+  'align.right': '右对齐',
+
+  'arrange.card': '卡片自适应',
+  'arrange.stack': '纵向堆叠',
+  'arrange.free': '自由组合',
+
+  'inspector.textPlaceholder': '输入文字内容...',
+  'inspector.defaultTextName': '文本',
+  'inspector.colorOption': '颜色：{label}',
+  'inspector.alignOption': '对齐：{label}',
+  'inspector.fontSize': '字号',
+  'inspector.lineWidth': '行宽',
+  'inspector.bold': '加粗',
+  'inspector.shapeNamePrefix': '图形 ({shape})',
+  'inspector.fitAutoGroup': '随组合适配',
+  'inspector.fitFixed': '固定尺寸',
+  'inspector.emphasize': '强调',
+  'inspector.dashed': '虚线',
+  'inspector.width': '宽',
+  'inspector.height': '高',
+  'inspector.fromFree': '起点：自由坐标',
+  'inspector.fromNode': '起点：{name}',
+  'inspector.toFree': '终点：自由坐标',
+  'inspector.toNode': '终点：{name}',
+  'inspector.fromXTitle': '起点 X',
+  'inspector.fromYTitle': '起点 Y',
+  'inspector.toXTitle': '终点 X',
+  'inspector.toYTitle': '终点 Y',
+  'inspector.edgeNamePrefix': '连线 · {label}',
+  'inspector.edgeDefaultName': '连线箭头',
+  'inspector.edgeLabelPlaceholder': '连线说明文字（可选）',
+  'inspector.groupNamePlaceholder': '组合节点名称',
+  'inspector.groupArrangeOption': '组合：{label}',
+  'inspector.groupToneOption': '色调：{label}',
+  'inspector.zonePlaceholder': '所属分区名称（概念图谱分框用）',
+  'inspector.addChildText': '子文字',
+  'inspector.addChildShape': '子图形',
+};
+
+export const MESSAGES: Record<Locale, Record<MessageKey, string>> = {
+  en: MESSAGES_EN,
+  'zh-CN': MESSAGES_ZH_CN,
+};
+
+export const PLUGIN_NAMES: Record<Locale, Record<string, string>> = {
+  en: {
+    // Presentations
+    chalkboard: 'Chalkboard',
+    whiteboard: 'Whiteboard',
+    blueprint: 'Blueprint',
+    'letter-paper': 'Letter Paper',
+    // Shapes
+    rounded: 'Rounded Box',
+    circle: 'Ellipse',
+    cloud: 'Cloud',
+    underline: 'Underline',
+    diamond: 'Diamond',
+    divider: 'Divider',
+    // Layouts
+    'flow-horizontal': 'Horizontal Flow',
+    'flow-vertical': 'Vertical Flow',
+    mindmap: 'Mind Map',
+    'concept-graph': 'Concept Graph',
+    document: 'Letter / Doc',
+    freeform: 'Freeform',
+    // Cameras
+    'auto-follow': 'Auto Follow',
+    'progressive-fit': 'Progressive Fit',
+    'static-overview': 'Overview',
+    'pen-follow': 'Pen Follow',
+    // Hands
+    'hand-chalk': 'Drawing Hand',
+    'hand-minimal': 'Minimal Hand',
+    'tip-only': 'Pen Only',
+    hidden: 'Hidden',
+    // Transitions
+    'chalkboard-eraser': 'Chalkboard Eraser',
+    'page-turn': 'Page Turn',
+    crossfade: 'Crossfade',
+    cut: 'Cut',
+    // Exporters
+    'mediarecorder-video': '1080P Video (WebM/MP4)',
+    'poster-png': 'HD Poster (1080P PNG)',
+    'png-sequence-tar': 'Offline Frames (FFmpeg .tar)',
+    // Glyphs
+    'stroke-order-dict': 'Standard Stroke Order',
+    'ink-grid-fallback': 'Ink Grid Fallback',
+  },
+  'zh-CN': {
+    // Presentations
+    chalkboard: '黑板粉笔',
+    whiteboard: '白板马克笔',
+    blueprint: '蓝图线稿',
+    'letter-paper': '信纸钢笔',
+    // Shapes
+    rounded: '圆角框',
+    circle: '椭圆圈',
+    cloud: '云朵框',
+    underline: '双下划线',
+    diamond: '菱形判断',
+    divider: '手绘分割线',
+    // Layouts
+    'flow-horizontal': '横向流程',
+    'flow-vertical': '纵向流程',
+    mindmap: '思维导图',
+    'concept-graph': '概念图谱',
+    document: '信纸文稿',
+    freeform: '自由画布',
+    // Cameras
+    'auto-follow': '智能聚焦',
+    'progressive-fit': '渐进全景',
+    'static-overview': '固定全景',
+    'pen-follow': '跟写滚屏',
+    // Hands
+    'hand-chalk': '手握画笔',
+    'hand-minimal': '极简线稿手',
+    'tip-only': '仅笔杆',
+    hidden: '隐藏',
+    // Transitions
+    'chalkboard-eraser': '黑板擦擦除',
+    'page-turn': '翻页滑切',
+    crossfade: '柔和淡化',
+    cut: '直接硬切',
+    // Exporters
+    'mediarecorder-video': '1080P 视频 (WebM/MP4)',
+    'poster-png': '高清成品图 (1080P PNG)',
+    'png-sequence-tar': '离线帧包 (FFmpeg .tar)',
+    // Glyphs
+    'stroke-order-dict': '标准笔顺骨架库',
+    'ink-grid-fallback': '通用墨迹网格追踪',
+  },
+};
+
+export const EXPORTER_SHORT_LABELS: Record<Locale, Record<string, string>> = {
+  en: {
+    'mediarecorder-video': '1080P Video',
+    'poster-png': 'HD PNG',
+    'png-sequence-tar': 'FFmpeg Tar',
+  },
+  'zh-CN': {
+    'mediarecorder-video': '1080P 视频',
+    'poster-png': '高清 PNG',
+    'png-sequence-tar': 'FFmpeg 帧包',
+  },
+};
+
+export const TRANSITION_SHORT_LABELS: Record<Locale, Record<string, string>> = {
+  en: {
+    'chalkboard-eraser': 'Erase',
+    'page-turn': 'Page',
+    crossfade: 'Fade',
+    cut: 'Cut',
+  },
+  'zh-CN': {
+    'chalkboard-eraser': '黑板擦',
+    'page-turn': '翻页',
+    crossfade: '淡化',
+    cut: '硬切',
+  },
+};
+
+export const CODEC_HINTS: Record<Locale, Record<string, LocalizedCodecMeta>> = {
+  en: {
+    'graph-dsl': {
+      label: 'Graph Script',
+      hintTitle: 'Quick Graph Script (Live Two-Way Sync)',
+      hintLines: [
+        '# Title · [kind] Label | Subtitle {color: yellow, shape: circle}',
+        'A -> B : Relation (solid) · A -.-> B : Dashed edge',
+      ],
+    },
+    'document-md': {
+      label: 'Document',
+      hintTitle: 'Document Markdown (Letter / Plain Text)',
+      hintLines: [
+        '# Title  Set document title',
+        '## Greeting or Heading  Bold left-aligned',
+        '>> Paragraph  Indented body paragraph',
+        '---  Insert hand-drawn divider',
+        '> Sign-off & Date  Right-aligned block',
+      ],
+    },
+  },
+  'zh-CN': {
+    'graph-dsl': {
+      label: '板书脚本',
+      hintTitle: '快速脚本语法（实时双向同步）',
+      hintLines: [
+        '# 标题 · [kind] 节点 | 副标题 {color: yellow, shape: circle}',
+        'A -> B : 关系（实线） · A -.-> B : 虚线',
+      ],
+    },
+    'document-md': {
+      label: '文稿文本',
+      hintTitle: '文稿写法（信纸 / 纯文本）',
+      hintLines: [
+        '# 标题  设置文档标题',
+        '## 称呼或小节  加粗左对齐',
+        '>> 正文段落  首行自动缩进两字',
+        '---  插入手绘分割线',
+        '> 落款与日期  右对齐（连续 > 自动合并为一块）',
+      ],
+    },
+  },
+};
+
+export function formatMessage(
+  template: string,
+  params?: Record<string, string | number>
+): string {
+  if (!params) return template;
+  return template.replace(/\{(\w+)\}/g, (match, key) =>
+    key in params ? String(params[key]) : match
+  );
+}
+
+export function translate(
+  locale: Locale,
+  key: MessageKey,
+  params?: Record<string, string | number>
+): string {
+  const dict = MESSAGES[locale] ?? MESSAGES.en;
+  const template = dict[key] ?? MESSAGES.en[key];
+  return formatMessage(template, params);
+}
+
+export function localizePluginName(
+  locale: Locale,
+  id: string,
+  fallback: string
+): string {
+  return PLUGIN_NAMES[locale]?.[id] ?? fallback;
+}
+
+export function localizeExporterShort(
+  locale: Locale,
+  id: string,
+  fallback?: string
+): string {
+  return EXPORTER_SHORT_LABELS[locale]?.[id] ?? fallback ?? id;
+}
+
+export function localizeTransitionShort(
+  locale: Locale,
+  id: string,
+  fallbackName: string
+): string {
+  return TRANSITION_SHORT_LABELS[locale]?.[id] ?? fallbackName.slice(0, 5);
+}
+
+export function localizeCodecMeta(
+  locale: Locale,
+  codec: { id: string; label: string; hintTitle: string; hintLines: string[] }
+): LocalizedCodecMeta {
+  return (
+    CODEC_HINTS[locale]?.[codec.id] ?? {
+      label: codec.label,
+      hintTitle: codec.hintTitle,
+      hintLines: codec.hintLines,
+    }
+  );
+}

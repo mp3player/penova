@@ -14,6 +14,7 @@ import { AudioTrackState } from '../../engine/audio/voiceTrackPlayer';
 import { generateAutoSubtitles } from '../../engine/subtitle/subtitleEngine';
 import { CompiledProjectTimeline } from '../../engine/timeline/projectTimeline';
 import { LessonProject, SubtitleCue } from '../../model/project';
+import { useI18n } from '../../i18n';
 
 interface MediaTrackPaneProps {
   project: LessonProject;
@@ -42,6 +43,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
   onRemoveAudioTrack,
   onExportSrt,
 }) => {
+  const { t } = useI18n();
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const cues = project.subtitles ?? [];
   const showSubtitles = project.showSubtitles !== false;
@@ -67,7 +69,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
         id: `sub-custom-${Date.now().toString(36)}`,
         startMs,
         endMs: Math.max(startMs + 500, endMs),
-        text: '新字幕讲解内容',
+        text: t('media.newCueDefaultText'),
       },
     ]);
   };
@@ -119,7 +121,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
               color: 'var(--text-primary)',
             }}
           >
-            字幕轨 ({cues.length} 条)
+            {t('media.subtitlesHeading', { count: cues.length })}
           </span>
           <label
             style={{
@@ -136,7 +138,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
               checked={showSubtitles}
               onChange={(e) => onToggleShowSubtitles(e.target.checked)}
             />
-            画面显示字幕
+            {t('media.showSubtitles')}
           </label>
         </div>
 
@@ -146,20 +148,20 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
             className="studio-btn active"
             style={{ flex: 1, height: 26, fontSize: 11, padding: '0 6px' }}
             onClick={handleAutoGenerate}
-            title="按当前各幕节点与步骤时间自动生成字幕"
+            title={t('media.autoGenTitle')}
           >
             <Sparkles size={11} />
-            自动生成
+            {t('media.autoGenBtn')}
           </button>
           <button
             type="button"
             className="studio-btn"
             style={{ height: 26, fontSize: 11, padding: '0 8px' }}
             onClick={handleAddCue}
-            title="手动添加一条字幕"
+            title={t('media.addCueTitle')}
           >
             <Plus size={11} />
-            新增
+            {t('media.addCueBtn')}
           </button>
           <button
             type="button"
@@ -167,7 +169,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
             style={{ height: 26, fontSize: 11, padding: '0 8px' }}
             onClick={onExportSrt}
             disabled={cues.length === 0}
-            title="导出通用 .srt 字幕文件"
+            title={t('media.exportSrtTitle')}
           >
             <Download size={11} />
             .srt
@@ -186,7 +188,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
               borderRadius: 6,
             }}
           >
-            暂无字幕，点击「自动生成」即可一键提取各节点讲解词并同步写入预览与导出视频。
+            {t('media.emptySubtitlesHint')}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -214,7 +216,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                     type="button"
                     className="studio-btn"
                     onClick={() => onSeekToMs(cue.startMs + 20)}
-                    title="跳转并预览此字幕"
+                    title={t('media.seekCueTitle')}
                     style={{
                       height: 22,
                       padding: '0 5px',
@@ -230,7 +232,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                     className="studio-input"
                     step={0.1}
                     min={0}
-                    aria-label={`字幕 ${idx + 1} 开始时间(秒)`}
+                    aria-label={t('media.cueStartAria', { num: idx + 1 })}
                     value={Number((cue.startMs / 1000).toFixed(1))}
                     onChange={(e) => {
                       const nextStart = Math.max(
@@ -248,7 +250,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                       padding: '0 4px',
                       fontSize: 11,
                     }}
-                    title="开始时间（秒）"
+                    title={t('media.cueStartTitle')}
                   />
                   <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                     ~
@@ -258,7 +260,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                     className="studio-input"
                     step={0.1}
                     min={0.2}
-                    aria-label={`字幕 ${idx + 1} 结束时间(秒)`}
+                    aria-label={t('media.cueEndAria', { num: idx + 1 })}
                     value={Number((cue.endMs / 1000).toFixed(1))}
                     onChange={(e) => {
                       const nextEnd = Math.max(
@@ -273,7 +275,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                       padding: '0 4px',
                       fontSize: 11,
                     }}
-                    title="结束时间（秒）"
+                    title={t('media.cueEndTitle')}
                   />
                   <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                     s
@@ -283,7 +285,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                     type="button"
                     className="studio-btn danger"
                     onClick={() => removeCue(cue.id)}
-                    title="删除此字幕"
+                    title={t('media.deleteCueTitle')}
                     style={{
                       marginLeft: 'auto',
                       width: 22,
@@ -301,7 +303,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                   className="studio-input"
                   value={cue.text}
                   onChange={(e) => updateCue(cue.id, { text: e.target.value })}
-                  placeholder="输入字幕内容..."
+                  placeholder={t('media.cuePlaceholder')}
                   style={{ height: 26, fontSize: 11.5, padding: '2px 7px' }}
                 />
               </div>
@@ -340,7 +342,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
             }}
           >
             <Music size={12} />
-            配音 / 背景音轨
+            {t('media.audioHeading')}
           </span>
 
           <input
@@ -363,7 +365,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
             onClick={() => audioInputRef.current?.click()}
           >
             <Upload size={11} />
-            {audioTrack ? '替换音频' : '导入音频'}
+            {audioTrack ? t('media.replaceAudio') : t('media.importAudio')}
           </button>
         </div>
 
@@ -378,7 +380,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
               borderRadius: 6,
             }}
           >
-            支持导入 MP3 / WAV / M4A 等配音或背景音乐，工作室播放及 0.75x~2x 倍速预览时会自动与画板时间轴同步（注：浏览器实时视频导出目前仅含画面，如需合成音轨可使用顶栏「FFmpeg 帧包」按包内命令混流）。
+            {t('media.audioEmptyHint')}
           </div>
         ) : (
           <div
@@ -416,7 +418,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                 type="button"
                 className="studio-btn danger"
                 onClick={onRemoveAudioTrack}
-                title="移除音轨"
+                title={t('media.removeAudioTitle')}
                 style={{
                   width: 22,
                   height: 22,
@@ -446,7 +448,7 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                   color: 'var(--text-secondary)',
                 }}
               >
-                起始偏移(ms)
+                {t('media.audioOffsetLabel')}
                 <input
                   type="number"
                   className="studio-input"
@@ -474,7 +476,9 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                 style={{ height: 24, padding: '0 7px', fontSize: 11 }}
               >
                 {audioTrack.muted ? <VolumeX size={11} /> : <Volume2 size={11} />}
-                {audioTrack.muted ? '已静音' : '开启'}
+                {audioTrack.muted
+                  ? t('media.audioMuted')
+                  : t('media.audioActive')}
               </button>
             </div>
 
@@ -487,7 +491,9 @@ export const MediaTrackPane: React.FC<MediaTrackPaneProps> = ({
                 color: 'var(--text-secondary)',
               }}
             >
-              音量 {Math.round(audioTrack.volume * 100)}%
+              {t('media.audioVolumeLabel', {
+                pct: Math.round(audioTrack.volume * 100),
+              })}
               <input
                 type="range"
                 min={0}

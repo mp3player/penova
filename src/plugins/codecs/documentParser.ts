@@ -24,14 +24,14 @@ function makeUniqueId(prefix: string, idx: number, usedIds: Set<string>): string
 
 export const documentScriptCodec: SceneTextCodec = {
   id: 'document-md',
-  label: '文稿文本',
-  hintTitle: '文稿写法（信纸 / 纯文本）',
+  label: 'Document',
+  hintTitle: 'Document Markdown (Letter / Plain Text)',
   hintLines: [
-    '# 标题  设置文档标题',
-    '## 称呼或小节  加粗左对齐',
-    '>> 正文段落  首行自动缩进两字',
-    '---  插入手绘分割线',
-    '> 落款与日期  右对齐（连续 > 自动合并为一块）',
+    '# Title  Set document title',
+    '## Greeting or Heading  Bold left-aligned',
+    '>> Paragraph  Indented body paragraph',
+    '---  Insert hand-drawn divider',
+    '> Sign-off & Date  Right-aligned block',
   ],
   parse(text, base) {
     const warnings: string[] = [];
