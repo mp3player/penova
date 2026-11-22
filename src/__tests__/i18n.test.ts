@@ -110,29 +110,39 @@ describe('i18n dictionaries, plugin fallbacks, and bilingual presets', () => {
       for (const proj of [enProj, zhProj]) {
         const compiled = compileProjectTimeline(proj);
         expect(compiled.totalDurationMs).toBeGreaterThan(2000);
+        if (proj.id === 'penova-promo') {
+          expect(compiled.totalDurationMs).toBeGreaterThan(20_000);
+          expect(compiled.totalDurationMs).toBeLessThan(65_000);
+        }
 
-        for (const scene of proj.scenes) {
-          const layout = computeDiagramLayout(scene);
-          const vertices = layout.nodes.filter(
-            (n) => n.node.type !== 'connector'
-          );
-          expect(vertices.length).toBeGreaterThan(0);
+        for (const ratio of ['16:9', '9:16'] as const) {
+          for (const scene of proj.scenes) {
+            const layout = computeDiagramLayout({
+              ...scene,
+              aspectRatio: ratio,
+            });
+            const vertices = layout.nodes.filter(
+              (n) => n.node.type !== 'connector'
+            );
+            expect(vertices.length).toBeGreaterThan(0);
 
-          for (const v of vertices) {
-            expect(Number.isFinite(v.cx)).toBe(true);
-            expect(Number.isFinite(v.cy)).toBe(true);
-            expect(Number.isFinite(v.width)).toBe(true);
-            expect(Number.isFinite(v.height)).toBe(true);
-          }
+            for (const v of vertices) {
+              expect(Number.isFinite(v.cx)).toBe(true);
+              expect(Number.isFinite(v.cy)).toBe(true);
+              expect(Number.isFinite(v.width)).toBe(true);
+              expect(Number.isFinite(v.height)).toBe(true);
+            }
 
-          for (let a = 0; a < vertices.length; a++) {
-            for (let b = a + 1; b < vertices.length; b++) {
-              const va = vertices[a];
-              const vb = vertices[b];
-              const sepX = Math.abs(va.cx - vb.cx) < (va.width + vb.width) / 2 - 1;
-              const sepY =
-                Math.abs(va.cy - vb.cy) < (va.height + vb.height) / 2 - 1;
-              expect(sepX && sepY).toBe(false);
+            for (let a = 0; a < vertices.length; a++) {
+              for (let b = a + 1; b < vertices.length; b++) {
+                const va = vertices[a];
+                const vb = vertices[b];
+                const sepX =
+                  Math.abs(va.cx - vb.cx) < (va.width + vb.width) / 2 - 1;
+                const sepY =
+                  Math.abs(va.cy - vb.cy) < (va.height + vb.height) / 2 - 1;
+                expect(sepX && sepY).toBe(false);
+              }
             }
           }
         }

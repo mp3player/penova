@@ -6,6 +6,20 @@
 
 ---
 
+## 宣传片四幕效果展示
+
+以下 4 幕效果均已内置于教学模板 **`Penova 官方宣传片（四幕演示）` / `Meet Penova (4-Scene Promo)`** 中，可在工作室内一键预览并直接导出 `16:9`（`1920×1080`）与 `9:16`（`1080×1920`）1080P 视频。
+
+![Penova 工作室主界面](docs/assets/studio-overview.png)
+
+| 黑板粉笔 · 横向流程 | 蓝图线稿 · 思维导图 (EN + 汉字) |
+| :---: | :---: |
+| ![黑板横向流程](docs/assets/promo-1-chalkboard.png) | ![蓝图思维导图](docs/assets/promo-2-blueprint.png) |
+| **信纸钢笔 · 手写文稿** | **白板马克笔 · 分区概念图谱** |
+| ![信纸钢笔手写文稿](docs/assets/promo-3-letter.png) | ![白板分区概念图谱](docs/assets/promo-4-whiteboard.png) |
+
+---
+
 ## 核心特性
 
 - **通用 `SceneNode` 组合节点树 IR**：统一抽象 `text`、`shape`、`connector`、`group` 四类原子节点与嵌套组，支持流程图、思维导图、概念图谱、手写信纸文稿与自由画布等多种形态。
@@ -18,7 +32,7 @@
   - **运镜策略 (`CameraPlugin`)**：`auto-follow`（智能聚焦）、`progressive-fit`（渐进全景）、`static-overview`（固定全景）、`pen-follow`（跟写滚屏）。
   - **多幕转场 (`TransitionPlugin`)**：`chalkboard-eraser`（黑板擦擦除）、`page-turn`（翻页滑切）、`crossfade`（柔和淡化）、`cut`（直接硬切）。
   - **成品导出 (`ExportPlugin`)**：零后端导出 **1080P 视频**（WebM/MP4 `MediaRecorder`）、**高清 PNG 海报**、**离线 FFmpeg 无损 PNG 帧序列包 (`.tar`)**，并提供 `createHttpBridgeExportPlugin` 工厂对接本地/云端合成服务。
-- **内置双语体验 (`EN / 简体中文`)**：界面默认英文，顶栏一键切换 `EN / 中文`，且自带 5 套中英双语教学演示预设模板；第三方插件只需提供默认 `name`，无需感知多语言字典即可自动显示。
+- **内置双语体验 (`EN / 简体中文`)**：界面默认英文，顶栏一键切换 `EN / 中文`，且自带 6 套中英双语教学演示预设模板；第三方插件只需提供默认 `name`，无需感知多语言字典即可自动显示。
 - **完整工作室能力**：多幕时间轴编排、自动字幕生成与 `.srt` 导入/导出、本地配音轨同步与 Web Audio 程序化书写音效、撤销/重做历史栈、`16:9` / `9:16` 画幅切换、`.penova.json`（兼容 `.pencil.json`）工程读写与本地草稿自动保存。
 
 ---

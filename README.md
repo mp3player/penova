@@ -8,6 +8,20 @@ It compiles structured diagrams, mind maps, concept graphs, and handwritten lett
 
 ---
 
+## Showcase Gallery
+
+All four scenes below ship inside the built-in **`Meet Penova (4-Scene Promo)`** template—ready to preview in the Studio or export directly as `16:9` (`1920×1080`) and `9:16` (`1080×1920`) 1080P videos with one click.
+
+![Penova Studio Workspace](docs/assets/studio-overview.png)
+
+| Chalkboard · Horizontal Flow | Blueprint · Mind Map (EN + 汉字) |
+| :---: | :---: |
+| ![Meet Penova Chalkboard](docs/assets/promo-1-chalkboard.png) | ![8-Registry Blueprint Mind Map](docs/assets/promo-2-blueprint.png) |
+| **Letter Paper · Handwritten Letter** | **Whiteboard · Zoned Concept Graph** |
+| ![Handwritten Letter Paper](docs/assets/promo-3-letter.png) | ![Open Source Whiteboard Concept Graph](docs/assets/promo-4-whiteboard.png) |
+
+---
+
 ## Highlights
 
 - **Universal `SceneNode` Composite IR**: Abstracts `text`, `shape`, `connector`, and nestable `group` nodes uniformly to power flowcharts, mind maps, zoned concept graphs, long-form handwritten letters, and freeform boards.
@@ -20,7 +34,7 @@ It compiles structured diagrams, mind maps, concept graphs, and handwritten lett
   - **Camera Directors (`CameraPlugin`)**: `auto-follow`, `progressive-fit`, `static-overview`, `pen-follow` (scrolling chase camera for long letters).
   - **Scene Transitions (`TransitionPlugin`)**: `chalkboard-eraser`, `page-turn`, `crossfade`, `cut`.
   - **Exporters (`ExportPlugin`)**: Zero-backend **1080P Video** (WebM/MP4 via `MediaRecorder`), **HD Poster PNG**, and **Offline FFmpeg Tar Bundle** (`.tar` with lossless PNG frames, `manifest.json`, and FFmpeg commands), plus `createHttpBridgeExportPlugin` for custom render servers.
-- **Built-in Bilingual Studio (`EN / 简体中文`)**: Ships with an instant `EN / 中文` switcher in the top bar and 5 bilingual showcase presets; third-party plugins automatically fall back to their own `name` without needing i18n keys.
+- **Built-in Bilingual Studio (`EN / 简体中文`)**: Ships with an instant `EN / 中文` switcher in the top bar and 6 bilingual showcase presets; third-party plugins automatically fall back to their own `name` without needing i18n keys.
 - **Full Studio Workflow**: Multi-scene timeline, auto subtitles with `.srt` import/export, voiceover/BGM track sync, procedural Web Audio writing sound effects, Undo/Redo history, `16:9` / `9:16` aspect ratios, `.penova.json` project save/load (backwards-compatible with `.pencil.json`), and localStorage auto-drafts.
 
 ---
