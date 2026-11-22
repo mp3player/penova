@@ -228,3 +228,13 @@ const verticalDocLayout: LayoutPlugin = {
 
 layoutRegistry.register(verticalDocLayout);
 ```
+
+---
+
+## 4. Declarative Multi-Scene Project Scripts (`.penova.md`)
+
+Penova can compile any plain-text `.penova.md` document directly into a multi-scene `LessonProject`, resolving every declared `theme`, `layout`, `camera`, `hand`, and `transition` plugin dynamically via [src/engine/parser/projectScript.ts](../src/engine/parser/projectScript.ts):
+
+- Custom `LayoutPlugin` implementations that attach a `textCodec` (optionally documenting `syntaxRules` and `example`) are automatically routable inside `.penova.md` scenes via `layout: <plugin-id>`.
+- Calling `generateScriptSpec()` introspects all 8 active registries at runtime to emit an exact, up-to-date Markdown specification of all valid plugin IDs and codec syntax rules—suitable for documentation, CLI automation, or external script generators.
+- See [docs/examples/penova-intro.penova.md](examples/penova-intro.penova.md) for a complete 6-scene product introduction script.

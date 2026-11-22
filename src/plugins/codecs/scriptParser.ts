@@ -14,6 +14,7 @@ import {
 } from '../../model/scene';
 import { SceneTextCodec } from '../contracts';
 import { shapeRegistry } from '../registry';
+import { stripMarkdownFence } from './shared';
 
 const VALID_ROLES = new Set<CardRole>([
   'root',
@@ -124,7 +125,7 @@ export function parseScriptToScene(
   base: LessonScene
 ): { scene: LessonScene; warnings: string[] } {
   const warnings: string[] = [];
-  const lines = script.split(/\r?\n/);
+  const lines = stripMarkdownFence(script).split(/\r?\n/);
 
   let title = base.title;
   const existingByLabel = new Map<
@@ -200,8 +201,19 @@ export function parseScriptToScene(
       return;
     }
 
+    const hasCardPrefix = /^\[[a-zA-Z_-]+\]\s+/.test(line);
+    const hasMetaSuffix = /\{[^}]*\}\s*$/.test(line);
+    const rawPipeIdx = line.indexOf('|');
+    const arrowIdx = line.search(/-\.->|->/);
+    const hasPipeBeforeArrow =
+      rawPipeIdx !== -1 && (arrowIdx === -1 || rawPipeIdx < arrowIdx);
+    const isExplicitCardLine =
+      hasCardPrefix || hasMetaSuffix || hasPipeBeforeArrow;
+
     // Edge/connector line: A -> B : 说明  OR  A -.-> B : 说明
-    const edgeMatch = line.match(/^(.+?)\s*(-\.->|->)\s*(.+)$/);
+    const edgeMatch = !isExplicitCardLine
+      ? line.match(/^(.+?)\s*(-\.->|->)\s*(.+)$/)
+      : null;
     if (edgeMatch) {
       const fromLabel = edgeMatch[1].trim();
       const arrow = edgeMatch[2];
@@ -384,6 +396,22 @@ export const graphScriptCodec: SceneTextCodec = {
     '# Title · [kind] Label | Subtitle {color: yellow, shape: circle}',
     'A -> B : Relation (solid) · A -.-> B : Dashed edge',
   ],
+  syntaxRules: [
+    'Optional scene title line: `# Scene Title`',
+    'Card declaration: `[role] Label | Optional Subtitle {color: <color>, shape: <shape>, group: <zone name>}`',
+    'Valid `role` values: `root`, `step`, `concept`, `highlight`, `note`',
+    'Valid `color` values: `white`, `yellow`, `cyan`, `pink`, `green`, `orange`',
+    'Connectors (reference exact card Labels): `From Label -> To Label : Optional Edge Label` (solid) or `From Label -.-> To Label : Label` (dashed)',
+    'Lines starting with `//` are ignored as comments.',
+  ],
+  example: [
+    '# Client-Server Flow',
+    '[root] Client | Sends request {color: yellow, shape: circle, group: Edge}',
+    '[step] API Gateway | Routes & validates {color: cyan, shape: rounded, group: Core}',
+    '[highlight] Database | Persists records {color: green, shape: underline, group: Core}',
+    'Client -> API Gateway : HTTPS',
+    'API Gateway -> Database : Query',
+  ].join('\n'),
   parse: parseScriptToScene,
   serialize: serializeSceneToScript,
 };

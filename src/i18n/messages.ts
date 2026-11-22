@@ -22,7 +22,7 @@ export const MESSAGES_EN = {
   'topbar.saveAria': 'Save Project',
   'topbar.saveTitle': 'Save project file (.penova.json)',
   'topbar.importAria': 'Import Project',
-  'topbar.importTitle': 'Import local project file (.json)',
+  'topbar.importTitle': 'Import project or script (.penova.json / .penova.md)',
   'topbar.exportingPct': 'Exporting · {pct}%',
   'topbar.cancelExportTitle': 'Cancel Export',
   'topbar.cancel': 'Cancel',
@@ -196,6 +196,24 @@ export const MESSAGES_EN = {
   'inspector.zonePlaceholder': 'Zone name (used in Concept Graph)',
   'inspector.addChildText': 'Text Child',
   'inspector.addChildShape': 'Shape Child',
+
+  'sidebar.tabScriptFallback': 'Script',
+  'script.sceneMode': 'Scene Script',
+  'script.projectMode': 'Project (.penova.md)',
+  'script.projectHintTitle':
+    'Multi-Scene Script (Text -> Auto-Assemble Plugins -> Video)',
+  'script.projectHintBody':
+    'Declare title, theme, layout, camera, hand & transition per scene, then click Apply Script.',
+  'script.applyBtn': 'Apply Script',
+  'script.copySpecBtn': 'Copy Spec',
+  'script.importMdBtn': 'Import',
+  'script.exportMdBtn': 'Export',
+  'toast.scriptApplied': 'Applied script: {title} ({count} scenes)',
+  'toast.scriptAppliedWarning': 'Applied script ({warning})',
+  'toast.scriptApplyFailed': 'Failed to parse project script',
+  'toast.specCopied': 'Copied live plugin script spec to clipboard',
+  'toast.specCopyFailed': 'Clipboard unavailable in current browser context',
+  'toast.scriptExported': 'Project script exported: {filename}',
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES_EN;
@@ -222,7 +240,7 @@ export const MESSAGES_ZH_CN: Record<MessageKey, string> = {
   'topbar.saveAria': '保存工程',
   'topbar.saveTitle': '保存工程文件 (.penova.json)',
   'topbar.importAria': '导入工程',
-  'topbar.importTitle': '导入本地工程文件 (.json)',
+  'topbar.importTitle': '导入工程或脚本 (.penova.json / .penova.md)',
   'topbar.exportingPct': '正在导出 · {pct}%',
   'topbar.cancelExportTitle': '取消导出',
   'topbar.cancel': '取消',
@@ -395,6 +413,24 @@ export const MESSAGES_ZH_CN: Record<MessageKey, string> = {
   'inspector.zonePlaceholder': '所属分区名称（概念图谱分框用）',
   'inspector.addChildText': '子文字',
   'inspector.addChildShape': '子图形',
+
+  'sidebar.tabScriptFallback': '工程脚本',
+  'script.sceneMode': '单幕脚本',
+  'script.projectMode': '多幕工程 (.penova.md)',
+  'script.projectHintTitle':
+    '多幕声明式工程脚本（文本 → 自动组装插件 → 视频）',
+  'script.projectHintBody':
+    '在各幕头部声明 title / theme / layout / camera / hand / transition，编辑后点击「应用脚本」立即生效。',
+  'script.applyBtn': '应用脚本',
+  'script.copySpecBtn': '复制规范',
+  'script.importMdBtn': '导入',
+  'script.exportMdBtn': '导出',
+  'toast.scriptApplied': '已编译多幕工程：{title}（共 {count} 幕）',
+  'toast.scriptAppliedWarning': '已应用脚本（{warning}）',
+  'toast.scriptApplyFailed': '工程脚本解析失败',
+  'toast.specCopied': '已复制最新插件语法规范到剪贴板',
+  'toast.specCopyFailed': '当前浏览器环境无法访问剪贴板',
+  'toast.scriptExported': '已导出工程脚本：{filename}',
 };
 
 export const MESSAGES: Record<Locale, Record<MessageKey, string>> = {

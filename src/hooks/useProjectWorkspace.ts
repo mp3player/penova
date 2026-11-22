@@ -36,6 +36,10 @@ import {
   evaluateProjectAt,
 } from '../engine/timeline/projectTimeline';
 import { serializeSubtitlesToSrt } from '../engine/subtitle/subtitleEngine';
+import {
+  parseProjectScript,
+  serializeProjectScript,
+} from '../engine/parser/projectScript';
 import { triggerBlobDownload } from '../engine/export/videoExporter';
 import { safeFilename } from '../plugins/exporters/helpers';
 
@@ -443,7 +447,19 @@ export function useProjectWorkspace({
   const handleImportProjectJson = async (file: File) => {
     try {
       const raw = await file.text();
-      const { project: imported, warnings } = parseProjectFromJson(raw);
+      const lowerName = file.name.toLowerCase();
+      const isScriptFile =
+        lowerName.endsWith('.md') ||
+        lowerName.endsWith('.txt') ||
+        !/^\s*[\[{]/.test(raw);
+
+      const { project: imported, warnings } = isScriptFile
+        ? parseProjectScript(raw, {
+            fallbackTitle: file.name.replace(/\.(penova\.)?(md|txt)$/i, ''),
+            fallbackAspectRatio: project.aspectRatio,
+          })
+        : parseProjectFromJson(raw);
+
       lastCoalesceRef.current = { key: null, at: 0 };
       setHistory(resetHistory(imported));
       setActiveSceneIndex(0);
@@ -461,6 +477,47 @@ export function useProjectWorkspace({
         err instanceof Error ? err.message : t('toast.projectImportFailed')
       );
     }
+  };
+
+  const handleApplyProjectScript = (
+    raw: string
+  ): { ok: boolean; warnings: string[] } => {
+    try {
+      const { project: compiledProj, warnings } = parseProjectScript(raw, {
+        fallbackTitle: project.title,
+        fallbackAspectRatio: project.aspectRatio,
+      });
+      commitProject(() => compiledProj);
+      setActiveSceneIndex(0);
+      setSelectedNodeId(null);
+      tMsRef.current = 0;
+      setTMs(0);
+      setIsPlaying(true);
+      showToast(
+        warnings.length > 0
+          ? t('toast.scriptAppliedWarning', { warning: warnings[0] })
+          : t('toast.scriptApplied', {
+              title: compiledProj.title,
+              count: compiledProj.scenes.length,
+            })
+      );
+      return { ok: true, warnings };
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : t('toast.scriptApplyFailed');
+      showToast(msg);
+      return { ok: false, warnings: [msg] };
+    }
+  };
+
+  const handleExportProjectScript = () => {
+    const md = serializeProjectScript(project);
+    const filename = safeFilename(project.title, 'penova.md');
+    triggerBlobDownload(
+      new Blob([md], { type: 'text/markdown;charset=utf-8' }),
+      filename
+    );
+    showToast(t('toast.scriptExported', { filename }));
   };
 
   const handleUpdateSubtitles = (cues: SubtitleCue[]) => {
@@ -507,6 +564,8 @@ export function useProjectWorkspace({
     handleChangeAspectRatio,
     handleSaveProjectJson,
     handleImportProjectJson,
+    handleApplyProjectScript,
+    handleExportProjectScript,
     handleUpdateSubtitles,
     handleToggleShowSubtitles,
     handleExportSrt,

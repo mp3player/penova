@@ -7,6 +7,7 @@ import {
   TextSceneNode,
 } from '../../model/scene';
 import { SceneTextCodec } from '../contracts';
+import { stripMarkdownFence } from './shared';
 
 const DEFAULT_MAX_WIDTH = 580;
 
@@ -33,9 +34,29 @@ export const documentScriptCodec: SceneTextCodec = {
     '---  Insert hand-drawn divider',
     '> Sign-off & Date  Right-aligned block',
   ],
+  syntaxRules: [
+    'Optional scene title header at top: `# Scene Title`',
+    'Bold left-aligned heading / salutation: `## Greeting or Heading`',
+    'Indented body paragraph (2-char first-line indent): `>> Paragraph text...`',
+    'Plain body paragraph (no indent): plain text lines separated by blank lines',
+    'Hand-drawn horizontal divider stroke: `---`',
+    'Right-aligned sign-off / date block (consecutive `>` lines merge into one block): `> Line 1`',
+  ],
+  example: [
+    '# Letter to Creators',
+    '',
+    '## Dear Creators,',
+    '',
+    '>> Penova compiles plain text into stroke-by-stroke handwriting animations.',
+    '',
+    '---',
+    '',
+    '> Crafted with Penova',
+    '> MIT Open Source',
+  ].join('\n'),
   parse(text, base) {
     const warnings: string[] = [];
-    const lines = text.replace(/\r\n/g, '\n').split('\n');
+    const lines = stripMarkdownFence(text).replace(/\r\n/g, '\n').split('\n');
     const existingVertices = base.nodes.filter((n) => n.type !== 'connector');
 
     let title = base.title;
@@ -139,7 +160,7 @@ export const documentScriptCodec: SceneTextCodec = {
     }
 
     if (blocks.length === 0) {
-      warnings.push('文稿内容为空，请添加至少一段文字或分割线。');
+      warnings.push('Document body is empty; add at least one paragraph or divider (---).');
     }
 
     const usedIds = new Set<string>();
@@ -158,7 +179,7 @@ export const documentScriptCodec: SceneTextCodec = {
         const shapeNode: ShapeSceneNode = {
           id,
           type: 'shape',
-          name: matchDiv?.name ?? '分割线',
+          name: matchDiv?.name ?? 'Divider',
           shape: 'divider',
           color: (matchDiv?.color ?? 'orange') as ChalkColor,
           width: matchDiv?.width ?? 560,
@@ -180,7 +201,7 @@ export const documentScriptCodec: SceneTextCodec = {
         const node: TextSceneNode = {
           id,
           type: 'text',
-          name: block.text.slice(0, 18) || '称呼',
+          name: block.text.slice(0, 18) || 'Heading',
           color: existingText?.color ?? 'white',
           text: block.text,
           fontSize:
@@ -197,7 +218,7 @@ export const documentScriptCodec: SceneTextCodec = {
         const node: TextSceneNode = {
           id,
           type: 'text',
-          name: existingText?.align === 'right' ? existingText.name : '落款',
+          name: existingText?.align === 'right' ? existingText.name : 'Sign-off',
           color:
             existingText?.align === 'right'
               ? existingText.color
@@ -220,7 +241,7 @@ export const documentScriptCodec: SceneTextCodec = {
           name:
             existingText && (existingText.indentChars ?? 0) > 0
               ? existingText.name
-              : block.text.slice(0, 18) || '正文',
+              : block.text.slice(0, 18) || 'Body',
           color: existingText?.color ?? 'white',
           text: block.text,
           fontSize: existingText?.fontSize ?? 21,
@@ -236,7 +257,7 @@ export const documentScriptCodec: SceneTextCodec = {
       const node: TextSceneNode = {
         id,
         type: 'text',
-        name: block.text.slice(0, 18) || '段落',
+        name: block.text.slice(0, 18) || 'Paragraph',
         color: existingText?.color ?? 'white',
         text: block.text,
         fontSize: existingText?.fontSize ?? 21,

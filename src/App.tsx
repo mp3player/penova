@@ -152,6 +152,10 @@ export const App: React.FC = () => {
             }
             onRemoveAudioTrack={() => playback.setAudioTrack(null)}
             onExportSrt={workspace.handleExportSrt}
+            onApplyProjectScript={workspace.handleApplyProjectScript}
+            onImportProjectFile={workspace.handleImportProjectJson}
+            onExportProjectScript={workspace.handleExportProjectScript}
+            onNotify={showToast}
           />
         )}
 

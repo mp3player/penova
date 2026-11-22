@@ -6,17 +6,19 @@
 
 ---
 
-## 宣传片四幕效果展示
+## 产品深度介绍六幕效果展示
 
-以下 4 幕效果均已内置于教学模板 **`Penova 官方宣传片（四幕演示）` / `Meet Penova (4-Scene Promo)`** 中，可在工作室内一键预览并直接导出 `16:9`（`1920×1080`）与 `9:16`（`1080×1920`）1080P 视频。
+以下 6 幕效果均已内置于教学模板 **`Penova 产品深度介绍（六幕）` / `Penova Product Intro (6 Scenes)`**（亦可由 [docs/examples/penova-intro.penova.md](docs/examples/penova-intro.penova.md) 一键脚本解析生成），可在工作室内预览并直接导出 `16:9`（`1920×1080`）与 `9:16`（`1080×1920`）1080P 视频。
 
 ![Penova 工作室主界面](docs/assets/studio-overview.png)
 
-| 黑板粉笔 · 横向流程 | 蓝图线稿 · 思维导图 (EN + 汉字) |
+| 黑板粉笔 · Why Penova（横向流程） | 蓝图线稿 · Core Design Principles（概念图谱） |
 | :---: | :---: |
-| ![黑板横向流程](docs/assets/promo-1-chalkboard.png) | ![蓝图思维导图](docs/assets/promo-2-blueprint.png) |
-| **信纸钢笔 · 手写文稿** | **白板马克笔 · 分区概念图谱** |
-| ![信纸钢笔手写文稿](docs/assets/promo-3-letter.png) | ![白板分区概念图谱](docs/assets/promo-4-whiteboard.png) |
+| ![Why Penova 黑板横向流程](docs/assets/promo-1-chalkboard.png) | ![核心设计原则蓝图概念图谱](docs/assets/promo-2-blueprint.png) |
+| **蓝图线稿 · 8-Registry Plugin System（思维导图）** | **白板马克笔 · Script-Driven Custom Plugins（纵向流程）** |
+| ![八大注册表插件系统思维导图](docs/assets/promo-3-mindmap.png) | ![脚本驱动自定义插件白板纵向流程](docs/assets/promo-4-whiteboard.png) |
+| **信纸钢笔 · Real Penmanship (EN + 汉字)** | **黑板粉笔 · Full Studio & Open Source（概念图谱）** |
+| ![中英双语真迹信纸手写文稿](docs/assets/promo-5-letter.png) | ![全功能工作室与开源黑板概念图谱](docs/assets/promo-6-studio.png) |
 
 ---
 
@@ -32,8 +34,9 @@
   - **运镜策略 (`CameraPlugin`)**：`auto-follow`（智能聚焦）、`progressive-fit`（渐进全景）、`static-overview`（固定全景）、`pen-follow`（跟写滚屏）。
   - **多幕转场 (`TransitionPlugin`)**：`chalkboard-eraser`（黑板擦擦除）、`page-turn`（翻页滑切）、`crossfade`（柔和淡化）、`cut`（直接硬切）。
   - **成品导出 (`ExportPlugin`)**：零后端导出 **1080P 视频**（WebM/MP4 `MediaRecorder`）、**高清 PNG 海报**、**离线 FFmpeg 无损 PNG 帧序列包 (`.tar`)**，并提供 `createHttpBridgeExportPlugin` 工厂对接本地/云端合成服务。
+- **声明式多幕脚本管道（`.penova.md` → 自动组装插件 → 视频）**：支持使用纯文本 `.penova.md` 在每幕头部声明 `theme`、`layout`、`camera`、`hand` 与 `transition` 插件，正文交由对应布局的 `textCodec` 解析并直出 1080P 视频；内置 `generateScriptSpec()` 可实时汇总当前所有已注册插件 ID 与自定义语法规则（见示例 [docs/examples/penova-intro.penova.md](docs/examples/penova-intro.penova.md)）。
 - **内置双语体验 (`EN / 简体中文`)**：界面默认英文，顶栏一键切换 `EN / 中文`，且自带 6 套中英双语教学演示预设模板；第三方插件只需提供默认 `name`，无需感知多语言字典即可自动显示。
-- **完整工作室能力**：多幕时间轴编排、自动字幕生成与 `.srt` 导入/导出、本地配音轨同步与 Web Audio 程序化书写音效、撤销/重做历史栈、`16:9` / `9:16` 画幅切换、`.penova.json`（兼容 `.pencil.json`）工程读写与本地草稿自动保存。
+- **完整工作室能力**：多幕时间轴编排、单幕与 `.penova.md` 多幕工程脚本在线编辑/规范复制、自动字幕生成与 `.srt` 导入/导出、本地配音轨同步与 Web Audio 程序化书写音效、撤销/重做历史栈、`16:9` / `9:16` 画幅切换、`.penova.json` 与 `.penova.md` 工程导入导出及草稿自动保存。
 
 ---
 

@@ -40,6 +40,10 @@ interface SidebarEditorProps {
   ) => void;
   onRemoveAudioTrack: () => void;
   onExportSrt: () => void;
+  onApplyProjectScript: (raw: string) => { ok: boolean; warnings: string[] };
+  onImportProjectFile: (file: File) => void;
+  onExportProjectScript: () => void;
+  onNotify: (msg: string) => void;
 }
 
 export const SidebarEditor: React.FC<SidebarEditorProps> = ({
@@ -57,6 +61,10 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
   onUpdateAudioTrack,
   onRemoveAudioTrack,
   onExportSrt,
+  onApplyProjectScript,
+  onImportProjectFile,
+  onExportProjectScript,
+  onNotify,
 }) => {
   const { t, codecMeta } = useI18n();
   const layoutOptions = useRegistryList(layoutRegistry);
@@ -77,13 +85,6 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
   );
   const [scriptWarnings, setScriptWarnings] = useState<string[]>([]);
   const [isEditingScript, setIsEditingScript] = useState(false);
-
-  useEffect(() => {
-    if (!activeCodec && tab === 'script') {
-      setIsEditingScript(false);
-      setTab('outline');
-    }
-  }, [activeCodec, tab]);
 
   useEffect(() => {
     if (!isEditingScript) {
@@ -265,20 +266,20 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
           <Layers size={12} />
           {t('sidebar.tabOutline')}
         </button>
-        {activeCodec && activeCodecMeta && (
-          <button
-            type="button"
-            className={`studio-btn ${tab === 'script' ? 'active' : ''}`}
-            style={{ flex: 1, padding: '0 6px', fontSize: 11.5 }}
-            onClick={() => {
-              setScriptText(activeCodec.serialize(scene));
-              setTab('script');
-            }}
-          >
-            <Code2 size={12} />
-            {activeCodecMeta.label}
-          </button>
-        )}
+        <button
+          type="button"
+          className={`studio-btn ${tab === 'script' ? 'active' : ''}`}
+          style={{ flex: 1, padding: '0 6px', fontSize: 11.5 }}
+          onClick={() => {
+            setScriptText(activeCodec ? activeCodec.serialize(scene) : '');
+            setTab('script');
+          }}
+        >
+          <Code2 size={12} />
+          {activeCodecMeta
+            ? activeCodecMeta.label
+            : t('sidebar.tabScriptFallback')}
+        </button>
         <button
           type="button"
           className={`studio-btn ${tab === 'media' ? 'active' : ''}`}
@@ -306,8 +307,9 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
           onRemoveAudioTrack={onRemoveAudioTrack}
           onExportSrt={onExportSrt}
         />
-      ) : tab === 'script' && activeCodec ? (
+      ) : tab === 'script' ? (
         <ScriptCodecPane
+          project={project}
           scene={scene}
           codec={activeCodec}
           scriptText={scriptText}
@@ -315,6 +317,10 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
           onFocus={() => setIsEditingScript(true)}
           onBlur={() => setIsEditingScript(false)}
           onChange={handleScriptChange}
+          onApplyProjectScript={onApplyProjectScript}
+          onImportProjectFile={onImportProjectFile}
+          onExportProjectScript={onExportProjectScript}
+          onNotify={onNotify}
         />
       ) : (
         <div

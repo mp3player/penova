@@ -279,7 +279,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <input
           ref={projectFileInputRef}
           type="file"
-          accept=".json,.penova.json,.pencil.json"
+          accept=".json,.penova.json,.pencil.json,.md,.penova.md,.txt"
           style={{ display: 'none' }}
           onChange={(e) => {
             const file = e.target.files?.[0];

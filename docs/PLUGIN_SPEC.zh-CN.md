@@ -230,3 +230,13 @@ const verticalDocLayout: LayoutPlugin = {
 
 layoutRegistry.register(verticalDocLayout);
 ```
+
+---
+
+## 四、声明式多幕工程脚本（`.penova.md`）
+
+Penova 支持通过 [src/engine/parser/projectScript.ts](../src/engine/parser/projectScript.ts) 将纯文本 `.penova.md` 直接解析并组装为完整的 `LessonProject`，按每幕声明动态匹配 8 大注册表中的 `theme`、`layout`、`camera`、`hand` 与 `transition` 插件：
+
+- 任意自定义 `LayoutPlugin` 只要挂载配套的 `textCodec`（并可选填写 `syntaxRules` 与 `example`），即可直接在 `.penova.md` 中通过 `layout: <plugin-id>` 驱动成片。
+- 调用 `generateScriptSpec()` 会实时扫描当前 8 大注册表，生成完整的纯文本插件能力与脚本语法规范（可直接用于文档展示或任何外部生成流程）。
+- 完整 6 幕声明式产品介绍脚本文档可参考：[docs/examples/penova-intro.penova.md](examples/penova-intro.penova.md)。

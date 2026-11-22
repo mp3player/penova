@@ -101,6 +101,8 @@ export interface SceneTextCodec {
   label: string;
   hintTitle: string;
   hintLines: string[];
+  syntaxRules?: string[];
+  example?: string;
   parse(
     text: string,
     base: LessonScene

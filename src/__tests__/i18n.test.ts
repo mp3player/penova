@@ -111,8 +111,8 @@ describe('i18n dictionaries, plugin fallbacks, and bilingual presets', () => {
         const compiled = compileProjectTimeline(proj);
         expect(compiled.totalDurationMs).toBeGreaterThan(2000);
         if (proj.id === 'penova-promo') {
-          expect(compiled.totalDurationMs).toBeGreaterThan(20_000);
-          expect(compiled.totalDurationMs).toBeLessThan(65_000);
+          expect(compiled.totalDurationMs).toBeGreaterThan(45_000);
+          expect(compiled.totalDurationMs).toBeLessThan(220_000);
         }
 
         for (const ratio of ['16:9', '9:16'] as const) {

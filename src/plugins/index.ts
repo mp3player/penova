@@ -114,6 +114,7 @@ export function registerBuiltinPlugins(): void {
 registerBuiltinPlugins();
 
 import { useRegistryList } from './useRegistryList';
+import { stripMarkdownFence } from './codecs/shared';
 
 export * from './contracts';
 export * from './registry';
@@ -122,4 +123,5 @@ export {
   registerStrokeOrderGlyphs,
   createImageHandPlugin,
   createHttpBridgeExportPlugin,
+  stripMarkdownFence,
 };
