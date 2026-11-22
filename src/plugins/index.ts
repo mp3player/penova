@@ -1,0 +1,125 @@
+import {
+  cameraRegistry,
+  exportRegistry,
+  glyphProviderRegistry,
+  handRegistry,
+  layoutRegistry,
+  presentationRegistry,
+  shapeRegistry,
+  transitionRegistry,
+} from './registry';
+
+import { roundedShapePlugin } from './shapes/roundedShape';
+import { circleShapePlugin } from './shapes/circleShape';
+import { cloudShapePlugin } from './shapes/cloudShape';
+import { underlineShapePlugin } from './shapes/underlineShape';
+import { diamondShapePlugin } from './shapes/diamondShape';
+import { dividerShapePlugin } from './shapes/dividerShape';
+
+import { flowHorizontalPlugin } from './layouts/flowHorizontalPlugin';
+import { flowVerticalPlugin } from './layouts/flowVerticalPlugin';
+import { mindmapPlugin } from './layouts/mindmapPlugin';
+import { conceptGraphPlugin } from './layouts/conceptGraphPlugin';
+import { documentLayoutPlugin } from './layouts/documentLayoutPlugin';
+import { freeformLayoutPlugin } from './layouts/freeformLayoutPlugin';
+
+import { chalkboardPlugin } from './presentations/chalkboardPlugin';
+import { whiteboardPlugin } from './presentations/whiteboardPlugin';
+import { blueprintPlugin } from './presentations/blueprintPlugin';
+import { letterPaperPlugin } from './presentations/letterPaperPlugin';
+
+import {
+  registerStrokeOrderGlyphs,
+  strokeOrderGlyphProvider,
+} from './glyphs/strokeOrderProvider';
+import { inkGridGlyphProvider } from './glyphs/inkGridProvider';
+
+import { illustratedHandPlugin } from './hands/illustratedHandPlugin';
+import { minimalHandPlugin } from './hands/minimalHandPlugin';
+import { tipOnlyHandPlugin } from './hands/tipOnlyHandPlugin';
+import { hiddenHandPlugin } from './hands/hiddenHandPlugin';
+import { createImageHandPlugin } from './hands/imageHandFactory';
+
+import { autoFollowCameraPlugin } from './cameras/autoFollowCamera';
+import { progressiveFitCameraPlugin } from './cameras/progressiveFitCamera';
+import { staticOverviewCameraPlugin } from './cameras/staticOverviewCamera';
+import { penFollowCameraPlugin } from './cameras/penFollowCamera';
+
+import { chalkboardEraserTransitionPlugin } from './transitions/chalkboardEraserTransition';
+import { pageTurnTransitionPlugin } from './transitions/pageTurnTransition';
+import { crossfadeTransitionPlugin } from './transitions/crossfadeTransition';
+import { cutTransitionPlugin } from './transitions/cutTransition';
+
+import { mediaRecorderExporterPlugin } from './exporters/mediaRecorderExporter';
+import { posterPngExporterPlugin } from './exporters/posterPngExporter';
+import { pngSequenceTarExporterPlugin } from './exporters/pngSequenceTarExporter';
+import { createHttpBridgeExportPlugin } from './exporters/httpBridgeFactory';
+
+let initialized = false;
+
+export function registerBuiltinPlugins(): void {
+  if (initialized) return;
+  initialized = true;
+
+  // Register shapes
+  shapeRegistry.register(roundedShapePlugin, { override: true });
+  shapeRegistry.register(circleShapePlugin, { override: true });
+  shapeRegistry.register(cloudShapePlugin, { override: true });
+  shapeRegistry.register(underlineShapePlugin, { override: true });
+  shapeRegistry.register(diamondShapePlugin, { override: true });
+  shapeRegistry.register(dividerShapePlugin, { override: true });
+
+  // Register layouts
+  layoutRegistry.register(flowHorizontalPlugin, { override: true });
+  layoutRegistry.register(flowVerticalPlugin, { override: true });
+  layoutRegistry.register(mindmapPlugin, { override: true });
+  layoutRegistry.register(conceptGraphPlugin, { override: true });
+  layoutRegistry.register(documentLayoutPlugin, { override: true });
+  layoutRegistry.register(freeformLayoutPlugin, { override: true });
+
+  // Register presentations
+  presentationRegistry.register(chalkboardPlugin, { override: true });
+  presentationRegistry.register(whiteboardPlugin, { override: true });
+  presentationRegistry.register(blueprintPlugin, { override: true });
+  presentationRegistry.register(letterPaperPlugin, { override: true });
+
+  // Register glyph stroke providers (sorted by priority descending at lookup)
+  glyphProviderRegistry.register(strokeOrderGlyphProvider, { override: true });
+  glyphProviderRegistry.register(inkGridGlyphProvider, { override: true });
+
+  // Register writing hands
+  handRegistry.register(illustratedHandPlugin, { override: true });
+  handRegistry.register(minimalHandPlugin, { override: true });
+  handRegistry.register(tipOnlyHandPlugin, { override: true });
+  handRegistry.register(hiddenHandPlugin, { override: true });
+
+  // Register cameras
+  cameraRegistry.register(autoFollowCameraPlugin, { override: true });
+  cameraRegistry.register(progressiveFitCameraPlugin, { override: true });
+  cameraRegistry.register(staticOverviewCameraPlugin, { override: true });
+  cameraRegistry.register(penFollowCameraPlugin, { override: true });
+
+  // Register scene transitions
+  transitionRegistry.register(chalkboardEraserTransitionPlugin, { override: true });
+  transitionRegistry.register(pageTurnTransitionPlugin, { override: true });
+  transitionRegistry.register(crossfadeTransitionPlugin, { override: true });
+  transitionRegistry.register(cutTransitionPlugin, { override: true });
+
+  // Register exporters
+  exportRegistry.register(mediaRecorderExporterPlugin, { override: true });
+  exportRegistry.register(posterPngExporterPlugin, { override: true });
+  exportRegistry.register(pngSequenceTarExporterPlugin, { override: true });
+}
+
+registerBuiltinPlugins();
+
+import { useRegistryList } from './useRegistryList';
+
+export * from './contracts';
+export * from './registry';
+export {
+  useRegistryList,
+  registerStrokeOrderGlyphs,
+  createImageHandPlugin,
+  createHttpBridgeExportPlugin,
+};

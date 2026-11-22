@@ -1,0 +1,247 @@
+import '../../plugins';
+import { LessonScene, Point } from '../../model/scene';
+import { CameraPenHint } from '../../plugins/contracts';
+import { presentationRegistry } from '../../plugins/registry';
+import { CameraState, evaluateCameraAt } from '../camera/cameraDirector';
+import { drawProgressiveGlyph } from '../sketch/textStrokes';
+import { CompiledTimeline, evaluateTimelineAt } from '../timeline/timelineEngine';
+import { drawWritingHand } from './chalkHand';
+import { resolveColorHex } from './themes';
+
+export interface RenderOptions {
+  manualCamera?: CameraState | null;
+  selectedNodeId?: string | null;
+  hoveredNodeId?: string | null;
+  showUiOverlays?: boolean;
+}
+
+let sharedScratchCanvas: HTMLCanvasElement | null = null;
+
+function getScratchCanvas(): HTMLCanvasElement {
+  if (!sharedScratchCanvas) {
+    sharedScratchCanvas = document.createElement('canvas');
+  }
+  return sharedScratchCanvas;
+}
+
+export function screenToWorld(
+  screenX: number,
+  screenY: number,
+  viewportW: number,
+  viewportH: number,
+  cam: CameraState
+): Point {
+  return {
+    x: (screenX - viewportW / 2) / cam.zoom + cam.cx,
+    y: (screenY - viewportH / 2) / cam.zoom + cam.cy,
+  };
+}
+
+export function worldToScreen(
+  worldX: number,
+  worldY: number,
+  viewportW: number,
+  viewportH: number,
+  cam: CameraState
+): Point {
+  return {
+    x: (worldX - cam.cx) * cam.zoom + viewportW / 2,
+    y: (worldY - cam.cy) * cam.zoom + viewportH / 2,
+  };
+}
+
+export function getActiveCamera(
+  scene: LessonScene,
+  timeline: CompiledTimeline,
+  tMs: number,
+  viewportW: number,
+  viewportH: number,
+  manualCamera?: CameraState | null,
+  activePen?: CameraPenHint
+): CameraState {
+  if (manualCamera) return manualCamera;
+  return evaluateCameraAt(
+    timeline,
+    tMs,
+    viewportW,
+    viewportH,
+    scene.cameraMode,
+    activePen
+  );
+}
+
+export function renderSceneFrame(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  scene: LessonScene,
+  timeline: CompiledTimeline,
+  tMs: number,
+  options: RenderOptions = {}
+): void {
+  const presentation = presentationRegistry.getOrDefault(scene.theme);
+  const palette = presentation.palette;
+  const evalState = evaluateTimelineAt(timeline, tMs);
+  const cam = getActiveCamera(
+    scene,
+    timeline,
+    tMs,
+    width,
+    height,
+    options.manualCamera,
+    evalState.pen
+  );
+
+  ctx.save();
+  ctx.clearRect(0, 0, width, height);
+
+  // 1. Presentation surface background
+  presentation.drawSurface(ctx, width, height);
+
+  // 2. Camera transform (world space)
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-cam.cx, -cam.cy);
+
+  const scratch = getScratchCanvas();
+
+  // Pass A: Group frames first so node content sits cleanly above them
+  for (const item of timeline.allItems) {
+    if (item.kind !== 'group-frame') continue;
+    const p = evalState.itemProgress.get(item.id) ?? 0;
+    if (p <= 0) continue;
+    presentation.drawStroke(ctx, item.stroke, p);
+  }
+
+  // Pass B: Strokes (edges + node shapes)
+  for (const item of timeline.allItems) {
+    if (item.kind !== 'stroke') continue;
+    const p = evalState.itemProgress.get(item.id) ?? 0;
+    if (p <= 0) continue;
+    presentation.drawStroke(ctx, item.stroke, p);
+  }
+
+  // Pass C: Text lines (edge label pills, group titles, node titles & subtitles)
+  for (const item of timeline.allItems) {
+    if (item.kind !== 'text-line') continue;
+    const lineProgress = evalState.itemProgress.get(item.id) ?? 0;
+    if (lineProgress <= 0) continue;
+
+    if (item.isEdgeLabel || item.isGroupTitle) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, lineProgress * 3.5);
+      ctx.fillStyle = palette.labelPillBg;
+      ctx.strokeStyle = palette.labelPillBorder;
+      ctx.lineWidth = 1;
+      const rx = item.centerX - item.bgWidth / 2;
+      const ry = item.centerY - item.bgHeight / 2;
+      ctx.beginPath();
+      ctx.roundRect(rx, ry, item.bgWidth, item.bgHeight, 7);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    for (const span of item.spans) {
+      let charP = 0;
+      if (evalState.tMs >= span.endMs) {
+        charP = 1;
+      } else if (evalState.tMs > span.startMs) {
+        charP =
+          (evalState.tMs - span.startMs) /
+          Math.max(1, span.endMs - span.startMs);
+      }
+      if (charP <= 0) continue;
+      drawProgressiveGlyph(
+        ctx,
+        span.glyph,
+        span.boxX,
+        span.boxY,
+        charP,
+        scratch
+      );
+    }
+  }
+
+  // Pass D: Optional presentation particles (e.g. falling chalk dust)
+  if (
+    presentation.drawParticles &&
+    scene.handStyle !== 'hidden' &&
+    evalState.pen.visible &&
+    evalState.pen.penDown
+  ) {
+    presentation.drawParticles(
+      ctx,
+      evalState.pen.worldX,
+      evalState.pen.worldY,
+      resolveColorHex(scene.theme, evalState.pen.color),
+      evalState.tMs,
+      evalState.pen.seed
+    );
+  }
+
+  // Pass E: Subtle UI hover/selection overlays (strictly suppressed during video export)
+  if (options.showUiOverlays) {
+    const highlightTargets: Array<{ id: string; isSelected: boolean }> = [];
+    if (options.hoveredNodeId && options.hoveredNodeId !== options.selectedNodeId) {
+      highlightTargets.push({ id: options.hoveredNodeId, isSelected: false });
+    }
+    if (options.selectedNodeId) {
+      highlightTargets.push({ id: options.selectedNodeId, isSelected: true });
+    }
+
+    for (const target of highlightTargets) {
+      const pNode = timeline.layout.nodeMap.get(target.id);
+      if (!pNode) continue;
+
+      ctx.save();
+      ctx.strokeStyle = target.isSelected
+        ? 'rgba(243, 201, 105, 0.85)'
+        : 'rgba(255, 255, 255, 0.4)';
+      ctx.lineWidth = (target.isSelected ? 2.2 : 1.5) / cam.zoom;
+      ctx.setLineDash([6 / cam.zoom, 5 / cam.zoom]);
+      const pad = 10;
+      ctx.beginPath();
+      ctx.roundRect(
+        pNode.cx - pNode.width / 2 - pad,
+        pNode.cy - pNode.height / 2 - pad,
+        pNode.width + pad * 2,
+        pNode.height + pad * 2,
+        12
+      );
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  ctx.restore(); // exit world transform
+
+  // 3. Screen-space writing hand anchored to transformed pen tip
+  if (evalState.pen.visible) {
+    const tipScreen = worldToScreen(
+      evalState.pen.worldX,
+      evalState.pen.worldY,
+      width,
+      height,
+      cam
+    );
+    drawWritingHand(
+      ctx,
+      tipScreen.x,
+      tipScreen.y,
+      presentation,
+      resolveColorHex(scene.theme, evalState.pen.color),
+      evalState.pen.lift,
+      evalState.pen.alpha,
+      scene.handStyle,
+      {
+        penDown: evalState.pen.penDown,
+        velocity: evalState.pen.velocity,
+        tMs: evalState.tMs,
+      }
+    );
+  }
+
+  ctx.restore();
+}
