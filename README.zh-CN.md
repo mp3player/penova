@@ -34,7 +34,7 @@
   - **运镜策略 (`CameraPlugin`)**：`auto-follow`（智能聚焦）、`progressive-fit`（渐进全景）、`static-overview`（固定全景）、`pen-follow`（跟写滚屏）。
   - **多幕转场 (`TransitionPlugin`)**：`chalkboard-eraser`（黑板擦擦除）、`page-turn`（翻页滑切）、`crossfade`（柔和淡化）、`cut`（直接硬切）。
   - **成品导出 (`ExportPlugin`)**：零后端导出 **1080P 视频**（WebM/MP4 `MediaRecorder`）、**高清 PNG 海报**、**离线 FFmpeg 无损 PNG 帧序列包 (`.tar`)**，并提供 `createHttpBridgeExportPlugin` 工厂对接本地/云端合成服务。
-- **声明式多幕脚本管道（`.penova.md` → 自动组装插件 → 视频）**：支持使用纯文本 `.penova.md` 在每幕头部声明 `theme`、`layout`、`camera`、`hand` 与 `transition` 插件，正文交由对应布局的 `textCodec` 解析并直出 1080P 视频；内置 `generateScriptSpec()` 可实时汇总当前所有已注册插件 ID 与自定义语法规则（见示例 [docs/examples/penova-intro.penova.md](docs/examples/penova-intro.penova.md)）。
+- **声明式多幕脚本管道与 AI Agent Skill（`.penova.md` → 自动组装插件 → 视频）**：支持使用纯文本 `.penova.md` 声明各幕 `theme`、`layout`、`camera`、`hand` 与 `transition` 插件，通过 `generateScriptSpec()` 实时导出插件语法规范，并已内置 [.agents/skills/penova-animation/SKILL.md](.agents/skills/penova-animation/SKILL.md) 供 AI 直接规划分镜、生成脚本并无头导出动画产物（示例见 [docs/examples/penova-intro.penova.md](docs/examples/penova-intro.penova.md)）。
 - **内置双语体验 (`EN / 简体中文`)**：界面默认英文，顶栏一键切换 `EN / 中文`，且自带 6 套中英双语教学演示预设模板；第三方插件只需提供默认 `name`，无需感知多语言字典即可自动显示。
 - **完整工作室能力**：多幕时间轴编排、单幕与 `.penova.md` 多幕工程脚本在线编辑/规范复制、自动字幕生成与 `.srt` 导入/导出、本地配音轨同步与 Web Audio 程序化书写音效、撤销/重做历史栈、`16:9` / `9:16` 画幅切换、`.penova.json` 与 `.penova.md` 工程导入导出及草稿自动保存。
 

@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:skill": "python3 scripts/bundle-skill.py",
     "preview": "vite preview",
     "test": "vitest run"
   },

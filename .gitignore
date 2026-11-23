@@ -10,6 +10,8 @@ promo/
 # Vite & test caches
 .vite/
 coverage/
+__pycache__/
+*.pyc
 
 # Environment & logs
 .env
