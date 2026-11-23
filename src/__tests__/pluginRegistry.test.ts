@@ -13,12 +13,15 @@ import {
   presentationRegistry,
   PresentationPlugin,
   registerStrokeOrderGlyphs,
+  sceneNodeRegistry,
+  SceneNodePlugin,
   shapeRegistry,
   ShapePlugin,
   transitionRegistry,
   TransitionPlugin,
 } from '../plugins';
 import { computeDiagramLayout } from '../engine/layout/diagramLayout';
+import { buildStrokePath } from '../engine/sketch/handDrawnGeometry';
 import { getGlyphStrokeData } from '../engine/sketch/textStrokes';
 import {
   compileTimeline,
@@ -27,12 +30,18 @@ import {
 import { compileProjectTimeline } from '../engine/timeline/projectTimeline';
 import { exportProjectVideo } from '../engine/export/videoExporter';
 import { evaluateCameraAt } from '../engine/camera/cameraDirector';
+import { generateScriptSpec } from '../engine/parser/projectScript';
 import { clipRayToRect } from '../plugins/shapes/clipHelpers';
 import { finalizeLayout, makePositionedNode } from '../plugins/layouts/shared';
-import { createTextNode } from '../model/builders';
+import {
+  createCardNode,
+  createConnectorNode,
+  createCustomNode,
+  createTextNode,
+} from '../model/builders';
 import { PRESET_SCENES } from '../model/presets';
 import { createProjectFromScene } from '../model/project';
-import { LessonScene } from '../model/scene';
+import { isCustomSceneNode, LessonScene } from '../model/scene';
 
 describe('pluginRegistry & extensibility contracts', () => {
   it('registers all built-in shapes, layouts, presentations, glyphs, hands, and cameras', () => {
@@ -91,6 +100,8 @@ describe('pluginRegistry & extensibility contracts', () => {
       'mediarecorder-video',
       'poster-png',
       'png-sequence-tar',
+      'poster-svg',
+      'svg-sequence-tar',
     ]);
   });
 
@@ -521,5 +532,165 @@ describe('pluginRegistry & extensibility contracts', () => {
     const snapAfterRemove = shapeRegistry.list();
     expect(snapAfterRemove).toHaveLength(snap1.length);
     expect(shapeRegistry.list()).toBe(snapAfterRemove);
+  });
+
+  it('supports custom SceneNodePlugin in both composite (compose) and primitive (measure + compile) modes', () => {
+    const kvPlugin: SceneNodePlugin = {
+      id: 'key-value',
+      name: 'Key-Value Card',
+      compose(node) {
+        return {
+          id: `${node.id}-composed`,
+          type: 'group',
+          name: node.name,
+          color: node.color,
+          arrange: 'card',
+          gap: 6,
+          children: [
+            {
+              id: `${node.id}-frame`,
+              type: 'shape',
+              name: 'Frame',
+              color: node.color,
+              shape: 'rounded',
+              fitMode: 'auto-group',
+            },
+            createTextNode({
+              id: `${node.id}-key`,
+              text: String(node.props?.key ?? node.name),
+              color: node.color,
+              fontSize: 20,
+              fontWeight: 700,
+            }),
+            createTextNode({
+              id: `${node.id}-val`,
+              text: String(node.props?.value ?? ''),
+              color: 'white',
+              fontSize: 15,
+            }),
+          ],
+        };
+      },
+    };
+
+    const waveAxisPlugin: SceneNodePlugin = {
+      id: 'wave-axis',
+      name: 'Wave Axis Diagram',
+      measure() {
+        return { width: 220, height: 120 };
+      },
+      compile(positioned, helpers) {
+        const left = positioned.cx - positioned.width / 2 + 16;
+        const right = positioned.cx + positioned.width / 2 - 16;
+        const bottom = positioned.cy + positioned.height / 2 - 20;
+        const top = positioned.cy - positioned.height / 2 + 16;
+
+        helpers.pushStroke(
+          buildStrokePath(
+            `${positioned.id}-x-axis`,
+            [
+              { x: left, y: bottom },
+              { x: right, y: bottom },
+            ],
+            { width: 2.4, color: positioned.node.color, opacity: 0.9 }
+          ),
+          35
+        );
+        helpers.pushStroke(
+          buildStrokePath(
+            `${positioned.id}-y-axis`,
+            [
+              { x: left, y: bottom },
+              { x: left, y: top },
+            ],
+            { width: 2.4, color: positioned.node.color, opacity: 0.9 }
+          ),
+          45
+        );
+        const title = isCustomSceneNode(positioned.node)
+          ? String(positioned.node.props?.title ?? positioned.node.name)
+          : positioned.node.name;
+        helpers.pushTextLine({
+          text: title,
+          boxLeftX: positioned.cx - positioned.width / 2,
+          boxWidth: positioned.width,
+          centerY: positioned.cy,
+          fontSize: 16,
+          color: positioned.node.color,
+        });
+      },
+    };
+
+    sceneNodeRegistry.register(kvPlugin);
+    sceneNodeRegistry.register(waveAxisPlugin);
+
+    try {
+      const spec = generateScriptSpec();
+      expect(spec).toContain('**scene-node**');
+      expect(spec).toContain('`key-value`');
+      expect(spec).toContain('`wave-axis`');
+
+      const scene: LessonScene = {
+        id: 'custom-scene-node-test',
+        title: 'Custom SceneNode Pipeline',
+        theme: 'chalkboard',
+        layoutMode: 'flow-horizontal',
+        cameraMode: 'auto-follow',
+        aspectRatio: '16:9',
+        handStyle: 'hand-chalk',
+        nodes: [
+          createCustomNode({
+            id: 'kv-1',
+            kind: 'key-value',
+            name: 'Latency',
+            color: 'yellow',
+            props: { key: 'P99 Latency', value: '12 ms' },
+          }),
+          createCustomNode({
+            id: 'axis-1',
+            kind: 'wave-axis',
+            name: 'Signal Plot',
+            color: 'cyan',
+            props: { title: 'f(t) = sin(t)' },
+          }),
+          createCardNode({
+            id: 'end-1',
+            label: 'Done',
+            color: 'green',
+            shape: 'none',
+          }),
+          createConnectorNode({
+            id: 'e-kv-axis',
+            fromId: 'kv-1',
+            toId: 'axis-1',
+            color: 'yellow',
+          }),
+        ],
+      };
+
+      const layout = computeDiagramLayout(scene);
+      const kvPositioned = layout.nodeMap.get('kv-1')!;
+      const axisPositioned = layout.nodeMap.get('axis-1')!;
+      expect(kvPositioned.width).toBeGreaterThan(80);
+      expect(kvPositioned.children?.length).toBeGreaterThan(0);
+      expect(axisPositioned.width).toBe(220);
+      expect(axisPositioned.height).toBe(120);
+
+      const timeline = compileTimeline(scene, layout);
+      expect(timeline.allItems.some((i) => i.kind === 'stroke')).toBe(true);
+      expect(timeline.allItems.some((i) => i.kind === 'text-line')).toBe(true);
+
+      const mid = evaluateTimelineAt(timeline, timeline.outroStartMs * 0.5);
+      expect(Number.isFinite(mid.pen.worldX)).toBe(true);
+      expect(Number.isFinite(mid.pen.worldY)).toBe(true);
+
+      const end = evaluateTimelineAt(timeline, timeline.totalDurationMs);
+      for (const item of timeline.allItems) {
+        expect(end.itemProgress.get(item.id)).toBe(1);
+      }
+    } finally {
+      sceneNodeRegistry.unregister(kvPlugin.id);
+      sceneNodeRegistry.unregister(waveAxisPlugin.id);
+    }
   });
 });

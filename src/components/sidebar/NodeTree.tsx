@@ -44,6 +44,8 @@ function renderNodeIcon(node: SceneNode): React.ReactNode {
       return <ArrowRight size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />;
     case 'group':
       return <Folder size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />;
+    default:
+      return <Square size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />;
   }
 }
 

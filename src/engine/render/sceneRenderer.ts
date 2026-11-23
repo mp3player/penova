@@ -17,7 +17,8 @@ export interface RenderOptions {
 
 let sharedScratchCanvas: HTMLCanvasElement | null = null;
 
-function getScratchCanvas(): HTMLCanvasElement {
+function getScratchCanvas(): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
   if (!sharedScratchCanvas) {
     sharedScratchCanvas = document.createElement('canvas');
   }

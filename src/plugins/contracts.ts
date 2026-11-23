@@ -1,6 +1,7 @@
 import {
   AspectRatio,
   ChalkColor,
+  CustomSceneNode,
   GroupSceneNode,
   LessonScene,
   NodeShape,
@@ -9,6 +10,7 @@ import {
   SceneNode,
   TeachingStep,
   TextAlign,
+  ThemeId,
 } from '../model/scene';
 import { StrokePath } from '../sdk/strokePath';
 
@@ -60,11 +62,22 @@ export interface MeasuredGroupNode {
   childMeasurements: Map<string, MeasuredSceneNode>;
 }
 
+export interface MeasuredCustomNode {
+  type: 'custom';
+  kind: string;
+  width: number;
+  height: number;
+  composedNode?: SceneNode;
+  composedMeasured?: MeasuredSceneNode;
+  payload?: unknown;
+}
+
 export type MeasuredSceneNode =
   | MeasuredTextNode
   | MeasuredShapeNode
   | MeasuredConnectorNode
-  | MeasuredGroupNode;
+  | MeasuredGroupNode
+  | MeasuredCustomNode;
 
 export interface PositionedSceneNode {
   id: string;
@@ -329,7 +342,113 @@ export interface ExportFrameSource {
     height: number,
     tMs: number
   ): void;
+  evaluateFrame?(
+    tMs: number,
+    width?: number,
+    height?: number
+  ): EvaluatedFrameSnapshot;
+  renderSvgFrame?(
+    tMs: number,
+    width?: number,
+    height?: number
+  ): string;
 }
+
+export interface EvaluatedGlyphSnapshot {
+  char: string;
+  boxX: number;
+  boxY: number;
+  width: number;
+  height: number;
+  padX: number;
+  fontSize: number;
+  progress: number;
+  segments: GlyphStrokeSegment[];
+  totalLength: number;
+}
+
+export interface EvaluatedTextLineSnapshot {
+  id: string;
+  color: ChalkColor;
+  colorHex: string;
+  font: string;
+  fontSize: number;
+  isEdgeLabel?: boolean;
+  isGroupTitle?: boolean;
+  centerX: number;
+  centerY: number;
+  bgWidth: number;
+  bgHeight: number;
+  progress: number;
+  spans: EvaluatedGlyphSnapshot[];
+}
+
+export interface EvaluatedStrokeSnapshot {
+  id: string;
+  color: ChalkColor;
+  colorHex: string;
+  progress: number;
+  stroke: StrokePath;
+}
+
+export interface EvaluatedGroupFrameSnapshot {
+  id: string;
+  color: ChalkColor;
+  colorHex: string;
+  progress: number;
+  stroke: StrokePath;
+}
+
+export interface EvaluatedPenSnapshot {
+  visible: boolean;
+  worldX: number;
+  worldY: number;
+  screenX: number;
+  screenY: number;
+  penDown: boolean;
+  lift: number;
+  color: ChalkColor;
+  colorHex: string;
+  velocity: number;
+  alpha: number;
+}
+
+export interface EvaluatedSceneSnapshot {
+  kind: 'scene';
+  sceneId: string;
+  title: string;
+  theme: ThemeId;
+  handStyle: string;
+  fontFamily: string;
+  palette: ThemePalette;
+  width: number;
+  height: number;
+  localTMs: number;
+  globalTMs: number;
+  camera: CameraState;
+  groupFrames: EvaluatedGroupFrameSnapshot[];
+  strokes: EvaluatedStrokeSnapshot[];
+  textLines: EvaluatedTextLineSnapshot[];
+  pen: EvaluatedPenSnapshot;
+  subtitleText?: string;
+}
+
+export interface EvaluatedTransitionSnapshot {
+  kind: 'transition';
+  transitionId: string;
+  transitionName: string;
+  progress: number;
+  width: number;
+  height: number;
+  globalTMs: number;
+  fromScene: EvaluatedSceneSnapshot;
+  toScene: EvaluatedSceneSnapshot;
+  subtitleText?: string;
+}
+
+export type EvaluatedFrameSnapshot =
+  | EvaluatedSceneSnapshot
+  | EvaluatedTransitionSnapshot;
 
 export interface ExportRunOptions {
   onProgress: (pct: number) => void;
@@ -353,4 +472,51 @@ export interface ExportPlugin {
     source: ExportFrameSource,
     options: ExportRunOptions
   ): Promise<ExportOutput>;
+}
+
+export interface SceneNodeMeasureContext {
+  measureNode(node: SceneNode): MeasuredSceneNode;
+  measureText(text: string, font: string): number;
+  fontFamily: string;
+}
+
+export interface SceneNodeTextLineInput {
+  id?: string;
+  text: string;
+  boxLeftX: number;
+  boxWidth: number;
+  centerY: number;
+  align?: TextAlign;
+  indentPx?: number;
+  fontSize?: number;
+  fontWeight?: 400 | 700;
+  color?: ChalkColor;
+  msPerChar?: number;
+  gapAfterMs?: number;
+}
+
+export interface SceneNodeCompileHelpers {
+  theme: ThemeId;
+  fontFamily: string;
+  pushStroke(stroke: StrokePath, gapAfterMs?: number): void;
+  pushTextLine(input: SceneNodeTextLineInput): void;
+}
+
+export interface SceneNodePlugin {
+  id: string;
+  name: string;
+  compose?(node: CustomSceneNode): SceneNode;
+  measure?(
+    node: CustomSceneNode,
+    ctx: SceneNodeMeasureContext
+  ): { width: number; height: number; payload?: unknown };
+  compile?(
+    positioned: PositionedSceneNode,
+    helpers: SceneNodeCompileHelpers
+  ): void;
+  clipRay?(
+    positioned: PositionedSceneNode,
+    toward: Point,
+    extraMargin: number
+  ): Point;
 }

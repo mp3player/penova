@@ -15,6 +15,7 @@ import {
   computeConnectorBowMap,
   createPositionedConnectorFromPoints,
   finalizeLayout,
+  indexNodesRecursively,
   makePositionedNode,
   sampleCubicBezier,
   splitSceneNodes,
@@ -30,9 +31,8 @@ export const mindmapPlugin: LayoutPlugin = {
   textCodec: graphScriptCodec,
   deriveSteps: deriveTeachingSteps,
   compute(scene, helpers) {
-    const { vertices, boundConnectors, unboundConnectors } = splitSceneNodes(
-      scene.nodes
-    );
+    const { vertices, ownerVertexIdMap, boundConnectors, unboundConnectors } =
+      splitSceneNodes(scene.nodes);
 
     if (vertices.length === 0) {
       const emptyVertexMap = new Map<string, PositionedSceneNode>();
@@ -55,8 +55,12 @@ export const mindmapPlugin: LayoutPlugin = {
     }
 
     for (const c of boundConnectors) {
-      adj.get(c.fromId!)!.push(c.toId!);
-      inDegree.set(c.toId!, (inDegree.get(c.toId!) ?? 0) + 1);
+      const topFrom = ownerVertexIdMap.get(c.fromId!);
+      const topTo = ownerVertexIdMap.get(c.toId!);
+      if (topFrom && topTo && topFrom !== topTo) {
+        adj.get(topFrom)!.push(topTo);
+        inDegree.set(topTo, (inDegree.get(topTo) ?? 0) + 1);
+      }
     }
 
     const rootNode =
@@ -234,7 +238,7 @@ export const mindmapPlugin: LayoutPlugin = {
         helpers
       );
       positionedNodes.push(pNode);
-      vertexMap.set(n.id, pNode);
+      indexNodesRecursively([pNode], vertexMap);
     }
 
     const bowMap = computeConnectorBowMap(boundConnectors);

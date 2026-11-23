@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { buildTarArchive, safeFilename } from '../plugins/exporters/helpers';
-import { createHttpBridgeExportPlugin } from '../plugins';
-import { createProjectFrameSource } from '../engine/export/videoExporter';
+import { createHttpBridgeExportPlugin, exportRegistry } from '../plugins';
+import {
+  createProjectFrameSource,
+  exportProjectVideo,
+  exportScriptToVideo,
+} from '../engine/export/videoExporter';
+import { renderProjectFrameSvg } from '../engine/render/frameSnapshot';
+import {
+  clearGlyphCache,
+  getGlyphStrokeData,
+} from '../engine/sketch/textStrokes';
 import { compileProjectTimeline } from '../engine/timeline/projectTimeline';
 import { PRESET_SCENES } from '../model/presets';
 import { createProjectFromScene } from '../model/project';
@@ -144,5 +153,111 @@ describe('exporters infrastructure & plugins', () => {
         { onProgress: () => {}, signal: controller.signal }
       )
     ).rejects.toThrow();
+  });
+
+  it('exports SVG posters, SVG frame tar bundles, snapshots, and HTTP bridge payloads without browser Canvas or document', async () => {
+    const script = [
+      '---',
+      'title: Headless Pipeline Demo',
+      'aspectRatio: 16:9',
+      'subtitles: auto',
+      '---',
+      '=== scene ===',
+      'title: Scene 1',
+      'theme: chalkboard',
+      'layout: flow-horizontal',
+      '---',
+      '[root] Plain Text | Pure SVG {color: yellow, shape: circle, say: "Writing text cleanly"}',
+      '[step] Target | Output {color: cyan, shape: rounded}',
+      'Plain Text -> Target : Render',
+    ].join('\n');
+
+    // 1. Direct script -> poster-svg export
+    const svgPoster = await exportScriptToVideo(script, {
+      exporterId: 'poster-svg',
+    });
+    expect(svgPoster.mimeType).toContain('image/svg+xml');
+    expect(svgPoster.filename).toBe('Headless_Pipeline_Demo.svg');
+    const svgText = await svgPoster.blob.text();
+    expect(svgText).toContain('<svg');
+    expect(svgText).toContain('Plain Text');
+
+    // 2. Direct script -> svg-sequence-tar export (headless default when MediaRecorder is unavailable)
+    const svgTar = await exportScriptToVideo(script);
+    expect(svgTar.mimeType).toBe('application/x-tar');
+    expect(svgTar.warnings).toEqual([]);
+    expect(svgTar.subtitlesSrt).toContain('Writing text cleanly');
+    const tarBytes = new Uint8Array(await svgTar.blob.arrayBuffer());
+    expect(tarBytes.length % 512).toBe(0);
+    expect(decoder.decode(tarBytes.subarray(0, 22))).toContain(
+      'frames/frame_00001.svg'
+    );
+
+    // 3. Platform-agnostic evaluateFrame & HTTP bridge auto-selecting SVG without createCanvas
+    const compiled = compileProjectTimeline(svgPoster.project);
+    const source = createProjectFrameSource(compiled, 2);
+    const snap = source.evaluateFrame!(compiled.totalDurationMs * 0.5);
+    expect(snap.kind).toBe('scene');
+    expect(snap.width).toBe(1920);
+    expect(snap.height).toBe(1080);
+
+    let capturedFormat = '';
+    let capturedFrames: string[] = [];
+    const headlessBridge = createHttpBridgeExportPlugin({
+      id: 'headless-svg-bridge',
+      name: 'Headless SVG Bridge',
+      endpointUrl: 'http://localhost:8787/svg-render',
+      fps: 2,
+      fetchImpl: async (_url, init) => {
+        const payload = JSON.parse(String(init?.body ?? '{}')) as {
+          frameFormat: string;
+          frames: string[];
+        };
+        capturedFormat = payload.frameFormat;
+        capturedFrames = payload.frames;
+        return new Response(new Uint8Array([9, 8, 7]), {
+          status: 200,
+          headers: { 'Content-Type': 'video/mp4' },
+        });
+      },
+    });
+    exportRegistry.register(headlessBridge);
+    try {
+      const bridgeOut = await exportProjectVideo(compiled, {
+        exporterId: 'headless-svg-bridge',
+        onProgress: () => {},
+      });
+      expect(bridgeOut.mimeType).toBe('video/mp4');
+      expect(capturedFormat).toBe('svg');
+      expect(capturedFrames.length).toBeGreaterThan(2);
+      expect(capturedFrames[0]).toContain('<svg');
+    } finally {
+      exportRegistry.unregister('headless-svg-bridge');
+    }
+  });
+
+  it('caches headless fallback glyphs with multi-stroke geometry and renders theme-specific SVG surfaces', () => {
+    clearGlyphCache();
+    const g1 = getGlyphStrokeData('龍', '20px sans-serif', 20, '#ffffff', 'chalkboard');
+    const g2 = getGlyphStrokeData('龍', '20px sans-serif', 20, '#ffffff', 'chalkboard');
+    expect(g1).toBe(g2);
+    expect(g1.segments.length).toBeGreaterThanOrEqual(3);
+
+    const blueprintProj = createProjectFromScene({
+      ...PRESET_SCENES[0],
+      theme: 'blueprint',
+    });
+    const bpCompiled = compileProjectTimeline(blueprintProj);
+    const bpSvg = renderProjectFrameSvg(bpCompiled, 500, 1280, 720);
+    expect(bpSvg).toContain('-grid-minor');
+    expect(bpSvg).toContain('-grid-major');
+
+    const letterProj = createProjectFromScene({
+      ...PRESET_SCENES[0],
+      theme: 'letter-paper',
+    });
+    const lpCompiled = compileProjectTimeline(letterProj);
+    const lpSvg = renderProjectFrameSvg(lpCompiled, 500, 1280, 720);
+    expect(lpSvg).toContain('rgba(196, 104, 94, 0.26)');
   });
 });

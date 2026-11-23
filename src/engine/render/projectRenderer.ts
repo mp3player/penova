@@ -4,7 +4,9 @@ import {
   cameraRegistry,
   glyphProviderRegistry,
   handRegistry,
+  layoutRegistry,
   presentationRegistry,
+  sceneNodeRegistry,
   shapeRegistry,
   transitionRegistry,
 } from '../../plugins/registry';
@@ -45,6 +47,8 @@ handRegistry.subscribe(clearTransitionBufferCache);
 cameraRegistry.subscribe(clearTransitionBufferCache);
 shapeRegistry.subscribe(clearTransitionBufferCache);
 glyphProviderRegistry.subscribe(clearTransitionBufferCache);
+layoutRegistry.subscribe(clearTransitionBufferCache);
+sceneNodeRegistry.subscribe(clearTransitionBufferCache);
 
 function matchesCacheKey(
   cached: EndpointCacheKey | null,
@@ -74,7 +78,8 @@ function getOrRenderEndpointBuffer(
   pixelW: number,
   pixelH: number,
   dpr: number
-): HTMLCanvasElement {
+): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
   const safeW = Math.max(1, Math.round(pixelW));
   const safeH = Math.max(1, Math.round(pixelH));
   if (!slot.canvas) {
@@ -160,22 +165,40 @@ export function renderProjectFrame(
       dpr
     );
 
-    ctx.save();
-    ctx.clearRect(0, 0, width, height);
-    const transitionPlugin = transitionRegistry.getOrDefault(
-      evalState.transitionId
-    );
-    transitionPlugin.render({
-      ctx,
-      width,
-      height,
-      progress: evalState.progress,
-      fromCanvas,
-      toCanvas,
-      fromScene: evalState.fromSegment.scene,
-      toScene: evalState.toSegment.scene,
-    });
-    ctx.restore();
+    if (!fromCanvas || !toCanvas) {
+      const fallbackSeg =
+        evalState.progress < 0.5 ? evalState.fromSegment : evalState.toSegment;
+      const fallbackT =
+        evalState.progress < 0.5
+          ? evalState.fromSegment.timeline.totalDurationMs
+          : 0;
+      renderSceneFrame(
+        ctx,
+        width,
+        height,
+        fallbackSeg.scene,
+        fallbackSeg.timeline,
+        fallbackT,
+        options
+      );
+    } else {
+      ctx.save();
+      ctx.clearRect(0, 0, width, height);
+      const transitionPlugin = transitionRegistry.getOrDefault(
+        evalState.transitionId
+      );
+      transitionPlugin.render({
+        ctx,
+        width,
+        height,
+        progress: evalState.progress,
+        fromCanvas,
+        toCanvas,
+        fromScene: evalState.fromSegment.scene,
+        toScene: evalState.toSegment.scene,
+      });
+      ctx.restore();
+    }
   }
 
   if (compiledProject.project.showSubtitles !== false) {

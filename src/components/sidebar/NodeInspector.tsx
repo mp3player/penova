@@ -1,7 +1,8 @@
 import React from 'react';
-import { SceneNode } from '../../model/scene';
+import { isCustomSceneNode, SceneNode } from '../../model/scene';
 import { ShapePlugin } from '../../plugins';
 import { ConnectorNodeInspector } from './inspectors/ConnectorNodeInspector';
+import { CustomNodeInspector } from './inspectors/CustomNodeInspector';
 import { GroupNodeInspector } from './inspectors/GroupNodeInspector';
 import { ShapeNodeInspector } from './inspectors/ShapeNodeInspector';
 import { TextNodeInspector } from './inspectors/TextNodeInspector';
@@ -46,10 +47,19 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
       return (
         <GroupNodeInspector
           node={node}
+          shapeOptions={shapeOptions}
           supportsGroups={supportsGroups}
           onUpdateNode={onUpdateNode}
           onAddChildToGroup={onAddChildToGroup}
         />
       );
+    default:
+      return isCustomSceneNode(node) ? (
+        <CustomNodeInspector
+          node={node}
+          supportsGroups={supportsGroups}
+          onUpdateNode={onUpdateNode}
+        />
+      ) : null;
   }
 };

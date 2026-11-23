@@ -1,13 +1,28 @@
 import '../../plugins';
+import { LessonProject } from '../../model/project';
 import { LessonScene } from '../../model/scene';
 import {
   ExportFrameSource,
   ExportOutput,
 } from '../../plugins/contracts';
 import { exportRegistry } from '../../plugins/registry';
+import {
+  parseProjectScript,
+  ParseProjectScriptOptions,
+} from '../parser/projectScript';
+import {
+  evaluateProjectFrameSnapshot,
+  evaluateSceneFrameSnapshot,
+  renderProjectFrameSvg,
+  renderSceneFrameSvg,
+} from '../render/frameSnapshot';
 import { renderProjectFrame } from '../render/projectRenderer';
 import { renderSceneFrame } from '../render/sceneRenderer';
-import { CompiledProjectTimeline } from '../timeline/projectTimeline';
+import { serializeSubtitlesToSrt } from '../subtitle/subtitleEngine';
+import {
+  CompiledProjectTimeline,
+  compileProjectTimeline,
+} from '../timeline/projectTimeline';
 import { CompiledTimeline } from '../timeline/timelineEngine';
 
 export interface ExportVideoOptions {
@@ -15,6 +30,19 @@ export interface ExportVideoOptions {
   exporterId?: string;
   onProgress: (pct: number) => void;
   signal?: AbortSignal;
+}
+
+export interface ExportScriptOptions extends ParseProjectScriptOptions {
+  fps?: number;
+  exporterId?: string;
+  onProgress?: (pct: number) => void;
+  signal?: AbortSignal;
+}
+
+export interface ExportScriptResult extends ExportOutput {
+  project: LessonProject;
+  warnings: string[];
+  subtitlesSrt: string;
 }
 
 export type ExportVideoResult = ExportOutput;
@@ -50,6 +78,12 @@ export function createSceneFrameSource(
         showUiOverlays: false,
       });
     },
+    evaluateFrame(tMs, w = width, h = height) {
+      return evaluateSceneFrameSnapshot(scene, timeline, tMs, w, h);
+    },
+    renderSvgFrame(tMs, w = width, h = height) {
+      return renderSceneFrameSvg(scene, timeline, tMs, w, h);
+    },
   };
 }
 
@@ -73,6 +107,12 @@ export function createProjectFrameSource(
         showUiOverlays: false,
         dpr: 1,
       });
+    },
+    evaluateFrame(tMs, w = width, h = height) {
+      return evaluateProjectFrameSnapshot(compiledProject, tMs, w, h);
+    },
+    renderSvgFrame(tMs, w = width, h = height) {
+      return renderProjectFrameSvg(compiledProject, tMs, w, h);
     },
   };
 }
@@ -104,4 +144,36 @@ export async function exportProjectVideo(
     onProgress: options.onProgress,
     signal: options.signal,
   });
+}
+
+export async function exportScriptToVideo(
+  scriptText: string,
+  options: ExportScriptOptions = {}
+): Promise<ExportScriptResult> {
+  const parsed = parseProjectScript(scriptText, {
+    fallbackTitle: options.fallbackTitle,
+    fallbackAspectRatio: options.fallbackAspectRatio,
+  });
+  const compiled = compileProjectTimeline(parsed.project);
+  const mediaSupported =
+    exportRegistry.get('mediarecorder-video')?.isSupported?.() ?? false;
+  const exporterId =
+    options.exporterId ??
+    (mediaSupported ? 'mediarecorder-video' : 'svg-sequence-tar');
+
+  const out = await exportProjectVideo(compiled, {
+    fps: options.fps,
+    exporterId,
+    onProgress: options.onProgress ?? (() => {}),
+    signal: options.signal,
+  });
+
+  return {
+    ...out,
+    project: parsed.project,
+    warnings: parsed.warnings,
+    subtitlesSrt: parsed.project.subtitles
+      ? serializeSubtitlesToSrt(parsed.project.subtitles)
+      : '',
+  };
 }

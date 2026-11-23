@@ -2,6 +2,7 @@ import { cloneProject, LessonProject, SubtitleCue } from './project';
 import {
   ChalkColor,
   ConnectorSceneNode,
+  CustomSceneNode,
   GroupSceneNode,
   LessonScene,
   Point,
@@ -77,11 +78,15 @@ function sanitizeSceneNode(
   }
 
   const rawType = raw.type;
+  const isCustomType =
+    rawType === 'custom' ||
+    (typeof rawType === 'string' && rawType.startsWith('custom:'));
   if (
     rawType !== 'text' &&
     rawType !== 'shape' &&
     rawType !== 'connector' &&
-    rawType !== 'group'
+    rawType !== 'group' &&
+    !isCustomType
   ) {
     warnings.push(
       `节点 ${pathLabel} 类型 "${String(rawType)}" 不受支持，已跳过`
@@ -195,6 +200,29 @@ function sanitizeSceneNode(
       toPoint: sanitizePoint(raw.toPoint),
       label,
       style: raw.style === 'dashed' ? 'dashed' : 'solid',
+    };
+    return node;
+  }
+
+  if (isCustomType) {
+    const rawKind =
+      typeof raw.kind === 'string' && raw.kind.trim()
+        ? raw.kind.trim()
+        : typeof rawType === 'string' && rawType.startsWith('custom:')
+        ? rawType.slice('custom:'.length).trim()
+        : 'custom';
+    const kind = rawKind || 'custom';
+    const node: CustomSceneNode = {
+      id,
+      type: `custom:${kind}`,
+      kind,
+      name:
+        typeof raw.name === 'string' && raw.name.trim() ? raw.name : kind,
+      color,
+      visible,
+      offset,
+      meta,
+      props: sanitizeMeta(raw.props),
     };
     return node;
   }

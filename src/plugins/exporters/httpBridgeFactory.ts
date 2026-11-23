@@ -7,6 +7,8 @@ import {
   throwIfAborted,
 } from './helpers';
 
+export type HttpBridgeFrameFormat = 'auto' | 'png-base64' | 'svg' | 'snapshot';
+
 export interface HttpBridgeExportConfig {
   id: string;
   name: string;
@@ -14,6 +16,7 @@ export interface HttpBridgeExportConfig {
   description?: string;
   endpointUrl: string;
   fps?: number;
+  frameFormat?: HttpBridgeFrameFormat;
   headers?: Record<string, string>;
   fetchImpl?: typeof fetch;
   mimeType?: string;
@@ -48,32 +51,70 @@ export function createHttpBridgeExportPlugin(
         Math.ceil((source.totalDurationMs / 1000) * fps)
       );
 
-      const canvas = config.createCanvas
-        ? config.createCanvas(source.width, source.height)
-        : createOffscreenCanvas(source.width, source.height).canvas;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        throw new Error('无法获取离屏画布上下文');
-      }
+      const requestedFormat = config.frameFormat ?? 'auto';
+      const resolvedFormat: 'png-base64' | 'svg' | 'snapshot' =
+        requestedFormat !== 'auto'
+          ? requestedFormat
+          : config.createCanvas || typeof document !== 'undefined'
+          ? 'png-base64'
+          : source.renderSvgFrame
+          ? 'svg'
+          : 'snapshot';
 
       const frames: string[] = [];
       options.onProgress(0);
 
-      for (let i = 0; i <= totalFrames; i++) {
-        throwIfAborted(options.signal);
-        const tMs = Math.min(source.totalDurationMs, i * frameIntervalMs);
-        source.renderFrame(ctx, source.width, source.height, tMs);
-
-        if (config.encodeFrame) {
-          frames.push(await config.encodeFrame(canvas));
-        } else {
-          const blob = await canvasToBlob(canvas, 'image/png');
-          frames.push(bytesToBase64(new Uint8Array(await blob.arrayBuffer())));
+      if (resolvedFormat === 'svg') {
+        if (!source.renderSvgFrame) {
+          throw new Error('当前导出源不支持 SVG 帧渲染');
+        }
+        for (let i = 0; i <= totalFrames; i++) {
+          throwIfAborted(options.signal);
+          const tMs = Math.min(source.totalDurationMs, i * frameIntervalMs);
+          frames.push(source.renderSvgFrame(tMs, source.width, source.height));
+          options.onProgress(
+            Math.min(80, Math.round((i / Math.max(1, totalFrames)) * 80))
+          );
+        }
+      } else if (resolvedFormat === 'snapshot') {
+        if (!source.evaluateFrame) {
+          throw new Error('当前导出源不支持平台无关帧快照求值');
+        }
+        for (let i = 0; i <= totalFrames; i++) {
+          throwIfAborted(options.signal);
+          const tMs = Math.min(source.totalDurationMs, i * frameIntervalMs);
+          frames.push(
+            JSON.stringify(source.evaluateFrame(tMs, source.width, source.height))
+          );
+          options.onProgress(
+            Math.min(80, Math.round((i / Math.max(1, totalFrames)) * 80))
+          );
+        }
+      } else {
+        const canvas = config.createCanvas
+          ? config.createCanvas(source.width, source.height)
+          : createOffscreenCanvas(source.width, source.height).canvas;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          throw new Error('无法获取离屏画布上下文');
         }
 
-        options.onProgress(
-          Math.min(80, Math.round((i / Math.max(1, totalFrames)) * 80))
-        );
+        for (let i = 0; i <= totalFrames; i++) {
+          throwIfAborted(options.signal);
+          const tMs = Math.min(source.totalDurationMs, i * frameIntervalMs);
+          source.renderFrame(ctx, source.width, source.height, tMs);
+
+          if (config.encodeFrame) {
+            frames.push(await config.encodeFrame(canvas));
+          } else {
+            const blob = await canvasToBlob(canvas, 'image/png');
+            frames.push(bytesToBase64(new Uint8Array(await blob.arrayBuffer())));
+          }
+
+          options.onProgress(
+            Math.min(80, Math.round((i / Math.max(1, totalFrames)) * 80))
+          );
+        }
       }
 
       throwIfAborted(options.signal);
@@ -91,6 +132,7 @@ export function createHttpBridgeExportPlugin(
           width: source.width,
           height: source.height,
           fps,
+          frameFormat: resolvedFormat,
           totalDurationMs: source.totalDurationMs,
           frames,
         }),

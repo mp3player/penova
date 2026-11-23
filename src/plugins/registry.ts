@@ -5,6 +5,7 @@ import {
   HandPlugin,
   LayoutPlugin,
   PresentationPlugin,
+  SceneNodePlugin,
   ShapePlugin,
   TransitionPlugin,
 } from './contracts';
@@ -93,3 +94,6 @@ export const transitionRegistry = new PluginRegistry<TransitionPlugin>(
   'transition'
 );
 export const exportRegistry = new PluginRegistry<ExportPlugin>('export');
+export const sceneNodeRegistry = new PluginRegistry<SceneNodePlugin>(
+  'scene-node'
+);

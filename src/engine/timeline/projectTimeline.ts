@@ -5,6 +5,7 @@ import {
   glyphProviderRegistry,
   layoutRegistry,
   presentationRegistry,
+  sceneNodeRegistry,
   shapeRegistry,
   transitionRegistry,
 } from '../../plugins/registry';
@@ -21,6 +22,8 @@ layoutRegistry.subscribe(clearSceneCompileCache);
 shapeRegistry.subscribe(clearSceneCompileCache);
 presentationRegistry.subscribe(clearSceneCompileCache);
 glyphProviderRegistry.subscribe(clearSceneCompileCache);
+sceneNodeRegistry.subscribe(clearSceneCompileCache);
+transitionRegistry.subscribe(clearSceneCompileCache);
 
 export interface CompiledTransitionWindow {
   id: TransitionId;

@@ -2,6 +2,7 @@ import {
   CardRole,
   ChalkColor,
   ConnectorSceneNode,
+  CustomSceneNode,
   GroupSceneNode,
   NodeShape,
   Point,
@@ -9,6 +10,7 @@ import {
   ShapeSceneNode,
   TextAlign,
   TextSceneNode,
+  isCustomSceneNode,
 } from './scene';
 
 export function createTextNode(opts: {
@@ -94,9 +96,30 @@ export function createConnectorNode(opts: {
   };
 }
 
+export function createCustomNode(opts: {
+  id: string;
+  kind: string;
+  name?: string;
+  color?: ChalkColor;
+  props?: Record<string, string | number | boolean | undefined>;
+  offset?: Point;
+  meta?: Record<string, string | number | boolean | undefined>;
+}): CustomSceneNode {
+  return {
+    id: opts.id,
+    type: `custom:${opts.kind}`,
+    kind: opts.kind,
+    name: opts.name ?? opts.kind,
+    color: opts.color ?? 'white',
+    props: opts.props ? { ...opts.props } : undefined,
+    offset: opts.offset,
+    meta: opts.meta,
+  };
+}
+
 /**
  * Layer 2 Builder: constructs a classroom diagram card as a composite GroupSceneNode
- * containing shape + title text + optional subtitle text.
+ * containing optional shape + title text + optional subtitle text.
  */
 export function createCardNode(opts: {
   id: string;
@@ -106,7 +129,10 @@ export function createCardNode(opts: {
   color: ChalkColor;
   shape?: NodeShape;
   zone?: string;
+  say?: string;
+  pause?: number;
   offset?: Point;
+  meta?: Record<string, string | number | boolean | undefined>;
 }): GroupSceneNode {
   const role: CardRole = opts.role ?? 'concept';
   const shape: NodeShape = opts.shape ?? 'rounded';
@@ -158,22 +184,26 @@ export function createCardNode(opts: {
       }
     : null;
 
-  const shapeNode: ShapeSceneNode = {
-    id: `${opts.id}-frame`,
-    type: 'shape',
-    name: `外框 (${shape})`,
-    color: opts.color,
-    shape,
-    fitMode: 'auto-group',
-    emphasized,
-  };
+  const shapeNode: ShapeSceneNode | null =
+    shape === 'none'
+      ? null
+      : {
+          id: `${opts.id}-frame`,
+          type: 'shape',
+          name: `外框 (${shape})`,
+          color: opts.color,
+          shape,
+          fitMode: 'auto-group',
+          emphasized,
+        };
 
   // Child order naturally determines draw order:
-  // underline draws after text; enclosed frames draw before text.
-  const children: SceneNode[] =
-    shape === 'underline'
-      ? [titleNode, ...(subtitleNode ? [subtitleNode] : []), shapeNode]
-      : [shapeNode, titleNode, ...(subtitleNode ? [subtitleNode] : [])];
+  // underline draws after text; enclosed frames draw before text; shape === 'none' omits frame.
+  const children: SceneNode[] = !shapeNode
+    ? [titleNode, ...(subtitleNode ? [subtitleNode] : [])]
+    : shape === 'underline'
+    ? [titleNode, ...(subtitleNode ? [subtitleNode] : []), shapeNode]
+    : [shapeNode, titleNode, ...(subtitleNode ? [subtitleNode] : [])];
 
   return {
     id: opts.id,
@@ -184,9 +214,149 @@ export function createCardNode(opts: {
     gap: 6,
     offset: opts.offset,
     meta: {
+      ...(opts.meta ?? {}),
       role,
+      isCard: true,
       zone: opts.zone,
+      ...(opts.say !== undefined ? { say: opts.say } : {}),
+      ...(opts.pause !== undefined ? { pause: opts.pause } : {}),
     },
+    children,
+  };
+}
+
+export function isCardGroupNode(node: SceneNode): node is GroupSceneNode {
+  if (node.type !== 'group' || (node.arrange ?? 'card') !== 'card') {
+    return false;
+  }
+  let shapeCount = 0;
+  let textCount = 0;
+  for (const child of node.children) {
+    if (child.type === 'shape') {
+      shapeCount++;
+    } else if (child.type === 'text') {
+      textCount++;
+    } else {
+      return false;
+    }
+  }
+  return shapeCount <= 1 && textCount >= 1 && textCount <= 2;
+}
+
+export function updateCardGroupNode(
+  group: GroupSceneNode,
+  patch: Partial<CardSummary> & { offset?: Point }
+): GroupSceneNode {
+  const current = getCardSummary(group);
+  const nextLabel = patch.label !== undefined ? patch.label : current.label;
+  const nextSubtitle =
+    patch.subtitle !== undefined ? patch.subtitle : current.subtitle;
+  const nextRole: CardRole = patch.role ?? current.role;
+  const nextColor: ChalkColor = patch.color ?? current.color;
+  const nextShape: NodeShape = patch.shape ?? current.shape;
+  const nextZone = patch.zone !== undefined ? patch.zone : current.zone;
+  const nextSay = patch.say !== undefined ? patch.say : current.say;
+  const nextPause = patch.pause !== undefined ? patch.pause : current.pause;
+
+  const titleFontSize =
+    nextRole === 'root'
+      ? 25
+      : nextRole === 'highlight'
+      ? 21
+      : nextRole === 'note'
+      ? 18
+      : 20;
+  const subtitleFontSize = nextRole === 'root' ? 14.5 : 13.5;
+
+  const maxWidth =
+    nextShape === 'circle'
+      ? 162
+      : nextShape === 'diamond'
+      ? 168
+      : nextRole === 'root'
+      ? 230
+      : 210;
+
+  const emphasized = nextRole === 'root' || nextRole === 'highlight';
+
+  const existingShape = group.children.find(
+    (c): c is ShapeSceneNode => c.type === 'shape'
+  );
+  const existingTexts = group.children.filter(
+    (c): c is TextSceneNode => c.type === 'text'
+  );
+  const existingTitle = existingTexts[0];
+  const existingSub = existingTexts[1];
+
+  const titleNode: TextSceneNode = {
+    ...(existingTitle ?? {}),
+    id: existingTitle?.id ?? `${group.id}-title`,
+    type: 'text',
+    name: nextLabel || '标题文字',
+    color: nextColor,
+    text: nextLabel,
+    fontSize: titleFontSize,
+    fontWeight: 700,
+    maxWidth,
+    align: 'center',
+  };
+
+  const trimmedSub = nextSubtitle?.trim() ? nextSubtitle : undefined;
+  const subtitleNode: TextSceneNode | null = trimmedSub
+    ? {
+        ...(existingSub ?? {}),
+        id: existingSub?.id ?? `${group.id}-sub`,
+        type: 'text',
+        name: '副标题',
+        color: 'white',
+        text: trimmedSub,
+        fontSize: subtitleFontSize,
+        fontWeight: 400,
+        maxWidth: maxWidth + 18,
+        align: 'center',
+      }
+    : null;
+
+  const shapeNode: ShapeSceneNode | null =
+    nextShape === 'none'
+      ? null
+      : {
+          ...(existingShape ?? {}),
+          id: existingShape?.id ?? `${group.id}-frame`,
+          type: 'shape',
+          name: `外框 (${nextShape})`,
+          color: nextColor,
+          shape: nextShape,
+          fitMode: 'auto-group',
+          emphasized,
+        };
+
+  const children: SceneNode[] = !shapeNode
+    ? [titleNode, ...(subtitleNode ? [subtitleNode] : [])]
+    : nextShape === 'underline'
+    ? [titleNode, ...(subtitleNode ? [subtitleNode] : []), shapeNode]
+    : [shapeNode, titleNode, ...(subtitleNode ? [subtitleNode] : [])];
+
+  const nextMeta: Record<string, string | number | boolean | undefined> = {
+    ...(group.meta ?? {}),
+    role: nextRole,
+    isCard: true,
+    zone: nextZone || undefined,
+    say: nextSay || undefined,
+    pause:
+      nextPause !== undefined && Number.isFinite(nextPause) && nextPause >= 0
+        ? Math.round(nextPause)
+        : undefined,
+  };
+
+  return {
+    ...group,
+    name: nextLabel,
+    color: nextColor,
+    arrange: 'card',
+    gap: group.gap ?? 6,
+    offset: patch.offset !== undefined ? patch.offset : group.offset,
+    meta: nextMeta,
     children,
   };
 }
@@ -198,6 +368,8 @@ export interface CardSummary {
   color: ChalkColor;
   shape: NodeShape;
   zone?: string;
+  say?: string;
+  pause?: number;
 }
 
 export function getCardSummary(node: SceneNode): CardSummary {
@@ -214,6 +386,16 @@ export function getCardSummary(node: SceneNode): CardSummary {
     typeof node.meta?.zone === 'string' && node.meta.zone.trim()
       ? node.meta.zone
       : undefined;
+  const say =
+    typeof node.meta?.say === 'string' && node.meta.say.trim()
+      ? node.meta.say.trim()
+      : undefined;
+  const pause =
+    typeof node.meta?.pause === 'number' &&
+    Number.isFinite(node.meta.pause) &&
+    node.meta.pause >= 0
+      ? node.meta.pause
+      : undefined;
 
   if (node.type === 'group') {
     const texts = node.children.filter(
@@ -229,8 +411,10 @@ export function getCardSummary(node: SceneNode): CardSummary {
       subtitle: subText,
       role,
       color: texts[0]?.color ?? node.color,
-      shape: frame?.shape ?? 'rounded',
+      shape: frame?.shape ?? 'none',
       zone,
+      say,
+      pause,
     };
   }
 
@@ -239,8 +423,10 @@ export function getCardSummary(node: SceneNode): CardSummary {
       label: node.text,
       role,
       color: node.color,
-      shape: 'rounded',
+      shape: 'none',
       zone,
+      say,
+      pause,
     };
   }
 
@@ -251,6 +437,20 @@ export function getCardSummary(node: SceneNode): CardSummary {
       color: node.color,
       shape: node.shape,
       zone,
+      say,
+      pause,
+    };
+  }
+
+  if (isCustomSceneNode(node)) {
+    return {
+      label: node.name,
+      role,
+      color: node.color,
+      shape: 'none',
+      zone,
+      say,
+      pause,
     };
   }
 
@@ -260,5 +460,7 @@ export function getCardSummary(node: SceneNode): CardSummary {
     color: node.color,
     shape: 'rounded',
     zone,
+    say,
+    pause,
   };
 }

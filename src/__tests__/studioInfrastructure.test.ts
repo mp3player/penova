@@ -12,7 +12,9 @@ import {
   serializeProjectToJson,
 } from '../model/projectStorage';
 import { PRESET_PROJECTS } from '../model/presets';
+import { createCustomNode } from '../model/builders';
 import { cloneProject } from '../model/project';
+import { isCustomSceneNode } from '../model/scene';
 import { compileProjectTimeline } from '../engine/timeline/projectTimeline';
 import {
   formatSrtTimestamp,
@@ -132,6 +134,36 @@ describe('projectStorage (JSON serialize/parse)', () => {
 
     const compiled = compileProjectTimeline(project);
     expect(compiled.totalDurationMs).toBeGreaterThan(0);
+  });
+
+  it('preserves CustomSceneNode kind and props during JSON serialize/parse', () => {
+    const project = cloneProject(PRESET_PROJECTS[0]);
+    project.scenes[0].nodes.push(
+      createCustomNode({
+        id: 'custom-json-1',
+        kind: 'key-value',
+        name: 'Throughput',
+        color: 'green',
+        props: { key: 'QPS', value: 1200, healthy: true },
+      })
+    );
+
+    const json = serializeProjectToJson(project);
+    const { project: restored, warnings } = parseProjectFromJson(json);
+    expect(warnings).toEqual([]);
+    const restoredCustom = restored.scenes[0].nodes.find(
+      (n) => n.id === 'custom-json-1'
+    );
+    expect(restoredCustom).toBeDefined();
+    expect(restoredCustom && isCustomSceneNode(restoredCustom)).toBe(true);
+    if (restoredCustom && isCustomSceneNode(restoredCustom)) {
+      expect(restoredCustom.kind).toBe('key-value');
+      expect(restoredCustom.props).toEqual({
+        key: 'QPS',
+        value: 1200,
+        healthy: true,
+      });
+    }
   });
 });
 

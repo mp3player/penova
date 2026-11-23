@@ -23,8 +23,8 @@ export const pngSequenceTarExporterPlugin: ExportPlugin = {
   async export(source, options) {
     throwIfAborted(options.signal);
 
-    const width = source.aspectRatio === '9:16' ? 720 : 1280;
-    const height = source.aspectRatio === '9:16' ? 1280 : 720;
+    const width = source.width || (source.aspectRatio === '9:16' ? 1080 : 1920);
+    const height = source.height || (source.aspectRatio === '9:16' ? 1920 : 1080);
     const { canvas, ctx } = createOffscreenCanvas(width, height);
 
     const frameIntervalMs = 1000 / TAR_EXPORT_FPS;
@@ -95,7 +95,9 @@ export const pngSequenceTarExporterPlugin: ExportPlugin = {
     options.onProgress(100);
 
     return {
-      blob: new Blob([tarBytes.slice()], { type: 'application/x-tar' }),
+      blob: new Blob([tarBytes as unknown as BlobPart], {
+        type: 'application/x-tar',
+      }),
       filename: safeFilename(source.title, 'tar'),
       mimeType: 'application/x-tar',
       summary: `${frameCount} frames @ ${TAR_EXPORT_FPS}fps`,

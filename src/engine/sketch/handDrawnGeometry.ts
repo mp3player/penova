@@ -1,7 +1,7 @@
 import { ChalkColor } from '../../model/scene';
 import { GroupBox, PositionedSceneNode } from '../../plugins/contracts';
 import { shapeRegistry } from '../../plugins/registry';
-import { hashString, mulberry32 } from './random';
+import { hashString, mulberry32 } from '../../sdk/random';
 import {
   buildRoundedRectPoints,
   buildStrokePath,
@@ -9,7 +9,7 @@ import {
   sketchPolyline,
   sketchSegment,
   StrokePath,
-} from './strokePath';
+} from '../../sdk/strokePath';
 
 export type { StrokePath };
 export { buildStrokePath, samplePointAlongStroke };

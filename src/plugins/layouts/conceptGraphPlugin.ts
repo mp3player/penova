@@ -15,6 +15,7 @@ import {
   buildConnectorNode,
   computeConnectorBowMap,
   finalizeLayout,
+  indexNodesRecursively,
   makePositionedNode,
   splitSceneNodes,
 } from './shared';
@@ -195,7 +196,7 @@ export const conceptGraphPlugin: LayoutPlugin = {
           helpers
         );
         positionedNodes.push(pNode);
-        vertexMap.set(node.id, pNode);
+        indexNodesRecursively([pNode], vertexMap);
 
         minX = Math.min(minX, pNode.cx - pNode.width / 2);
         minY = Math.min(minY, pNode.cy - pNode.height / 2);

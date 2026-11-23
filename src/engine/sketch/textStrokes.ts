@@ -16,6 +16,7 @@ export interface GlyphStrokeData {
   height: number;
   padX: number;
   advanceWidth: number;
+  colorHex: string;
   segments: GlyphStrokeSegment[];
   totalLength: number;
   chalkCanvas?: HTMLCanvasElement;
@@ -51,28 +52,66 @@ function isWide(ch: string): boolean {
   );
 }
 
+function cacheGlyphData(key: string, data: GlyphStrokeData): void {
+  if (glyphCache.size >= MAX_GLYPH_CACHE) {
+    const oldest = glyphCache.keys().next().value;
+    if (oldest !== undefined) glyphCache.delete(oldest);
+  }
+  glyphCache.set(key, data);
+}
+
+function measureSegmentLength(pts: Point[]): number {
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  }
+  return len;
+}
+
 function buildFallbackSegments(
   width: number,
   height: number,
-  fontSize: number
+  fontSize: number,
+  char = ''
 ): GlyphStrokeSegment[] {
   const cx = width * 0.5;
   const cy = height * 0.52;
-  const r = Math.min(width, fontSize) * 0.28;
-  const s1: Point[] = [
-    { x: cx - r, y: cy - r * 0.5 },
-    { x: cx + r, y: cy - r * 0.5 },
+  const rx = Math.max(4, Math.min(width * 0.36, fontSize * 0.38));
+  const ry = Math.max(5, Math.min(height * 0.34, fontSize * 0.42));
+  const charSeed = hashString(char || '?');
+  const jitter = (a: number, b: number, amp = 0.22) =>
+    (((hash2D(a, b, charSeed) & 255) / 255) - 0.5) * 2 * amp;
+
+  // Deterministic character-seeded multi-stroke calligraphic fallback (3-4 strokes)
+  const strokes: Point[][] = [
+    [
+      { x: cx - rx * (0.85 + jitter(1, 1)), y: cy - ry * (0.62 + jitter(1, 2)) },
+      { x: cx + rx * (0.05 + jitter(1, 3, 0.12)), y: cy - ry * (0.72 + jitter(1, 4, 0.14)) },
+      { x: cx + rx * (0.88 + jitter(1, 5)), y: cy - ry * (0.58 + jitter(1, 6)) },
+    ],
+    [
+      { x: cx + rx * jitter(2, 1, 0.28), y: cy - ry * (0.82 + jitter(2, 2, 0.12)) },
+      { x: cx + rx * jitter(2, 3, 0.18), y: cy + ry * 0.08 },
+      { x: cx + rx * jitter(2, 4, 0.28), y: cy + ry * (0.86 + jitter(2, 5, 0.12)) },
+    ],
+    [
+      { x: cx - rx * (0.75 + jitter(3, 1)), y: cy + ry * (0.12 + jitter(3, 2)) },
+      { x: cx, y: cy + ry * (0.05 + jitter(3, 3, 0.15)) },
+      { x: cx + rx * (0.82 + jitter(3, 4)), y: cy + ry * (0.28 + jitter(3, 5)) },
+    ],
   ];
-  const s2: Point[] = [
-    { x: cx, y: cy - r * 0.7 },
-    { x: cx, y: cy + r * 0.8 },
-  ];
-  const l1 = Math.hypot(s1[1].x - s1[0].x, s1[1].y - s1[0].y);
-  const l2 = Math.hypot(s2[1].x - s2[0].x, s2[1].y - s2[0].y);
-  return [
-    { points: s1, length: l1 },
-    { points: s2, length: l2 },
-  ];
+
+  if (isWide(char) || (hash2D(4, 0, charSeed) & 1) === 1) {
+    strokes.push([
+      { x: cx - rx * (0.58 + jitter(4, 1)), y: cy + ry * (0.74 + jitter(4, 2, 0.14)) },
+      { x: cx + rx * (0.74 + jitter(4, 3)), y: cy + ry * (0.68 + jitter(4, 4, 0.14)) },
+    ]);
+  }
+
+  return strokes.map((points) => ({
+    points,
+    length: measureSegmentLength(points),
+  }));
 }
 
 function computeInkBounds(
@@ -143,7 +182,7 @@ function resolveGlyphStrokes(
     }
   }
 
-  return buildFallbackSegments(boxW, boxH, fontSize);
+  return buildFallbackSegments(boxW, boxH, fontSize, char);
 }
 
 export function getGlyphStrokeData(
@@ -159,12 +198,14 @@ export function getGlyphStrokeData(
 
   const mCtx = getMeasureCtx();
   if (!mCtx || typeof document === 'undefined') {
+    const boldBoost =
+      font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
     const advanceWidth =
       char === ' '
         ? fontSize * 0.34
         : isWide(char)
-        ? fontSize * 1.02
-        : fontSize * 0.58;
+        ? fontSize * 1.02 * boldBoost
+        : fontSize * 0.58 * boldBoost;
     const padX = Math.ceil(fontSize * 0.24);
     const width = Math.max(8, advanceWidth + padX * 2);
     const height = Math.max(12, fontSize * 1.48);
@@ -178,9 +219,11 @@ export function getGlyphStrokeData(
       height,
       padX,
       advanceWidth,
+      colorHex,
       segments,
       totalLength,
     };
+    cacheGlyphData(key, data);
     return data;
   }
 
@@ -198,14 +241,11 @@ export function getGlyphStrokeData(
       height: boxH,
       padX,
       advanceWidth,
+      colorHex,
       segments: [],
       totalLength: 0,
     };
-    if (glyphCache.size >= MAX_GLYPH_CACHE) {
-      const oldest = glyphCache.keys().next().value;
-      if (oldest !== undefined) glyphCache.delete(oldest);
-    }
-    glyphCache.set(key, spaceData);
+    cacheGlyphData(key, spaceData);
     return spaceData;
   }
 
@@ -283,16 +323,13 @@ export function getGlyphStrokeData(
     height: boxH,
     padX,
     advanceWidth,
+    colorHex,
     segments,
     totalLength,
     chalkCanvas,
   };
 
-  if (glyphCache.size >= MAX_GLYPH_CACHE) {
-    const oldest = glyphCache.keys().next().value;
-    if (oldest !== undefined) glyphCache.delete(oldest);
-  }
-  glyphCache.set(key, result);
+  cacheGlyphData(key, result);
   return result;
 }
 
@@ -345,9 +382,54 @@ export function drawProgressiveGlyph(
   boxX: number,
   boxY: number,
   progress: number,
-  scratchCanvas: HTMLCanvasElement
+  scratchCanvas?: HTMLCanvasElement | null
 ): void {
-  if (progress <= 0 || !glyph.chalkCanvas) return;
+  if (progress <= 0) return;
+
+  if (!glyph.chalkCanvas || !scratchCanvas) {
+    if (glyph.segments.length === 0 || glyph.totalLength <= 1e-4) return;
+    ctx.save();
+    ctx.translate(boxX, boxY);
+    ctx.strokeStyle = glyph.colorHex;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(1.6, glyph.fontSize * 0.1);
+
+    let remaining = Math.max(0, Math.min(1, progress)) * glyph.totalLength;
+    for (const seg of glyph.segments) {
+      if (remaining <= 0) break;
+      const pts = seg.points;
+      if (pts.length === 0) continue;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      if (remaining >= seg.length) {
+        for (let i = 1; i < pts.length; i++) {
+          ctx.lineTo(pts[i].x, pts[i].y);
+        }
+        ctx.stroke();
+        remaining -= seg.length;
+      } else {
+        let drawn = 0;
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1];
+          const b = pts[i];
+          const len = Math.hypot(b.x - a.x, b.y - a.y);
+          if (drawn + len <= remaining) {
+            ctx.lineTo(b.x, b.y);
+            drawn += len;
+          } else {
+            const frac = len > 1e-4 ? (remaining - drawn) / len : 0;
+            ctx.lineTo(a.x + (b.x - a.x) * frac, a.y + (b.y - a.y) * frac);
+            break;
+          }
+        }
+        ctx.stroke();
+        remaining = 0;
+      }
+    }
+    ctx.restore();
+    return;
+  }
 
   if (
     progress >= 0.999 ||

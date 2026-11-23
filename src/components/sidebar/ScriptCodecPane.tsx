@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   BookOpen,
   Download,
-  Info,
   Play,
   Upload,
 } from 'lucide-react';
@@ -31,18 +30,9 @@ interface ScriptCodecPaneProps {
   onNotify: (msg: string) => void;
 }
 
-function hasNonCardNodes(scene: LessonScene): boolean {
-  return scene.nodes.some((n) => {
-    if (n.type === 'text' || n.type === 'shape') return true;
-    if (n.type === 'group' && n.arrange && n.arrange !== 'card') return true;
-    if (n.type === 'connector' && (!n.fromId || !n.toId)) return true;
-    return false;
-  });
-}
-
 export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
   project,
-  scene,
+  scene: _scene,
   codec,
   scriptText,
   warnings,
@@ -62,7 +52,7 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
     serializeProjectScript(project)
   );
   const [projectWarnings, setProjectWarnings] = useState<string[]>([]);
-  const [isEditingProject, setIsEditingProject] = useState(false);
+  const [isProjectDirty, setIsProjectDirty] = useState(false);
   const justAppliedRef = useRef(false);
   const scriptImportRef = useRef<HTMLInputElement | null>(null);
 
@@ -73,19 +63,17 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
   }, [codec, mode]);
 
   useEffect(() => {
-    if (!isEditingProject) {
-      setProjectDraft(serializeProjectScript(project));
-      if (justAppliedRef.current) {
-        justAppliedRef.current = false;
-      } else {
-        setProjectWarnings([]);
-      }
+    setProjectDraft(serializeProjectScript(project));
+    setIsProjectDirty(false);
+    if (justAppliedRef.current) {
+      justAppliedRef.current = false;
+    } else {
+      setProjectWarnings([]);
     }
-  }, [project, isEditingProject]);
+  }, [project]);
 
   const effectiveMode = codec ? mode : 'project';
   const meta = codec ? codecMeta(codec) : null;
-  const showAtomNotice = effectiveMode === 'scene' && hasNonCardNodes(scene);
   const activeWarnings =
     effectiveMode === 'scene' ? warnings : projectWarnings;
 
@@ -105,7 +93,7 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
 
   const handleApplyProject = () => {
     justAppliedRef.current = true;
-    setIsEditingProject(false);
+    setIsProjectDirty(false);
     const res = onApplyProjectScript(projectDraft);
     setProjectWarnings(res.warnings);
   };
@@ -144,8 +132,10 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
             effectiveMode === 'project' ? 'active' : ''
           }`}
           onClick={() => {
-            setProjectDraft(serializeProjectScript(project));
-            setProjectWarnings([]);
+            if (!isProjectDirty) {
+              setProjectDraft(serializeProjectScript(project));
+              setProjectWarnings([]);
+            }
             setMode('project');
           }}
           style={{ flex: 1, justifyContent: 'center', fontSize: 11.2 }}
@@ -182,26 +172,6 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
               </div>
             ))}
           </div>
-
-          {showAtomNotice && (
-            <div
-              style={{
-                padding: '7px 9px',
-                borderRadius: 7,
-                background: 'rgba(125, 216, 247, 0.08)',
-                border: '1px solid rgba(125, 216, 247, 0.28)',
-                color: '#bae6fd',
-                fontSize: 11.2,
-                lineHeight: 1.45,
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 6,
-              }}
-            >
-              <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span>{t('script.nonCardNotice')}</span>
-            </div>
-          )}
 
           <textarea
             className="studio-textarea"
@@ -253,7 +223,7 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) {
-                setIsEditingProject(false);
+                setIsProjectDirty(false);
                 onImportProjectFile(file);
               }
               e.currentTarget.value = '';
@@ -303,9 +273,10 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
           <textarea
             className="studio-textarea"
             value={projectDraft}
-            onFocus={() => setIsEditingProject(true)}
-            onBlur={() => setIsEditingProject(false)}
-            onChange={(e) => setProjectDraft(e.target.value)}
+            onChange={(e) => {
+              setProjectDraft(e.target.value);
+              setIsProjectDirty(true);
+            }}
             spellCheck={false}
             style={{
               flex: 1,

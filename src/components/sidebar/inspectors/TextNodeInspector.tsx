@@ -40,7 +40,7 @@ export const TextNodeInspector: React.FC<TextNodeInspectorProps> = ({
               ? {
                   ...curr,
                   text: val,
-                  name: val.trim().slice(0, 20) || t('inspector.defaultTextName'),
+                  name: val.trim().slice(0, 18) || t('inspector.defaultTextName'),
                 }
               : curr
           );
@@ -182,6 +182,53 @@ export const TextNodeInspector: React.FC<TextNodeInspectorProps> = ({
           />
           {t('inspector.bold')}
         </label>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 84px',
+          gap: 6,
+        }}
+      >
+        <input
+          className="studio-input"
+          value={typeof node.meta?.say === 'string' ? node.meta.say : ''}
+          onChange={(e) => {
+            const nextSay = e.target.value || undefined;
+            onUpdateNode(node.id, (c) => ({
+              ...c,
+              meta: { ...(c.meta ?? {}), say: nextSay },
+            }));
+          }}
+          placeholder={t('inspector.nodeSayLabel')}
+        />
+        <input
+          type="number"
+          min={0}
+          step={50}
+          className="studio-input"
+          value={
+            typeof node.meta?.pause === 'number' &&
+            Number.isFinite(node.meta.pause)
+              ? String(node.meta.pause)
+              : ''
+          }
+          onChange={(e) => {
+            const raw = e.target.value.trim();
+            const num = raw === '' ? undefined : Math.max(0, Number(raw));
+            const nextPause =
+              num !== undefined && Number.isFinite(num)
+                ? Math.round(num)
+                : undefined;
+            onUpdateNode(node.id, (c) => ({
+              ...c,
+              meta: { ...(c.meta ?? {}), pause: nextPause },
+            }));
+          }}
+          placeholder={t('inspector.nodePauseLabel')}
+          title={t('inspector.nodePauseLabel')}
+        />
       </div>
     </div>
   );

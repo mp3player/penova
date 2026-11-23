@@ -53,6 +53,8 @@ import { cutTransitionPlugin } from './transitions/cutTransition';
 import { mediaRecorderExporterPlugin } from './exporters/mediaRecorderExporter';
 import { posterPngExporterPlugin } from './exporters/posterPngExporter';
 import { pngSequenceTarExporterPlugin } from './exporters/pngSequenceTarExporter';
+import { posterSvgExporterPlugin } from './exporters/posterSvgExporter';
+import { svgSequenceTarExporterPlugin } from './exporters/svgSequenceTarExporter';
 import { createHttpBridgeExportPlugin } from './exporters/httpBridgeFactory';
 
 let initialized = false;
@@ -109,6 +111,8 @@ export function registerBuiltinPlugins(): void {
   exportRegistry.register(mediaRecorderExporterPlugin, { override: true });
   exportRegistry.register(posterPngExporterPlugin, { override: true });
   exportRegistry.register(pngSequenceTarExporterPlugin, { override: true });
+  exportRegistry.register(posterSvgExporterPlugin, { override: true });
+  exportRegistry.register(svgSequenceTarExporterPlugin, { override: true });
 }
 
 registerBuiltinPlugins();

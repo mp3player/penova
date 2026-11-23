@@ -34,11 +34,14 @@ export type BuiltinNodeShape =
   | 'cloud'
   | 'underline'
   | 'diamond'
-  | 'divider';
+  | 'divider'
+  | 'none';
 export type NodeShape = BuiltinNodeShape | (string & {});
 
 export type TextAlign = 'left' | 'center' | 'right';
-export type SceneNodeType = 'text' | 'shape' | 'connector' | 'group';
+export type BuiltinSceneNodeType = 'text' | 'shape' | 'connector' | 'group';
+export type CustomSceneNodeType = 'custom' | `custom:${string}`;
+export type SceneNodeType = BuiltinSceneNodeType | CustomSceneNodeType;
 export type CardRole = 'root' | 'step' | 'concept' | 'highlight' | 'note';
 
 export interface Point {
@@ -99,11 +102,34 @@ export interface GroupSceneNode extends BaseSceneNode {
   gap?: number;
 }
 
+export interface CustomSceneNode extends BaseSceneNode {
+  type: CustomSceneNodeType;
+  kind: string;
+  props?: Record<string, string | number | boolean | undefined>;
+}
+
 export type SceneNode =
   | TextSceneNode
   | ShapeSceneNode
   | ConnectorSceneNode
-  | GroupSceneNode;
+  | GroupSceneNode
+  | CustomSceneNode;
+
+export function isCustomSceneNode(node: SceneNode): node is CustomSceneNode {
+  return (
+    node.type !== 'text' &&
+    node.type !== 'shape' &&
+    node.type !== 'connector' &&
+    node.type !== 'group'
+  );
+}
+
+export function resolveCustomNodeKind(node: CustomSceneNode): string {
+  if (node.kind && node.kind.trim()) return node.kind.trim();
+  return node.type.startsWith('custom:')
+    ? node.type.slice('custom:'.length)
+    : node.type;
+}
 
 export interface TeachingStep {
   id: string;
@@ -156,6 +182,12 @@ export function cloneSceneNode(node: SceneNode): SceneNode {
       toPoint: baseCopy.toPoint ? { ...baseCopy.toPoint } : undefined,
     };
   }
+  if (isCustomSceneNode(baseCopy)) {
+    return {
+      ...baseCopy,
+      props: baseCopy.props ? { ...baseCopy.props } : undefined,
+    };
+  }
   return baseCopy;
 }
 
@@ -173,6 +205,15 @@ export function findNodeById(
   return undefined;
 }
 
+function collectSubtreeIds(node: SceneNode, target: Set<string>): void {
+  target.add(node.id);
+  if (node.type === 'group') {
+    for (const child of node.children) {
+      collectSubtreeIds(child, target);
+    }
+  }
+}
+
 export function updateNodeInTree(
   nodes: SceneNode[],
   id: string,
@@ -188,6 +229,36 @@ export function updateNodeInTree(
       const nextChildren = updateNodeInTree(node.children, id, updater);
       if (nextChildren !== node.children) {
         changed = true;
+        if ((node.arrange ?? 'card') === 'card') {
+          const prevTitle = node.children.find(
+            (c): c is TextSceneNode => c.type === 'text'
+          );
+          const nextTitle = nextChildren.find(
+            (c): c is TextSceneNode => c.type === 'text'
+          );
+          if (nextTitle) {
+            const nameChanged =
+              prevTitle?.text !== nextTitle.text ? nextTitle.text : node.name;
+            const colorChanged =
+              prevTitle?.color !== nextTitle.color &&
+              node.color === prevTitle?.color;
+            const syncedColor = colorChanged ? nextTitle.color : node.color;
+            const syncedChildren = colorChanged
+              ? nextChildren.map((child) =>
+                  child.type === 'shape' &&
+                  (child.fitMode ?? 'auto-group') === 'auto-group'
+                    ? { ...child, color: syncedColor }
+                    : child
+                )
+              : nextChildren;
+            return {
+              ...node,
+              name: nameChanged,
+              color: syncedColor,
+              children: syncedChildren,
+            };
+          }
+        }
         return { ...node, children: nextChildren };
       }
     }
@@ -196,23 +267,41 @@ export function updateNodeInTree(
   return changed ? next : nodes;
 }
 
-export function removeNodeInTree(nodes: SceneNode[], id: string): SceneNode[] {
+function removeNodeWithSet(
+  nodes: SceneNode[],
+  removedIds: Set<string>
+): SceneNode[] {
   const filtered: SceneNode[] = [];
   for (const node of nodes) {
-    if (node.id === id) continue;
-    if (node.type === 'connector' && (node.fromId === id || node.toId === id)) {
+    if (removedIds.has(node.id)) continue;
+    if (
+      node.type === 'connector' &&
+      ((node.fromId && removedIds.has(node.fromId)) ||
+        (node.toId && removedIds.has(node.toId)))
+    ) {
       continue;
     }
     if (node.type === 'group') {
       filtered.push({
         ...node,
-        children: removeNodeInTree(node.children, id),
+        children: removeNodeWithSet(node.children, removedIds),
       });
     } else {
       filtered.push(node);
     }
   }
   return filtered;
+}
+
+export function removeNodeInTree(nodes: SceneNode[], id: string): SceneNode[] {
+  const removedIds = new Set<string>();
+  const target = findNodeById(nodes, id);
+  if (target) {
+    collectSubtreeIds(target, removedIds);
+  } else {
+    removedIds.add(id);
+  }
+  return removeNodeWithSet(nodes, removedIds);
 }
 
 export function moveNodeInTree(
@@ -290,14 +379,27 @@ export function deriveTeachingSteps(scene: LessonScene): TeachingStep[] {
   }
 
   const allVertexCandidates = scene.nodes.filter((n) => n.type !== 'connector');
-  const vertexIds = new Set(allVertexCandidates.map((n) => n.id));
+  const ownerTopId = new Map<string, string>();
+  const registerTopOwner = (node: SceneNode, topId: string) => {
+    ownerTopId.set(node.id, topId);
+    if (node.type === 'group') {
+      for (const child of node.children) {
+        if (child.type !== 'connector') {
+          registerTopOwner(child, topId);
+        }
+      }
+    }
+  };
+  for (const v of allVertexCandidates) {
+    registerTopOwner(v, v.id);
+  }
 
   const isBoundConnector = (n: SceneNode): n is ConnectorSceneNode =>
     n.type === 'connector' &&
     Boolean(n.fromId && n.toId) &&
     n.fromId !== n.toId &&
-    vertexIds.has(n.fromId!) &&
-    vertexIds.has(n.toId!);
+    ownerTopId.has(n.fromId!) &&
+    ownerTopId.has(n.toId!);
 
   const boundConnectors = scene.nodes.filter(isBoundConnector);
   const vertices = scene.nodes.filter((n) => !isBoundConnector(n));
@@ -311,18 +413,26 @@ export function deriveTeachingSteps(scene: LessonScene): TeachingStep[] {
 
   const outgoing = new Map<string, ConnectorSceneNode[]>();
   const incoming = new Map<string, ConnectorSceneNode[]>();
+  const selfConnectors = new Map<string, ConnectorSceneNode[]>();
   const inDegree = new Map<string, number>();
 
   for (const node of vertices) {
     outgoing.set(node.id, []);
     incoming.set(node.id, []);
+    selfConnectors.set(node.id, []);
     inDegree.set(node.id, 0);
   }
 
   for (const conn of boundConnectors) {
-    outgoing.get(conn.fromId!)!.push(conn);
-    incoming.get(conn.toId!)!.push(conn);
-    inDegree.set(conn.toId!, (inDegree.get(conn.toId!) ?? 0) + 1);
+    const topFrom = ownerTopId.get(conn.fromId!)!;
+    const topTo = ownerTopId.get(conn.toId!)!;
+    if (topFrom === topTo) {
+      selfConnectors.get(topFrom)?.push(conn);
+    } else {
+      outgoing.get(topFrom)?.push(conn);
+      incoming.get(topTo)?.push(conn);
+      inDegree.set(topTo, (inDegree.get(topTo) ?? 0) + 1);
+    }
   }
 
   const visited = new Set<string>();
@@ -346,27 +456,43 @@ export function deriveTeachingSteps(scene: LessonScene): TeachingStep[] {
     const stepConnIds: string[] = [];
 
     for (const conn of incoming.get(nodeId) ?? []) {
-      if (visited.has(conn.fromId!) && !placedConnectors.has(conn.id)) {
+      const topFrom = ownerTopId.get(conn.fromId!)!;
+      if (visited.has(topFrom) && !placedConnectors.has(conn.id)) {
         placedConnectors.add(conn.id);
         stepConnIds.push(conn.id);
       }
     }
 
     for (const conn of outgoing.get(nodeId) ?? []) {
-      if (visited.has(conn.toId!) && !placedConnectors.has(conn.id)) {
+      const topTo = ownerTopId.get(conn.toId!)!;
+      if (visited.has(topTo) && !placedConnectors.has(conn.id)) {
         placedConnectors.add(conn.id);
         stepConnIds.push(conn.id);
       }
     }
 
+    for (const conn of selfConnectors.get(nodeId) ?? []) {
+      if (!placedConnectors.has(conn.id)) {
+        placedConnectors.add(conn.id);
+        stepConnIds.push(conn.id);
+      }
+    }
+
+    const rawPause = node.meta?.pause;
+    const pauseMs =
+      typeof rawPause === 'number' && Number.isFinite(rawPause) && rawPause >= 0
+        ? Math.round(rawPause)
+        : undefined;
+
     steps.push({
       id: `step-${steps.length + 1}-${node.id}`,
       title: node.name || '节点',
       nodeIds: [...stepConnIds, node.id],
+      ...(pauseMs !== undefined ? { pauseMs } : {}),
     });
 
     const nextNeighbors = (outgoing.get(nodeId) ?? [])
-      .map((c) => c.toId!)
+      .map((c) => ownerTopId.get(c.toId!)!)
       .filter((id) => !visited.has(id))
       .sort((a, b) => (orderIndex.get(a) ?? 0) - (orderIndex.get(b) ?? 0));
 
@@ -387,7 +513,7 @@ export function deriveTeachingSteps(scene: LessonScene): TeachingStep[] {
     let pickIdx = queue.findIndex((id) => {
       if (visited.has(id)) return false;
       const preds = incoming.get(id) ?? [];
-      return preds.every((c) => visited.has(c.fromId!));
+      return preds.every((c) => visited.has(ownerTopId.get(c.fromId!)!));
     });
 
     if (pickIdx === -1) {

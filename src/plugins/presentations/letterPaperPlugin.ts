@@ -28,6 +28,45 @@ const palette: ThemePalette = {
   },
 };
 
+const PAPER_GRAIN_TILE_SIZE = 128;
+let cachedPaperGrainTile: HTMLCanvasElement | null = null;
+
+function getPaperGrainTile(): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  if (cachedPaperGrainTile) return cachedPaperGrainTile;
+
+  const tile = document.createElement('canvas');
+  tile.width = PAPER_GRAIN_TILE_SIZE;
+  tile.height = PAPER_GRAIN_TILE_SIZE;
+  const tCtx = tile.getContext('2d');
+  if (!tCtx) return null;
+
+  const imgData = tCtx.createImageData(
+    PAPER_GRAIN_TILE_SIZE,
+    PAPER_GRAIN_TILE_SIZE
+  );
+  const data = imgData.data;
+  for (let py = 0; py < PAPER_GRAIN_TILE_SIZE; py++) {
+    for (let px = 0; px < PAPER_GRAIN_TILE_SIZE; px++) {
+      const idx = (py * PAPER_GRAIN_TILE_SIZE + px) * 4;
+      const n = (hash2D(px, py, 7919) & 255) / 255 - 0.5;
+      if (n >= 0) {
+        data[idx] = 255;
+        data[idx + 1] = 252;
+        data[idx + 2] = 244;
+      } else {
+        data[idx] = 138;
+        data[idx + 1] = 108;
+        data[idx + 2] = 68;
+      }
+      data[idx + 3] = Math.round(Math.abs(n) * 14);
+    }
+  }
+  tCtx.putImageData(imgData, 0, 0);
+  cachedPaperGrainTile = tile;
+  return tile;
+}
+
 export const letterPaperPlugin: PresentationPlugin = {
   id: 'letter-paper',
   name: 'Letter Paper',
@@ -43,20 +82,13 @@ export const letterPaperPlugin: PresentationPlugin = {
     drawCachedSurface(ctx, 'letter-paper', width, height, (c, w, h) => {
       paintRadialBackdrop(c, w, h, palette);
 
-      // Fine warm cotton-paper fiber grain via isotropic avalanche hash
-      const imgData = c.getImageData(0, 0, w, h);
-      const data = imgData.data;
-      const len = data.length;
-      for (let i = 0; i < len; i += 4) {
-        const px = (i >> 2) % w;
-        const py = ((i >> 2) / w) | 0;
-        const hash = hash2D(px, py, 7919);
-        const delta = ((hash & 255) / 255 - 0.5) * 6.5;
-        data[i] = Math.max(0, Math.min(255, data[i] + delta));
-        data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + delta - 0.5));
-        data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + delta - 1.2));
+      // Fine warm cotton-paper fiber grain via tiled 128x128 offscreen noise pattern
+      const grainTile = getPaperGrainTile();
+      const pattern = grainTile ? c.createPattern(grainTile, 'repeat') : null;
+      if (pattern) {
+        c.fillStyle = pattern;
+        c.fillRect(0, 0, w, h);
       }
-      c.putImageData(imgData, 0, 0);
 
       // Subtle ruled stationery horizontal lines (scales evenly across preview & 1080p export)
       const linePitch = Math.max(26, Math.round(Math.min(w, h) * 0.068));

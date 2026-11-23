@@ -11,18 +11,32 @@ import {
   MeasuredSceneNode,
   PositionedSceneNode,
 } from '../contracts';
-import { shapeRegistry } from '../registry';
+import { sceneNodeRegistry, shapeRegistry } from '../registry';
 import { clipRayToRect } from '../shapes/clipHelpers';
 
 export interface SplitSceneNodes {
   vertices: SceneNode[];
+  ownerVertexIdMap: Map<string, string>;
   boundConnectors: ConnectorSceneNode[];
   unboundConnectors: ConnectorSceneNode[];
 }
 
 export function splitSceneNodes(nodes: SceneNode[]): SplitSceneNodes {
   const vertices = nodes.filter((n) => n.type !== 'connector');
-  const vertexIds = new Set(vertices.map((v) => v.id));
+  const ownerVertexIdMap = new Map<string, string>();
+  const registerOwner = (node: SceneNode, topId: string) => {
+    ownerVertexIdMap.set(node.id, topId);
+    if (node.type === 'group') {
+      for (const child of node.children) {
+        if (child.type !== 'connector') {
+          registerOwner(child, topId);
+        }
+      }
+    }
+  };
+  for (const v of vertices) {
+    registerOwner(v, v.id);
+  }
 
   const boundConnectors: ConnectorSceneNode[] = [];
   const unboundConnectors: ConnectorSceneNode[] = [];
@@ -33,8 +47,8 @@ export function splitSceneNodes(nodes: SceneNode[]): SplitSceneNodes {
       n.fromId &&
       n.toId &&
       n.fromId !== n.toId &&
-      vertexIds.has(n.fromId) &&
-      vertexIds.has(n.toId)
+      ownerVertexIdMap.has(n.fromId) &&
+      ownerVertexIdMap.has(n.toId)
     ) {
       boundConnectors.push(n);
     } else {
@@ -42,7 +56,7 @@ export function splitSceneNodes(nodes: SceneNode[]): SplitSceneNodes {
     }
   }
 
-  return { vertices, boundConnectors, unboundConnectors };
+  return { vertices, ownerVertexIdMap, boundConnectors, unboundConnectors };
 }
 
 export function makePositionedNode(
@@ -55,6 +69,37 @@ export function makePositionedNode(
   const finalCx = cx + (node.offset?.x ?? 0);
   const finalCy = cy + (node.offset?.y ?? 0);
 
+  let children: PositionedSceneNode[] | undefined;
+  if (node.type === 'group' && measured.type === 'group') {
+    children = helpers.positionGroupChildren(node, finalCx, finalCy, measured);
+  } else if (
+    measured.type === 'custom' &&
+    measured.composedNode &&
+    measured.composedMeasured
+  ) {
+    if (
+      measured.composedNode.type === 'group' &&
+      measured.composedMeasured.type === 'group'
+    ) {
+      children = helpers.positionGroupChildren(
+        measured.composedNode,
+        finalCx,
+        finalCy,
+        measured.composedMeasured
+      );
+    } else {
+      children = [
+        makePositionedNode(
+          measured.composedNode,
+          finalCx,
+          finalCy,
+          measured.composedMeasured,
+          helpers
+        ),
+      ];
+    }
+  }
+
   return {
     id: node.id,
     node,
@@ -63,15 +108,12 @@ export function makePositionedNode(
     width: measured.width,
     height: measured.height,
     measured,
-    children:
-      node.type === 'group' && measured.type === 'group'
-        ? helpers.positionGroupChildren(node, finalCx, finalCy, measured)
-        : undefined,
+    children,
   };
 }
 
 /**
- * Ray-clip from a node's center toward an external target point via ShapePlugin.
+ * Ray-clip from a node's center toward an external target point via ShapePlugin or SceneNodePlugin.
  */
 export function clipPointToNodeBorder(
   pNode: PositionedSceneNode,
@@ -101,6 +143,27 @@ export function clipPointToNodeBorder(
         toward,
         extraMargin
       );
+  }
+  if (pNode.measured.type === 'custom') {
+    const plugin = sceneNodeRegistry.get(pNode.measured.kind);
+    if (plugin?.clipRay) {
+      return plugin.clipRay(pNode, toward, extraMargin);
+    }
+    if (
+      pNode.measured.composedMeasured?.type === 'group' &&
+      pNode.measured.composedMeasured.primaryShape
+    ) {
+      return shapeRegistry
+        .getOrDefault(pNode.measured.composedMeasured.primaryShape)
+        .clipRay(
+          pNode.cx,
+          pNode.cy,
+          pNode.width,
+          pNode.height,
+          toward,
+          extraMargin
+        );
+    }
   }
   return clipRayToRect(
     pNode.cx,
@@ -317,7 +380,7 @@ export function computeBounds(
   let maxX = -Infinity;
   let maxY = -Infinity;
 
-  for (const n of nodes) {
+  const visitNode = (n: PositionedSceneNode) => {
     if (n.routedPoints && n.routedPoints.length > 0) {
       for (const pt of n.routedPoints) {
         minX = Math.min(minX, pt.x);
@@ -331,6 +394,15 @@ export function computeBounds(
       maxX = Math.max(maxX, n.cx + n.width / 2);
       maxY = Math.max(maxY, n.cy + n.height / 2);
     }
+    if (n.children && n.children.length > 0) {
+      for (const child of n.children) {
+        visitNode(child);
+      }
+    }
+  };
+
+  for (const n of nodes) {
+    visitNode(n);
   }
 
   for (const g of zones) {
@@ -353,7 +425,7 @@ export function computeBounds(
   };
 }
 
-function indexNodesRecursively(
+export function indexNodesRecursively(
   nodes: PositionedSceneNode[],
   nodeMap: Map<string, PositionedSceneNode>
 ): void {

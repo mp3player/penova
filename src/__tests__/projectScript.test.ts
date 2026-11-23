@@ -210,4 +210,83 @@ describe('declarative multi-scene project script (.penova.md)', () => {
       true
     );
   });
+
+  it('parses and round-trips a freeform scene with frameless cards, standalone nodes, and free arrows', () => {
+    const freeformDoc = [
+      '---',
+      'title: Freeform Board Demo',
+      'aspectRatio: 16:9',
+      'subtitles: auto',
+      '---',
+      '',
+      '=== scene ===',
+      'title: Free Chalkboard',
+      'theme: chalkboard',
+      'layout: freeform',
+      'camera: static-overview',
+      'hand: hand-chalk',
+      '---',
+      '[root] Core Idea | Without box {color: yellow, shape: none, x: -160, y: -40}',
+      '[text] Floating annotation {color: cyan, size: 22, x: 160, y: 40}',
+      '(-120, 110) -> (120, 110) : Baseline',
+    ].join('\n');
+
+    const parsed = parseProjectScript(freeformDoc);
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.project.scenes[0].layoutMode).toBe('freeform');
+    expect(parsed.project.scenes[0].nodes).toHaveLength(3);
+
+    const compiled = compileProjectTimeline(parsed.project);
+    expect(compiled.totalDurationMs).toBeGreaterThan(1500);
+
+    const serialized = serializeProjectScript(parsed.project);
+    const reparsed = parseProjectScript(serialized);
+    expect(reparsed.warnings).toEqual([]);
+    expect(reparsed.project.scenes[0].layoutMode).toBe('freeform');
+    expect(reparsed.project.scenes[0].nodes).toHaveLength(3);
+  });
+
+  it('preserves transitionDuration and custom edited subtitles on serialize -> parse round-trip', () => {
+    const script = [
+      '---',
+      'title: Custom Timing Demo',
+      'aspectRatio: 16:9',
+      'subtitles: custom',
+      '---',
+      '',
+      '=== scene ===',
+      'title: Intro',
+      'theme: chalkboard',
+      'layout: flow-horizontal',
+      'transition: crossfade',
+      'transitionDuration: 750',
+      '---',
+      '[root] Idea A | Start {color: yellow}',
+      '',
+      '=== subtitles ===',
+      '0 -> 1450 : Manually refined subtitle cue.',
+      '1500 -> 2800 : Second line\\nwith break.',
+    ].join('\n');
+
+    const parsed = parseProjectScript(script);
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.project.scenes[0].transitionOut).toEqual({
+      type: 'crossfade',
+      durationMs: 750,
+    });
+    expect(parsed.project.subtitles).toEqual([
+      { id: 'sub-1', startMs: 0, endMs: 1450, text: 'Manually refined subtitle cue.' },
+      { id: 'sub-2', startMs: 1500, endMs: 2800, text: 'Second line\nwith break.' },
+    ]);
+
+    const serialized = serializeProjectScript(parsed.project);
+    expect(serialized).toContain('transitionDuration: 750');
+    expect(serialized).toContain('subtitles: custom');
+    expect(serialized).toContain('=== subtitles ===');
+
+    const reparsed = parseProjectScript(serialized);
+    expect(reparsed.warnings).toEqual([]);
+    expect(reparsed.project.scenes[0].transitionOut?.durationMs).toBe(750);
+    expect(reparsed.project.subtitles).toEqual(parsed.project.subtitles);
+  });
 });

@@ -21,7 +21,7 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
   onUpdateNode,
 }) => {
   const { t, pluginName } = useI18n();
-  const isFixed = node.fitMode === 'fixed';
+  const isFixed = (node.fitMode ?? 'fixed') === 'fixed';
   return (
     <div
       style={{
@@ -91,7 +91,7 @@ export const ShapeNodeInspector: React.FC<ShapeNodeInspectorProps> = ({
       >
         <select
           className="studio-select"
-          value={node.fitMode ?? 'auto-group'}
+          value={node.fitMode ?? 'fixed'}
           onChange={(e) =>
             onUpdateNode(node.id, (c) =>
               c.type === 'shape'

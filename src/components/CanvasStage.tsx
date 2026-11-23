@@ -25,6 +25,7 @@ import {
   handRegistry,
   LayoutIconKind,
   layoutRegistry,
+  PositionedSceneNode,
   useRegistryList,
 } from '../plugins';
 import { CameraState } from '../engine/camera/cameraDirector';
@@ -218,18 +219,34 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       cam
     );
 
+    const hitBox = (n: PositionedSceneNode): string | null => {
+      if (n.node.type === 'connector') return null;
+      if (
+        n.node.type === 'group' &&
+        (n.node.arrange ?? 'card') !== 'card' &&
+        n.children &&
+        n.children.length > 0
+      ) {
+        for (let j = n.children.length - 1; j >= 0; j--) {
+          const childHit = hitBox(n.children[j]);
+          if (childHit) return childHit;
+        }
+      }
+      if (
+        world.x < n.cx - n.width / 2 - 8 ||
+        world.x > n.cx + n.width / 2 + 8 ||
+        world.y < n.cy - n.height / 2 - 8 ||
+        world.y > n.cy + n.height / 2 + 8
+      ) {
+        return null;
+      }
+      return n.node.id;
+    };
+
     const nodes = activeTimeline.layout.nodes;
     for (let i = nodes.length - 1; i >= 0; i--) {
-      const n = nodes[i];
-      if (n.node.type === 'connector') continue;
-      if (
-        world.x >= n.cx - n.width / 2 - 8 &&
-        world.x <= n.cx + n.width / 2 + 8 &&
-        world.y >= n.cy - n.height / 2 - 8 &&
-        world.y <= n.cy + n.height / 2 + 8
-      ) {
-        return n.node.id;
-      }
+      const hit = hitBox(nodes[i]);
+      if (hit) return hit;
     }
     return null;
   };

@@ -3,7 +3,8 @@ import { TransitionPlugin } from '../contracts';
 
 let cachedEraseCanvas: HTMLCanvasElement | null = null;
 
-function getEraseCanvas(w: number, h: number): HTMLCanvasElement {
+function getEraseCanvas(w: number, h: number): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
   if (!cachedEraseCanvas) {
     cachedEraseCanvas = document.createElement('canvas');
   }
@@ -146,8 +147,8 @@ export const chalkboardEraserTransitionPlugin: TransitionPlugin = {
     ctx.drawImage(toCanvas, 0, 0, width, height);
 
     const eraseCanvas = getEraseCanvas(fromCanvas.width, fromCanvas.height);
-    const eCtx = eraseCanvas.getContext('2d');
-    if (eCtx) {
+    const eCtx = eraseCanvas?.getContext('2d') ?? null;
+    if (eraseCanvas && eCtx) {
       eCtx.save();
       eCtx.setTransform(1, 0, 0, 1, 0, 0);
       eCtx.clearRect(0, 0, eraseCanvas.width, eraseCanvas.height);

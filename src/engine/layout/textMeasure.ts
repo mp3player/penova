@@ -1,8 +1,9 @@
 import '../../plugins';
 import {
   GroupSceneNode,
+  isCustomSceneNode,
+  resolveCustomNodeKind,
   SceneNode,
-  ShapeSceneNode,
 } from '../../model/scene';
 import {
   MeasuredGroupNode,
@@ -10,7 +11,7 @@ import {
   MeasuredShapeNode,
   PositionedSceneNode,
 } from '../../plugins/contracts';
-import { shapeRegistry } from '../../plugins/registry';
+import { sceneNodeRegistry, shapeRegistry } from '../../plugins/registry';
 
 export const BOARD_FONT_FAMILY =
   "'Segoe Print', 'KaiTi', 'STKaiti', 'LXGW WenKai', 'Microsoft YaHei', cursive";
@@ -213,18 +214,61 @@ export function measureSceneNode(
     return { type: 'connector', width: 0, height: 0 };
   }
 
+  if (isCustomSceneNode(node)) {
+    const kind = resolveCustomNodeKind(node);
+    const plugin = sceneNodeRegistry.get(kind);
+    if (plugin?.compose) {
+      const composedNode = plugin.compose(node);
+      const composedMeasured = measureSceneNode(
+        composedNode,
+        measureFn,
+        fallbackMaxTextWidth,
+        fontFamily
+      );
+      return {
+        type: 'custom',
+        kind,
+        width: composedMeasured.width,
+        height: composedMeasured.height,
+        composedNode,
+        composedMeasured,
+      };
+    }
+    if (plugin?.measure) {
+      const res = plugin.measure(node, {
+        measureNode: (n) =>
+          measureSceneNode(n, measureFn, fallbackMaxTextWidth, fontFamily),
+        measureText: measureFn,
+        fontFamily,
+      });
+      return {
+        type: 'custom',
+        kind,
+        width: Math.max(16, Math.ceil(res.width)),
+        height: Math.max(16, Math.ceil(res.height)),
+        payload: res.payload,
+      };
+    }
+    return {
+      type: 'custom',
+      kind,
+      width: 140,
+      height: 54,
+    };
+  }
+
   // GroupSceneNode
   const arrange = node.arrange ?? 'card';
   const childMeasurements = new Map<string, MeasuredSceneNode>();
 
   if (arrange === 'card') {
     const autoShape = node.children.find(
-      (c): c is ShapeSceneNode =>
-        c.type === 'shape' && c.fitMode !== 'fixed'
+      (c) => c.type === 'shape' && c.fitMode !== 'fixed'
     );
-    const shapePlugin = autoShape
-      ? shapeRegistry.getOrDefault(autoShape.shape)
-      : undefined;
+    const shapePlugin =
+      autoShape && autoShape.type === 'shape'
+        ? shapeRegistry.getOrDefault(autoShape.shape)
+        : undefined;
     const groupFallbackMaxW = shapePlugin?.maxTextWidth?.();
 
     const contentChildren = node.children.filter((c) => c !== autoShape);
@@ -284,22 +328,41 @@ export function measureSceneNode(
 
   if (arrange === 'stack') {
     const gap = node.gap ?? 16;
+    const stackItems: Array<{ child: SceneNode; cm: MeasuredSceneNode }> = [];
     let maxW = 0;
     let totalH = 0;
-    let count = 0;
     for (const child of node.children) {
       if (child.visible === false || child.type === 'connector') continue;
       const cm = measureSceneNode(child, measureFn, undefined, fontFamily);
       childMeasurements.set(child.id, cm);
+      stackItems.push({ child, cm });
       maxW = Math.max(maxW, cm.width);
       totalH += cm.height;
-      count++;
     }
-    if (count > 1) totalH += (count - 1) * gap;
+    if (stackItems.length > 1) totalH += (stackItems.length - 1) * gap;
+
+    let minX = -maxW / 2;
+    let maxX = maxW / 2;
+    let minY = -totalH / 2;
+    let maxY = totalH / 2;
+    let yCursor = -totalH / 2;
+    for (const { child, cm } of stackItems) {
+      const ox = child.offset?.x ?? 0;
+      const oy = child.offset?.y ?? 0;
+      const childCy = yCursor + cm.height / 2 + oy;
+      minX = Math.min(minX, ox - cm.width / 2);
+      maxX = Math.max(maxX, ox + cm.width / 2);
+      minY = Math.min(minY, childCy - cm.height / 2);
+      maxY = Math.max(maxY, childCy + cm.height / 2);
+      yCursor += cm.height + gap;
+    }
+
+    const halfW = Math.max(30, Math.abs(minX) + 8, Math.abs(maxX) + 8);
+    const halfH = Math.max(20, Math.abs(minY) + 8, Math.abs(maxY) + 8);
     return {
       type: 'group',
-      width: Math.max(60, maxW + 16),
-      height: Math.max(40, totalH + 16),
+      width: Math.ceil(halfW * 2),
+      height: Math.ceil(halfH * 2),
       childMeasurements,
     };
   }
@@ -323,10 +386,12 @@ export function measureSceneNode(
   if (!Number.isFinite(minX)) {
     return { type: 'group', width: 120, height: 60, childMeasurements };
   }
+  const halfW = Math.max(30, Math.abs(minX), Math.abs(maxX));
+  const halfH = Math.max(20, Math.abs(minY), Math.abs(maxY));
   return {
     type: 'group',
-    width: Math.max(60, Math.ceil(maxX - minX)),
-    height: Math.max(40, Math.ceil(maxY - minY)),
+    width: Math.ceil(halfW * 2),
+    height: Math.ceil(halfH * 2),
     childMeasurements,
   };
 }
@@ -344,8 +409,7 @@ export function positionGroupChildren(
     const autoShape =
       arrange === 'card'
         ? group.children.find(
-            (c): c is ShapeSceneNode =>
-              c.type === 'shape' && c.fitMode !== 'fixed'
+            (c) => c.type === 'shape' && c.fitMode !== 'fixed'
           )
         : undefined;
 
@@ -398,10 +462,7 @@ export function positionGroupChildren(
         width: cm.width,
         height: cm.height,
         measured: cm,
-        children:
-          c.type === 'group' && cm.type === 'group'
-            ? positionGroupChildren(c, childCx, childCy, cm)
-            : undefined,
+        children: positionMeasuredChildren(c, childCx, childCy, cm),
       };
       childPosMap.set(c.id, pChild);
     }
@@ -429,11 +490,54 @@ export function positionGroupChildren(
       width: cm.width,
       height: cm.height,
       measured: cm,
-      children:
-        c.type === 'group' && cm.type === 'group'
-          ? positionGroupChildren(c, childCx, childCy, cm)
-          : undefined,
+      children: positionMeasuredChildren(c, childCx, childCy, cm),
     });
   }
   return result;
+}
+
+export function positionMeasuredChildren(
+  node: SceneNode,
+  cx: number,
+  cy: number,
+  measured: MeasuredSceneNode
+): PositionedSceneNode[] | undefined {
+  if (node.type === 'group' && measured.type === 'group') {
+    return positionGroupChildren(node, cx, cy, measured);
+  }
+  if (
+    measured.type === 'custom' &&
+    measured.composedNode &&
+    measured.composedMeasured
+  ) {
+    if (
+      measured.composedNode.type === 'group' &&
+      measured.composedMeasured.type === 'group'
+    ) {
+      return positionGroupChildren(
+        measured.composedNode,
+        cx,
+        cy,
+        measured.composedMeasured
+      );
+    }
+    return [
+      {
+        id: measured.composedNode.id,
+        node: measured.composedNode,
+        cx: cx + (measured.composedNode.offset?.x ?? 0),
+        cy: cy + (measured.composedNode.offset?.y ?? 0),
+        width: measured.composedMeasured.width,
+        height: measured.composedMeasured.height,
+        measured: measured.composedMeasured,
+        children: positionMeasuredChildren(
+          measured.composedNode,
+          cx + (measured.composedNode.offset?.x ?? 0),
+          cy + (measured.composedNode.offset?.y ?? 0),
+          measured.composedMeasured
+        ),
+      },
+    ];
+  }
+  return undefined;
 }

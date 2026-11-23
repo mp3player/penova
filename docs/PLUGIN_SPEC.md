@@ -19,14 +19,43 @@ Defined in [src/model/scene.ts](../src/model/scene.ts):
 | `shape` | Geometric or decorative frame/mark (box, ellipse, cloud, diamond, underline, divider) | `shape`, `fitMode` (`auto-group` wraps sibling bounds / `fixed` explicit dimensions), `width`, `height`, `emphasized`, `dashed` |
 | `connector` | Edges and arrows | Supports bound `fromId` -> `toId` or free coordinates `fromPoint` -> `toPoint`, with optional `label` & `style` |
 | `group` | Nestable container node (child array order = draw order) | `children: SceneNode[]`, `arrange` (`card` / `stack` / `free`), `gap` |
+| `custom` / `custom:<kind>` | Extensible custom drawable node | `kind`, `props`, handled by `SceneNodePlugin` (`compose` or `measure` + `compile`) |
 
 > **Paint order follows array order**: In a `card` group, putting `shape` before `text` draws the frame first and writes text inside; placing `shape(underline)` after `text` writes the label first and draws the underline afterward.
 
 ---
 
-## 2. The 8 Plugin Contracts
+## 2. Plugin Contracts & Registries
 
 All public contracts and registries are exported from [src/plugins/index.ts](../src/plugins/index.ts) (interface definitions in [contracts.ts](../src/plugins/contracts.ts)).
+
+### 0. `SceneNodePlugin` (`sceneNodeRegistry`)
+
+Extends `SceneNode` cleanly in two modes without modifying core layout or timeline compilers:
+
+- **Composite Mode (`compose(node) => SceneNode`)**: Return a composite `group` / `text` / `shape` tree; Penova automatically measures, clips connectors, and compiles handwriting strokes.
+- **Primitive Mode (`measure(node, ctx)` + `compile(positioned, helpers)`)**: Compute custom dimensions and emit `StrokePath` strokes (`helpers.pushStroke`) or animated text lines (`helpers.pushTextLine`) directly.
+
+```ts
+export interface SceneNodePlugin {
+  id: string;
+  name: string;
+  compose?(node: CustomSceneNode): SceneNode;
+  measure?(
+    node: CustomSceneNode,
+    ctx: SceneNodeMeasureContext
+  ): { width: number; height: number; payload?: unknown };
+  compile?(
+    positioned: PositionedSceneNode,
+    helpers: SceneNodeCompileHelpers
+  ): void;
+  clipRay?(
+    positioned: PositionedSceneNode,
+    toward: Point,
+    extraMargin: number
+  ): Point;
+}
+```
 
 ### 1. `ShapePlugin`
 
@@ -174,12 +203,15 @@ Custom transitions registered on `transitionRegistry` automatically appear in [S
 
 ### 8. `ExportPlugin`
 
-Decouples frame rendering (`ExportFrameSource`) from output encoding. Three zero-backend exporters ship out of the box:
+Decouples frame generation (`ExportFrameSource`) from output encoding. `ExportFrameSource` exposes both Canvas rendering (`renderFrame(ctx, w, h, tMs)`) and **platform-agnostic vector/data hooks** (`evaluateFrame(tMs)` returning `EvaluatedFrameSnapshot` and `renderSvgFrame(tMs)` returning `<svg>`), so exporters can target browser Canvas, SVG, FFmpeg pipelines, or server bridges without hard DOM dependencies:
+
 1. `mediarecorder-video` (1080P real-time WebM/MP4 in-browser recording)
 2. `poster-png` (instant lossless 1080P final-frame PNG poster)
 3. `png-sequence-tar` (lossless PNG frame sequence, `manifest.json`, and FFmpeg script bundled as `.tar`)
+4. `poster-svg` (platform-agnostic 1080P vector SVG poster, zero Canvas dependency)
+5. `svg-sequence-tar` (platform-agnostic SVG frame sequence `.tar` bundle, zero Canvas dependency)
 
-Use `createHttpBridgeExportPlugin` to connect a local FFmpeg bridge or cloud encoder in 5 lines—it automatically appears in the TopBar exporter selector:
+Use `createHttpBridgeExportPlugin` (supporting `frameFormat: 'auto' | 'png-base64' | 'svg' | 'snapshot'`) to connect a local FFmpeg bridge or cloud encoder in 5 lines—it automatically appears in the TopBar exporter selector, and `exportScriptToVideo(scriptText)` compiles `.penova.md` directly through any registered exporter:
 
 ```ts
 export interface ExportPlugin {
@@ -236,5 +268,6 @@ layoutRegistry.register(verticalDocLayout);
 Penova can compile any plain-text `.penova.md` document directly into a multi-scene `LessonProject`, resolving every declared `theme`, `layout`, `camera`, `hand`, and `transition` plugin dynamically via [src/engine/parser/projectScript.ts](../src/engine/parser/projectScript.ts):
 
 - Custom `LayoutPlugin` implementations that attach a `textCodec` (optionally documenting `syntaxRules` and `example`) are automatically routable inside `.penova.md` scenes via `layout: <plugin-id>`.
-- Calling `generateScriptSpec()` introspects all 8 active registries at runtime to emit an exact, up-to-date Markdown specification of all valid plugin IDs and codec syntax rules—suitable for documentation, CLI automation, or external script generators.
+- Built-in lossless two-way codecs cover all 6 built-in layouts (`flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, `freeform` via `graphScriptCodec`; `document` via `documentScriptCodec`), including frameless cards (`shape: none`), standalone `[text]` / `[shape:<id>]` / `[node:<kind>]`, nested `[group]` trees, `#<id>` disambiguation for duplicate labels, and per-step `{say: "...", pause: <ms>}` subtitle narration & pause overrides.
+- Calling `generateScriptSpec()` introspects all active registries at runtime to emit an exact, up-to-date Markdown specification of all valid plugin IDs and codec syntax rules—suitable for documentation, CLI automation, or external script generators.
 - See [docs/examples/penova-intro.penova.md](examples/penova-intro.penova.md) for a complete 6-scene product introduction script.

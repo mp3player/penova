@@ -3,7 +3,8 @@ import { StrokePath } from './strokePath';
 
 const dabCache = new Map<string, HTMLCanvasElement>();
 
-function getChalkDab(colorHex: string): HTMLCanvasElement {
+function getChalkDab(colorHex: string): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
   const cached = dabCache.get(colorHex);
   if (cached) return cached;
 
@@ -96,13 +97,20 @@ export function drawPowderyStroke(
     const radius =
       stroke.width * endTaper * (0.9 + (((h >> 16) & 31) / 31) * 0.22);
 
-    ctx.drawImage(
-      dab,
-      px + jx - radius,
-      py + jy - radius,
-      radius * 2,
-      radius * 2
-    );
+    if (dab) {
+      ctx.drawImage(
+        dab,
+        px + jx - radius,
+        py + jy - radius,
+        radius * 2,
+        radius * 2
+      );
+    } else {
+      ctx.fillStyle = colorHex;
+      ctx.beginPath();
+      ctx.arc(px + jx, py + jy, Math.max(0.8, radius * 0.55), 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   ctx.restore();

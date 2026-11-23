@@ -19,14 +19,43 @@ Penova 采用 **两层分离** 的编译器架构：
 | `shape` | 图形/装饰节点（框、圆、云、菱形、下划线、分割线） | `shape`、`fitMode`（`auto-group` 随父组适配 / `fixed` 固定宽高）、`width`、`height`、`emphasized`、`dashed` |
 | `connector` | 连线与指向箭头 | 支持绑定 `fromId` → `toId`，或独立自由坐标 `fromPoint` → `toPoint`，支持 `label` 与 `style` |
 | `group` | 组合节点（可嵌套、子元素顺序即绘制顺序） | `children: SceneNode[]`、`arrange`（`card` / `stack` / `free`）、`gap` |
+| `custom` / `custom:<kind>` | 可扩展自定义节点 | `kind`、`props`，由 `SceneNodePlugin` 驱动（`compose` 组合模式或 `measure` + `compile` 原语模式） |
 
 > **绘制顺序由子节点数组顺序自然决定**：例如在 `card` 组合中，把 `shape` 放在 `text` 前面就是“先画框再写字”；把 `shape(underline)` 放在 `text` 后面就是“先写字再画下划线”。
 
 ---
 
-## 二、八大插件契约
+## 二、插件契约与注册表
 
 所有公开契约与注册表统一从 [src/plugins/index.ts](../src/plugins/index.ts) 导出（接口定义见 [contracts.ts](../src/plugins/contracts.ts)）。
+
+### 0. 自定义节点插件 (`SceneNodePlugin` / `sceneNodeRegistry`)
+
+无需修改核心布局器或时间轴编译器，即可按两级模式扩展全新 `SceneNode` 类型：
+
+- **组合模式 (`compose(node) => SceneNode`)**：用现有 `group` / `text` / `shape` 拼装出复合结构，引擎自动完成测量、连线裁剪与逐笔书写动画；
+- **原语模式 (`measure(node, ctx)` + `compile(positioned, helpers)`)**：自主计算包围盒并通过 `helpers.pushStroke` / `helpers.pushTextLine` 输出自定义粉笔笔画与文字行。
+
+```ts
+export interface SceneNodePlugin {
+  id: string;
+  name: string;
+  compose?(node: CustomSceneNode): SceneNode;
+  measure?(
+    node: CustomSceneNode,
+    ctx: SceneNodeMeasureContext
+  ): { width: number; height: number; payload?: unknown };
+  compile?(
+    positioned: PositionedSceneNode,
+    helpers: SceneNodeCompileHelpers
+  ): void;
+  clipRay?(
+    positioned: PositionedSceneNode,
+    toward: Point,
+    extraMargin: number
+  ): Point;
+}
+```
 
 ### 1. 外形插件 (`ShapePlugin`)
 
@@ -176,12 +205,15 @@ export interface TransitionPlugin {
 
 ### 8. 视频/成品导出插件 (`ExportPlugin`)
 
-通过 `ExportFrameSource` 将画布逐帧渲染与输出编码完全解耦。内置提供三种零后端依赖导出插件：
+通过 `ExportFrameSource` 将画布/帧求值与输出编码完全解耦。`ExportFrameSource` 同时提供 Canvas 回调（`renderFrame(ctx, w, h, tMs)`）以及**平台无关的数据/矢量接口**（`evaluateFrame(tMs)` 返回 `EvaluatedFrameSnapshot`，`renderSvgFrame(tMs)` 返回 `<svg>` 字符串），因此导出插件可以自由选择浏览器 Canvas、SVG 矢量、FFmpeg 桥接或纯数据导出：
+
 1. `mediarecorder-video`（1080P 视频：浏览器实时编码 WebM / MP4）
 2. `poster-png`（高清成品图：瞬时导出终幕无损 1080P PNG 海报）
 3. `png-sequence-tar`（离线帧包：无丢帧导出 PNG 序列、`manifest.json` 及可执行的 FFmpeg 合成指令）
+4. `poster-svg`（矢量海报：无 Canvas 依赖，直接导出 1080P `.svg` 矢量终幕）
+5. `svg-sequence-tar`（矢量帧包：无 Canvas 依赖，在服务端/Node 端也能直接导出逐帧 `.svg` 序列包）
 
-此外提供 `createHttpBridgeExportPlugin` 工厂函数，5 行即可将本地 FFmpeg 服务或云端合成接口接入 `exportRegistry`，顶栏导出下拉框会自动识别并展示：
+此外提供 `createHttpBridgeExportPlugin`（支持 `frameFormat: 'auto' | 'png-base64' | 'svg' | 'snapshot'`）对接本地 FFmpeg 服务或云端合成接口，以及高层入口 `exportScriptToVideo(scriptText)` 一站式完成 `.penova.md` 文本到任意导出插件的编译出片：
 
 ```ts
 export interface ExportPlugin {
@@ -238,5 +270,6 @@ layoutRegistry.register(verticalDocLayout);
 Penova 支持通过 [src/engine/parser/projectScript.ts](../src/engine/parser/projectScript.ts) 将纯文本 `.penova.md` 直接解析并组装为完整的 `LessonProject`，按每幕声明动态匹配 8 大注册表中的 `theme`、`layout`、`camera`、`hand` 与 `transition` 插件：
 
 - 任意自定义 `LayoutPlugin` 只要挂载配套的 `textCodec`（并可选填写 `syntaxRules` 与 `example`），即可直接在 `.penova.md` 中通过 `layout: <plugin-id>` 驱动成片。
-- 调用 `generateScriptSpec()` 会实时扫描当前 8 大注册表，生成完整的纯文本插件能力与脚本语法规范（可直接用于文档展示或任何外部生成流程）。
+- 内置全部 6 大布局均支持无损双向文本映射（`flow-horizontal` / `flow-vertical` / `mindmap` / `concept-graph` / `freeform` 使用 `graphScriptCodec`，`document` 使用 `documentScriptCodec`），支持无框节点 (`shape: none`)、独立原子节点 (`[text]` / `[shape:<id>]` / `[node:<kind>]`)、嵌套 `[group]` 树、`#<id>` 同名节点消歧以及 `{say: "口播字幕", pause: 800}` 分步台词与停顿控制。
+- 调用 `generateScriptSpec()` 会实时扫描当前所有注册表，生成完整的纯文本插件能力与脚本语法规范（可直接用于文档展示或任何外部生成流程）。
 - 完整 6 幕声明式产品介绍脚本文档可参考：[docs/examples/penova-intro.penova.md](examples/penova-intro.penova.md)。

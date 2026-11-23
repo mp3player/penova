@@ -31,6 +31,37 @@ const palette: ThemePalette = {
   },
 };
 
+const GRAIN_TILE_SIZE = 128;
+let cachedChalkGrainTile: HTMLCanvasElement | null = null;
+
+function getChalkGrainTile(): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  if (cachedChalkGrainTile) return cachedChalkGrainTile;
+
+  const tile = document.createElement('canvas');
+  tile.width = GRAIN_TILE_SIZE;
+  tile.height = GRAIN_TILE_SIZE;
+  const tCtx = tile.getContext('2d');
+  if (!tCtx) return null;
+
+  const imgData = tCtx.createImageData(GRAIN_TILE_SIZE, GRAIN_TILE_SIZE);
+  const data = imgData.data;
+  for (let py = 0; py < GRAIN_TILE_SIZE; py++) {
+    for (let px = 0; px < GRAIN_TILE_SIZE; px++) {
+      const idx = (py * GRAIN_TILE_SIZE + px) * 4;
+      const n = (hash2D(px, py) & 255) / 255 - 0.5;
+      const tone = n >= 0 ? 255 : 0;
+      data[idx] = tone;
+      data[idx + 1] = tone;
+      data[idx + 2] = tone;
+      data[idx + 3] = Math.round(Math.abs(n) * 18);
+    }
+  }
+  tCtx.putImageData(imgData, 0, 0);
+  cachedChalkGrainTile = tile;
+  return tile;
+}
+
 export const chalkboardPlugin: PresentationPlugin = {
   id: 'chalkboard',
   name: 'Chalkboard',
@@ -75,20 +106,13 @@ export const chalkboardPlugin: PresentationPlugin = {
       }
       c.restore();
 
-      // Isotropic mineral slate grain via avalanche hash
-      const imgData = c.getImageData(0, 0, w, h);
-      const data = imgData.data;
-      const len = data.length;
-      for (let i = 0; i < len; i += 4) {
-        const px = (i >> 2) % w;
-        const py = ((i >> 2) / w) | 0;
-        const hash = hash2D(px, py);
-        const delta = ((hash & 255) / 255 - 0.5) * 9;
-        data[i] = Math.max(0, Math.min(255, data[i] + delta));
-        data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + delta));
-        data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + delta));
+      // Isotropic mineral slate grain via tiled 128x128 offscreen noise pattern
+      const grainTile = getChalkGrainTile();
+      const pattern = grainTile ? c.createPattern(grainTile, 'repeat') : null;
+      if (pattern) {
+        c.fillStyle = pattern;
+        c.fillRect(0, 0, w, h);
       }
-      c.putImageData(imgData, 0, 0);
 
       // Soft vignette + classroom wooden chalk ledge hint
       const vig = c.createRadialGradient(

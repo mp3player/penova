@@ -34,6 +34,11 @@ export function drawCachedSurface(
   height: number,
   painter: SurfacePainter
 ): void {
+  if (typeof document === 'undefined') {
+    painter(ctx, width, height);
+    return;
+  }
+
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
   const fullKey = `${cacheKey}:${w}x${h}`;

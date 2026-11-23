@@ -1,8 +1,11 @@
+import { deriveTeachingSteps } from '../../model/scene';
+import { graphScriptCodec } from '../codecs/scriptParser';
 import { LayoutPlugin, PositionedSceneNode } from '../contracts';
 import {
   buildConnectorNode,
   computeConnectorBowMap,
   finalizeLayout,
+  indexNodesRecursively,
   makePositionedNode,
   splitSceneNodes,
 } from './shared';
@@ -15,6 +18,8 @@ export const freeformLayoutPlugin: LayoutPlugin = {
   dragMode: 'absolute',
   supportsEdges: true,
   supportsGroups: false,
+  textCodec: graphScriptCodec,
+  deriveSteps: deriveTeachingSteps,
   compute(scene, helpers) {
     const { vertices, boundConnectors, unboundConnectors } = splitSceneNodes(
       scene.nodes
@@ -75,7 +80,7 @@ export const freeformLayoutPlugin: LayoutPlugin = {
           helpers
         );
         positionedNodes.push(pNode);
-        nodeMap.set(v.id, pNode);
+        indexNodesRecursively([pNode], nodeMap);
       });
     }
 

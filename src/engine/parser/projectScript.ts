@@ -1,4 +1,4 @@
-import { createProjectFromScene, LessonProject } from '../../model/project';
+import { createProjectFromScene, LessonProject, SubtitleCue } from '../../model/project';
 import {
   AspectRatio,
   CameraMode,
@@ -13,6 +13,7 @@ import {
   handRegistry,
   layoutRegistry,
   presentationRegistry,
+  sceneNodeRegistry,
   SceneTextCodec,
   shapeRegistry,
   stripMarkdownFence,
@@ -33,6 +34,7 @@ export interface ParseProjectScriptResult {
 }
 
 const SCENE_HEADER_REGEX = /^===\s*scene(?::\s*(.+?))?\s*===$/i;
+const SUBTITLES_HEADER_REGEX = /^===\s*subtitles\s*===$/i;
 const SCENE_META_KEYS = new Set([
   'title',
   'theme',
@@ -40,6 +42,8 @@ const SCENE_META_KEYS = new Set([
   'camera',
   'hand',
   'transition',
+  'transitionduration',
+  'transition-duration',
 ]);
 
 interface RawSceneSection {
@@ -112,14 +116,29 @@ function splitTopFrontmatter(lines: string[]): {
   return { meta, restLines: lines.slice(end + 1) };
 }
 
-function splitSceneSections(lines: string[]): RawSceneSection[] {
+function splitSceneSections(lines: string[]): {
+  sections: RawSceneSection[];
+  subtitleLines: string[];
+} {
   const sections: RawSceneSection[] = [];
+  const subtitleLines: string[] = [];
   let current: RawSceneSection | null = null;
   const prelude: string[] = [];
+  let inSubtitles = false;
 
   for (const line of lines) {
-    const match = line.trim().match(SCENE_HEADER_REGEX);
+    const trimmed = line.trim();
+    if (SUBTITLES_HEADER_REGEX.test(trimmed)) {
+      if (current) {
+        sections.push(current);
+        current = null;
+      }
+      inSubtitles = true;
+      continue;
+    }
+    const match = trimmed.match(SCENE_HEADER_REGEX);
     if (match) {
+      inSubtitles = false;
       if (current) {
         sections.push(current);
       }
@@ -127,6 +146,8 @@ function splitSceneSections(lines: string[]): RawSceneSection[] {
         explicitTitle: match[1]?.trim() || undefined,
         lines: [],
       };
+    } else if (inSubtitles) {
+      subtitleLines.push(line);
     } else if (current) {
       current.lines.push(line);
     } else {
@@ -136,11 +157,15 @@ function splitSceneSections(lines: string[]): RawSceneSection[] {
 
   if (current) {
     sections.push(current);
-    return sections;
+    return { sections, subtitleLines };
+  }
+
+  if (sections.length > 0) {
+    return { sections, subtitleLines };
   }
 
   // Fallback when no `=== scene ===` delimiter is present: single-scene script
-  return [{ lines: prelude }];
+  return { sections: [{ lines: prelude }], subtitleLines };
 }
 
 function extractSceneMetadata(lines: string[]): {
@@ -209,7 +234,8 @@ export function parseProjectScript(
   const lines = cleaned.split('\n');
 
   const { meta: projectMeta, restLines } = splitTopFrontmatter(lines);
-  const rawSections = splitSceneSections(restLines);
+  const { sections: rawSections, subtitleLines } =
+    splitSceneSections(restLines);
 
   let aspectRatio: AspectRatio = options?.fallbackAspectRatio ?? '16:9';
   const rawRatio = projectMeta.aspectratio ?? projectMeta['aspect-ratio'];
@@ -296,6 +322,17 @@ export function parseProjectScript(
       idx,
       warnings
     );
+    const rawTransDur = meta.transitionduration ?? meta['transition-duration'];
+    const parsedTransDur =
+      rawTransDur !== undefined &&
+      Number.isFinite(Number(rawTransDur)) &&
+      Number(rawTransDur) >= 0
+        ? Math.round(Number(rawTransDur))
+        : undefined;
+    const transitionConfig = {
+      type: transitionType,
+      ...(parsedTransDur !== undefined ? { durationMs: parsedTransDur } : {}),
+    };
 
     const initialTitle =
       meta.title ??
@@ -311,7 +348,7 @@ export function parseProjectScript(
       aspectRatio,
       handStyle,
       nodes: [],
-      transitionOut: { type: transitionType },
+      transitionOut: transitionConfig,
     };
 
     const layoutPlugin = layoutRegistry.getOrDefault(layoutMode);
@@ -338,7 +375,7 @@ export function parseProjectScript(
       cameraMode,
       aspectRatio,
       handStyle,
-      transitionOut: { type: transitionType },
+      transitionOut: transitionConfig,
     };
     return finalScene;
   });
@@ -368,7 +405,32 @@ export function parseProjectScript(
           scenes,
         };
 
-  if (autoSubtitles) {
+  const customSubtitles: SubtitleCue[] = [];
+  for (const rawSubLine of subtitleLines) {
+    const trimmedSub = rawSubLine.trim();
+    if (!trimmedSub || trimmedSub.startsWith('//')) continue;
+    const m = trimmedSub.match(
+      /^(\d+(?:\.\d+)?)\s*->\s*(\d+(?:\.\d+)?)\s*[:：]\s*(.+)$/
+    );
+    if (m) {
+      customSubtitles.push({
+        id: `sub-${customSubtitles.length + 1}`,
+        startMs: Math.round(Number(m[1])),
+        endMs: Math.round(Number(m[2])),
+        text: m[3].trim().replace(/\\n/g, '\n'),
+      });
+    } else {
+      warnings.push(`Invalid subtitle cue syntax: "${trimmedSub}"`);
+    }
+  }
+
+  if (customSubtitles.length > 0) {
+    project = {
+      ...project,
+      subtitles: customSubtitles,
+      showSubtitles: true,
+    };
+  } else if (autoSubtitles) {
     const compiled = compileProjectTimeline(project);
     project = {
       ...project,
@@ -381,11 +443,26 @@ export function parseProjectScript(
 }
 
 export function serializeProjectScript(project: LessonProject): string {
+  const existingSubtitles = project.subtitles ?? [];
+  let subtitleMode: 'auto' | 'custom' | 'off' = 'off';
+  if (existingSubtitles.length > 0) {
+    const autoCues = generateAutoSubtitles(compileProjectTimeline(project));
+    const matchesAuto =
+      autoCues.length === existingSubtitles.length &&
+      autoCues.every(
+        (c, idx) =>
+          c.startMs === existingSubtitles[idx].startMs &&
+          c.endMs === existingSubtitles[idx].endMs &&
+          c.text === existingSubtitles[idx].text
+      );
+    subtitleMode = matchesAuto ? 'auto' : 'custom';
+  }
+
   const lines: string[] = [
     '---',
     `title: ${project.title}`,
     `aspectRatio: ${project.aspectRatio}`,
-    `subtitles: ${project.subtitles && project.subtitles.length > 0 ? 'auto' : 'off'}`,
+    `subtitles: ${subtitleMode}`,
     '---',
     '',
   ];
@@ -403,6 +480,11 @@ export function serializeProjectScript(project: LessonProject): string {
         `transition: ${scene.transitionOut?.type ?? 'chalkboard-eraser'}`
       );
     }
+    if (scene.transitionOut?.durationMs !== undefined) {
+      lines.push(
+        `transitionDuration: ${Math.round(scene.transitionOut.durationMs)}`
+      );
+    }
     lines.push('---');
 
     if (layoutPlugin?.textCodec) {
@@ -415,6 +497,18 @@ export function serializeProjectScript(project: LessonProject): string {
     lines.push('');
   });
 
+  if (subtitleMode === 'custom' && existingSubtitles.length > 0) {
+    lines.push('=== subtitles ===');
+    for (const cue of existingSubtitles) {
+      lines.push(
+        `${Math.round(cue.startMs)} -> ${Math.round(cue.endMs)} : ${cue.text
+          .replace(/\r?\n/g, '\\n')
+          .trim()}`
+      );
+    }
+    lines.push('');
+  }
+
   return lines.join('\n').trimEnd() + '\n';
 }
 
@@ -422,6 +516,7 @@ export function generateScriptSpec(): string {
   const themes = presentationRegistry.list();
   const layouts = layoutRegistry.list();
   const shapes = shapeRegistry.list();
+  const sceneNodes = sceneNodeRegistry.list();
   const cameras = cameraRegistry.list();
   const hands = handRegistry.list();
   const transitions = transitionRegistry.list();
@@ -460,7 +555,14 @@ export function generateScriptSpec(): string {
     '',
     `- **theme**: ${themes.map((t) => `\`${t.id}\` (${t.name})`).join(', ')}`,
     `- **layout**: ${layouts.map((l) => `\`${l.id}\` (${l.name})`).join(', ')}`,
-    `- **shape**: ${shapes.map((s) => `\`${s.id}\` (${s.name})`).join(', ')}`,
+    `- **shape**: ${shapes.map((s) => `\`${s.id}\` (${s.name})`).join(', ')}, \`none\` (Frameless)`,
+    ...(sceneNodes.length > 0
+      ? [
+          `- **scene-node**: ${sceneNodes
+            .map((sn) => `\`${sn.id}\` (${sn.name})`)
+            .join(', ')}`,
+        ]
+      : []),
     `- **camera**: ${cameras.map((c) => `\`${c.id}\` (${c.name})`).join(', ')}`,
     `- **hand**: ${hands.map((h) => `\`${h.id}\` (${h.name})`).join(', ')}`,
     `- **transition**: ${transitions.map((tr) => `\`${tr.id}\` (${tr.name})`).join(', ')}`,

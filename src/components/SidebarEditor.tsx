@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Code2, Layers, Plus, Subtitles } from 'lucide-react';
 import { AudioTrackState } from '../engine/audio/voiceTrackPlayer';
 import { CompiledProjectTimeline } from '../engine/timeline/projectTimeline';
@@ -85,18 +85,55 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
   );
   const [scriptWarnings, setScriptWarnings] = useState<string[]>([]);
   const [isEditingScript, setIsEditingScript] = useState(false);
+  const lastParsedSceneRef = useRef<LessonScene | null>(null);
 
   useEffect(() => {
-    if (!isEditingScript) {
+    if (!isEditingScript && scene !== lastParsedSceneRef.current) {
       setScriptText(activeCodec ? activeCodec.serialize(scene) : '');
       setScriptWarnings([]);
     }
   }, [scene, isEditingScript, activeCodec]);
 
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    const findAncestorGroups = (
+      nodes: SceneNode[],
+      targetId: string,
+      ancestors: string[]
+    ): string[] | null => {
+      for (const n of nodes) {
+        if (n.id === targetId) return ancestors;
+        if (n.type === 'group') {
+          const hit = findAncestorGroups(n.children, targetId, [
+            ...ancestors,
+            n.id,
+          ]);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    };
+    const parents = findAncestorGroups(scene.nodes, selectedNodeId, []);
+    if (parents && parents.length > 0) {
+      setExpandedGroups((prev) => {
+        let changed = false;
+        const next = new Set(prev);
+        for (const pid of parents) {
+          if (!next.has(pid)) {
+            next.add(pid);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
+  }, [selectedNodeId, scene.nodes]);
+
   const handleScriptChange = (value: string) => {
     if (!activeCodec) return;
     setScriptText(value);
     const { scene: parsed, warnings } = activeCodec.parse(value, scene);
+    lastParsedSceneRef.current = parsed;
     setScriptWarnings(warnings);
     onUpdateScene(() => parsed);
   };
@@ -230,8 +267,27 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
     onSelectNode(childId);
   };
 
-  const topVertices = scene.nodes.filter((n) => n.type !== 'connector');
-  const nodeNameMap = new Map(scene.nodes.map((n) => [n.id, n.name]));
+  const topVertices: SceneNode[] = [];
+  const collectConnectable = (nodes: SceneNode[]) => {
+    for (const n of nodes) {
+      if (n.type === 'connector') continue;
+      topVertices.push(n);
+      if (n.type === 'group' && (n.arrange ?? 'card') !== 'card') {
+        collectConnectable(n.children);
+      }
+    }
+  };
+  collectConnectable(scene.nodes);
+  const nodeNameMap = new Map<string, string>();
+  const registerNodeNames = (nodes: SceneNode[]) => {
+    for (const n of nodes) {
+      nodeNameMap.set(n.id, n.name);
+      if (n.type === 'group') {
+        registerNodeNames(n.children);
+      }
+    }
+  };
+  registerNodeNames(scene.nodes);
 
   return (
     <aside

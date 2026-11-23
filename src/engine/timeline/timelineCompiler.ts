@@ -2,14 +2,17 @@ import '../../plugins';
 import {
   ChalkColor,
   deriveTeachingSteps,
+  isCustomSceneNode,
   LessonScene,
   Rect,
+  resolveCustomNodeKind,
   TextAlign,
   ThemeId,
 } from '../../model/scene';
 import {
   layoutRegistry,
   presentationRegistry,
+  sceneNodeRegistry,
 } from '../../plugins/registry';
 import { ComputedLayout, PositionedSceneNode } from '../layout/diagramLayout';
 import { resolveColorHex } from '../render/themes';
@@ -360,6 +363,51 @@ export function compileTimeline(
       }
 
       if (curr.node.type === 'group') {
+        for (const child of curr.children ?? []) {
+          compilePositionedNode(child);
+        }
+        return;
+      }
+
+      if (isCustomSceneNode(curr.node)) {
+        const kind =
+          curr.measured.type === 'custom'
+            ? curr.measured.kind
+            : resolveCustomNodeKind(curr.node);
+        const plugin = sceneNodeRegistry.get(kind);
+        if (plugin?.compile) {
+          let customTextSeq = 0;
+          const nodeColor = curr.node.color;
+          plugin.compile(curr, {
+            theme: scene.theme,
+            fontFamily: boardFontFamily,
+            pushStroke,
+            pushTextLine: (input) => {
+              const fontSize = input.fontSize ?? 18;
+              const weight = input.fontWeight ?? 400;
+              const lineFont = `${weight} ${fontSize}px ${boardFontFamily}`;
+              const tItem = compileTextLineItem(
+                input.id ?? `${curr.id}-text-${customTextSeq++}`,
+                input.text,
+                input.boxLeftX,
+                input.boxWidth,
+                input.centerY,
+                input.align ?? 'center',
+                input.indentPx ?? 0,
+                lineFont,
+                fontSize,
+                input.color ?? nodeColor,
+                scene.theme,
+                itemCursor,
+                input.msPerChar ?? (fontSize >= 20 ? 122 : 88)
+              );
+              items.push(tItem);
+              allItems.push(tItem);
+              itemCursor = tItem.endMs + (input.gapAfterMs ?? 40);
+            },
+          });
+          return;
+        }
         for (const child of curr.children ?? []) {
           compilePositionedNode(child);
         }

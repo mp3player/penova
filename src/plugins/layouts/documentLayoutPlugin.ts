@@ -1,10 +1,11 @@
 import { documentScriptCodec } from '../codecs/documentParser';
-import { ConnectorSceneNode, LessonScene, TeachingStep } from '../../model/scene';
+import { LessonScene, TeachingStep } from '../../model/scene';
 import { LayoutPlugin, PositionedSceneNode } from '../contracts';
 import {
   buildConnectorNode,
   computeConnectorBowMap,
   finalizeLayout,
+  indexNodesRecursively,
   makePositionedNode,
   splitSceneNodes,
 } from './shared';
@@ -23,16 +24,8 @@ export const documentLayoutPlugin: LayoutPlugin = {
       return scene.customSteps;
     }
 
-    const vertexIds = new Set(
-      scene.nodes.filter((n) => n.type !== 'connector').map((n) => n.id)
-    );
-    const boundConnectors = scene.nodes.filter(
-      (n): n is ConnectorSceneNode =>
-        n.type === 'connector' &&
-        Boolean(n.fromId && n.toId) &&
-        n.fromId !== n.toId &&
-        vertexIds.has(n.fromId!) &&
-        vertexIds.has(n.toId!)
+    const { ownerVertexIdMap: ownerTopId, boundConnectors } = splitSceneNodes(
+      scene.nodes
     );
 
     const visitedVertices = new Set<string>();
@@ -56,20 +49,33 @@ export const documentLayoutPlugin: LayoutPlugin = {
       visitedVertices.add(node.id);
       const readyConns: string[] = [];
       for (const c of boundConnectors) {
+        const topFrom = ownerTopId.get(c.fromId!);
+        const topTo = ownerTopId.get(c.toId!);
         if (
           !placedConnectors.has(c.id) &&
-          visitedVertices.has(c.fromId!) &&
-          visitedVertices.has(c.toId!)
+          topFrom &&
+          topTo &&
+          visitedVertices.has(topFrom) &&
+          visitedVertices.has(topTo)
         ) {
           placedConnectors.add(c.id);
           readyConns.push(c.id);
         }
       }
 
+      const rawPause = node.meta?.pause;
+      const pauseMs =
+        typeof rawPause === 'number' &&
+        Number.isFinite(rawPause) &&
+        rawPause >= 0
+          ? Math.round(rawPause)
+          : undefined;
+
       steps.push({
         id: `doc-step-${steps.length + 1}-${node.id}`,
         title: node.name || '段落',
         nodeIds: [...readyConns, node.id],
+        ...(pauseMs !== undefined ? { pauseMs } : {}),
       });
     }
 
@@ -120,7 +126,7 @@ export const documentLayoutPlugin: LayoutPlugin = {
 
       const pNode = makePositionedNode(v, cx, cy, measured, helpers);
       positionedNodes.push(pNode);
-      nodeMap.set(v.id, pNode);
+      indexNodesRecursively([pNode], nodeMap);
     }
 
     const bowMap = computeConnectorBowMap(boundConnectors);

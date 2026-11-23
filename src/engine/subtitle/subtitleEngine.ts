@@ -28,10 +28,16 @@ export function generateAutoSubtitles(
       const endMs = Math.round(seg.startMs + step.endMs);
 
       let rawText = step.step.title || `第 ${stepIdx + 1} 步`;
+      let hasCustomSay = false;
       for (const nid of step.step.nodeIds) {
         const node = findNodeById(seg.scene.nodes, nid);
         if (!node || node.type === 'connector') continue;
-        if (node.type === 'text') {
+        const customSay =
+          typeof node.meta?.say === 'string' ? node.meta.say.trim() : '';
+        if (customSay) {
+          rawText = customSay;
+          hasCustomSay = true;
+        } else if (node.type === 'text') {
           rawText = node.text.replace(/\s+/g, ' ').trim();
         } else {
           const summary = getCardSummary(node);
@@ -43,8 +49,9 @@ export function generateAutoSubtitles(
       }
 
       const compact = rawText.replace(/\s+/g, ' ').trim();
+      const maxLen = hasCustomSay ? 120 : 44;
       const text =
-        compact.length > 44 ? `${compact.slice(0, 41)}...` : compact;
+        compact.length > maxLen ? `${compact.slice(0, maxLen - 3)}...` : compact;
 
       if (text) {
         cues.push({

@@ -12,6 +12,7 @@ import {
   computeConnectorBowMap,
   createPositionedConnectorFromPoints,
   finalizeLayout,
+  indexNodesRecursively,
   makePositionedNode,
   sampleQuadraticBezier,
   splitSceneNodes,
@@ -22,9 +23,8 @@ export function computeDagreFlowLayout(
   helpers: LayoutHelpers,
   rankdir: 'LR' | 'TB'
 ): ComputedLayout {
-  const { vertices, boundConnectors, unboundConnectors } = splitSceneNodes(
-    scene.nodes
-  );
+  const { vertices, ownerVertexIdMap, boundConnectors, unboundConnectors } =
+    splitSceneNodes(scene.nodes);
 
   const measuredMap = new Map<string, MeasuredSceneNode>();
   for (const node of vertices) {
@@ -48,7 +48,11 @@ export function computeDagreFlowLayout(
   }
 
   for (const conn of boundConnectors) {
-    g.setEdge(conn.fromId!, conn.toId!, { id: conn.id });
+    const topFrom = ownerVertexIdMap.get(conn.fromId!);
+    const topTo = ownerVertexIdMap.get(conn.toId!);
+    if (topFrom && topTo && topFrom !== topTo) {
+      g.setEdge(topFrom, topTo, { id: conn.id });
+    }
   }
 
   dagre.layout(g);
@@ -67,7 +71,7 @@ export function computeDagreFlowLayout(
       helpers
     );
     positionedNodes.push(pNode);
-    vertexMap.set(node.id, pNode);
+    indexNodesRecursively([pNode], vertexMap);
   }
 
   const bowMap = computeConnectorBowMap(boundConnectors);
@@ -82,6 +86,9 @@ export function computeDagreFlowLayout(
   for (const conn of boundConnectors) {
     const fromNode = vertexMap.get(conn.fromId!)!;
     const toNode = vertexMap.get(conn.toId!)!;
+    const topFrom = ownerVertexIdMap.get(conn.fromId!);
+    const topTo = ownerVertexIdMap.get(conn.toId!);
+    const isDirectTopEdge = conn.fromId === topFrom && conn.toId === topTo;
     const a = conn.fromId! < conn.toId! ? conn.fromId! : conn.toId!;
     const b = conn.fromId! < conn.toId! ? conn.toId! : conn.fromId!;
     const isMultiEdge = (pairCounts.get(`${a}__${b}`) ?? 0) > 1;
@@ -89,8 +96,11 @@ export function computeDagreFlowLayout(
       Boolean(fromNode.node.offset?.x || fromNode.node.offset?.y) ||
       Boolean(toNode.node.offset?.x || toNode.node.offset?.y);
 
-    const dagreEdge = g.edge(conn.fromId!, conn.toId!);
+    const dagreEdge = isDirectTopEdge
+      ? g.edge(conn.fromId!, conn.toId!)
+      : undefined;
     if (
+      isDirectTopEdge &&
       !isMultiEdge &&
       !hasOffset &&
       dagreEdge &&
