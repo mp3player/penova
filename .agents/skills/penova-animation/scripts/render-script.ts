@@ -9488,7 +9488,7 @@ const { svgSequenceTarExporterPlugin } = (() => {
 })();
 
 // --- Module: src/plugins/index.ts ---
-const { stripMarkdownFence } = (() => {
+(() => {
   let initialized = false;
   function registerBuiltinPlugins(): void {
     if (initialized) return;
@@ -9546,7 +9546,6 @@ const { stripMarkdownFence } = (() => {
     exportRegistry.register(svgSequenceTarExporterPlugin, { override: true });
   }
   registerBuiltinPlugins();
-  return { stripMarkdownFence };
 })();
 
 // --- Module: src/model/project.ts ---
@@ -10174,7 +10173,7 @@ const { computeDiagramLayout } = (() => {
 })();
 
 // --- Module: src/engine/sketch/handDrawnGeometry.ts ---
-const { samplePointAlongStroke, generateShapeStrokes, generateGroupFrameStrokes, generateConnectorStrokes } = (() => {
+const { generateShapeStrokes, generateGroupFrameStrokes, generateConnectorStrokes } = (() => {
   function generateShapeStrokes(pNode: PositionedSceneNode): StrokePath[] {
     if (pNode.node.type !== 'shape') return [];
     const sNode = pNode.node;
@@ -10276,7 +10275,7 @@ const { samplePointAlongStroke, generateShapeStrokes, generateGroupFrameStrokes,
 
     return strokes;
   }
-  return { samplePointAlongStroke, generateShapeStrokes, generateGroupFrameStrokes, generateConnectorStrokes };
+  return { generateShapeStrokes, generateGroupFrameStrokes, generateConnectorStrokes };
 })();
 
 // --- Module: src/engine/sketch/textStrokes.ts ---
@@ -14097,8 +14096,9 @@ function printUsage(): void {
   console.log(
     [
       'Usage (Self-Contained Penova Skill Runner):',
-      '  npx tsx render-script.ts --spec',
-      '  npx tsx render-script.ts <input.penova.md> [output-dir] [--exporter=poster-svg|svg-sequence-tar] [--fps=12]',
+      '  node render-script.ts --spec',
+      '  node render-script.ts <input.penova.md> [output-dir] [--exporter=poster-svg|svg-sequence-tar] [--fps=12]',
+      '  # On Node < 22.6 use: npx tsx render-script.ts ...',
     ].join('\n')
   );
 }

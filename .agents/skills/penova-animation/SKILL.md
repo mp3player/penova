@@ -54,17 +54,17 @@ Use these local templates inside this skill as starting points:
 
 ### Step 3: Validate & Export Using the Bundled Runner
 
-Run the self-contained headless runner [render-script.ts](./scripts/render-script.ts) (requires only Node + `tsx`):
+Run the self-contained headless runner [render-script.ts](./scripts/render-script.ts) directly with Node (Node 22.6+/24/26+ supports `.ts` natively; use `npx tsx` on older Node versions):
 
 ```bash
 # 1. Inspect the built-in plugin registry specification & syntax rules
-npx tsx ./scripts/render-script.ts --spec
+node ./scripts/render-script.ts --spec
 
 # 2. Validate script + export .penova.json, .srt subtitles, and HD vector poster (.svg)
-npx tsx ./scripts/render-script.ts path/to/story.penova.md ./out
+node ./scripts/render-script.ts path/to/story.penova.md ./out
 
 # 3. Export headless SVG animation frames (.tar) ready for SVG or FFmpeg pipelines
-npx tsx ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=svg-sequence-tar --fps=12
+node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=svg-sequence-tar --fps=12
 ```
 
 ### Step 4: Quality Checklist Before Delivering

@@ -113,8 +113,8 @@ Used by `layout: document` (Letter / Narrative Doc):
 ## 4. Bundled CLI Commands (`./scripts/render-script.ts`)
 
 - Print full live plugin & codec spec:
-  `npx tsx ./scripts/render-script.ts --spec`
+  `node ./scripts/render-script.ts --spec`
 - Export `.penova.json` + `.srt` + `.svg` poster:
-  `npx tsx ./scripts/render-script.ts <input.penova.md> [output-dir]`
+  `node ./scripts/render-script.ts <input.penova.md> [output-dir]`
 - Export `.tar` SVG animation frame sequence (`svg-sequence-tar`):
-  `npx tsx ./scripts/render-script.ts <input.penova.md> [output-dir] --exporter=svg-sequence-tar --fps=12`
+  `node ./scripts/render-script.ts <input.penova.md> [output-dir] --exporter=svg-sequence-tar --fps=12`

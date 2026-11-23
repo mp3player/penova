@@ -315,8 +315,9 @@ function printUsage(): void {
   console.log(
     [
       'Usage (Self-Contained Penova Skill Runner):',
-      '  npx tsx render-script.ts --spec',
-      '  npx tsx render-script.ts <input.penova.md> [output-dir] [--exporter=poster-svg|svg-sequence-tar] [--fps=12]',
+      '  node render-script.ts --spec',
+      '  node render-script.ts <input.penova.md> [output-dir] [--exporter=poster-svg|svg-sequence-tar] [--fps=12]',
+      '  # On Node < 22.6 use: npx tsx render-script.ts ...',
     ].join('\\n')
   );
 }
@@ -427,6 +428,7 @@ def build_bundle() -> None:
     # Emit runtime modules in topological order, isolating module-private scope in an IIFE
     # and only destructuring symbols actually referenced by later modules or CLI_RUNNER.
     runtime_sections: list[str] = []
+    emitted_exports: set[str] = set()
     for idx, (mod_rel, _, runtime_stmts, exported_names) in enumerate(parsed):
         if not runtime_stmts:
             continue
@@ -436,8 +438,10 @@ def build_bundle() -> None:
         used_exports = [
             name
             for name in exported_names
-            if re.search(rf"\b{re.escape(name)}\b", downstream_blob)
+            if name not in emitted_exports
+            and re.search(rf"\b{re.escape(name)}\b", downstream_blob)
         ]
+        emitted_exports.update(used_exports)
 
         indented_body = "\n".join(
             "  " + line if line.strip() else ""
