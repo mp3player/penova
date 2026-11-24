@@ -253,15 +253,17 @@ export const mindmapPlugin: LayoutPlugin = {
     for (const conn of boundConnectors) {
       const fromNode = vertexMap.get(conn.fromId!)!;
       const toNode = vertexMap.get(conn.toId!)!;
+      const topFrom = ownerVertexIdMap.get(conn.fromId!) ?? conn.fromId!;
+      const topTo = ownerVertexIdMap.get(conn.toId!) ?? conn.toId!;
       const obstacles = collectObstaclesForConnector(
         conn,
         positionedVertices,
         ownerVertexIdMap
       );
 
-      if (treeEdgeSet.has(`${conn.fromId}->${conn.toId}`)) {
+      if (treeEdgeSet.has(`${topFrom}->${topTo}`)) {
         const dir: 1 | -1 =
-          branchDir.get(conn.toId!) ?? (toNode.cx >= fromNode.cx ? 1 : -1);
+          branchDir.get(topTo) ?? (toNode.cx >= fromNode.cx ? 1 : -1);
         const start = clipPointToNodeBorder(
           fromNode,
           { x: fromNode.cx + dir * 200, y: fromNode.cy },

@@ -11,6 +11,7 @@ import {
   TextAlign,
   TextSceneNode,
   isCustomSceneNode,
+  resolveCustomNodeKind,
 } from './scene';
 
 export function createTextNode(opts: {
@@ -260,7 +261,10 @@ export function isCardGroupNode(node: SceneNode): node is GroupSceneNode {
       shapeCount++;
     } else if (child.type === 'text') {
       textCount++;
-    } else if (isCustomSceneNode(child) && child.kind === 'icon') {
+    } else if (
+      isCustomSceneNode(child) &&
+      resolveCustomNodeKind(child) === 'icon'
+    ) {
       iconCount++;
     } else {
       return false;
@@ -311,7 +315,7 @@ export function updateCardGroupNode(
     (c): c is ShapeSceneNode => c.type === 'shape'
   );
   const existingIcon = group.children.find(
-    (c): c is CustomSceneNode => isCustomSceneNode(c) && c.kind === 'icon'
+    (c): c is CustomSceneNode => isCustomSceneNode(c) && resolveCustomNodeKind(c) === 'icon'
   );
   const existingTexts = group.children.filter(
     (c): c is TextSceneNode => c.type === 'text'
@@ -463,7 +467,7 @@ export function getCardSummary(node: SceneNode): CardSummary {
       (c): c is ShapeSceneNode => c.type === 'shape'
     );
     const iconChild = node.children.find(
-      (c): c is CustomSceneNode => isCustomSceneNode(c) && c.kind === 'icon'
+      (c): c is CustomSceneNode => isCustomSceneNode(c) && resolveCustomNodeKind(c) === 'icon'
     );
     const icon =
       (typeof iconChild?.props?.icon === 'string' && iconChild.props.icon.trim()

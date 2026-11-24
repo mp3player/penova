@@ -255,7 +255,9 @@ export function computeDagreFlowLayout(
         ownerVertexIdMap,
         {
           preferredBow,
-          preferredSide: rankTo > rankFrom ? -1 : 1,
+          // Edge normal flips when direction reverses, so -1 arches forward edges
+          // over the top (-y) and back-edges under the bottom (+y).
+          preferredSide: -1,
           routedMidpoints,
         }
       )

@@ -210,7 +210,9 @@ export function renderProjectFrame(
       const activeTheme =
         evalState.kind === 'scene'
           ? evalState.segment.scene.theme
-          : evalState.fromSegment.scene.theme;
+          : evalState.progress < 0.5
+          ? evalState.fromSegment.scene.theme
+          : evalState.toSegment.scene.theme;
       drawSubtitleOverlay(ctx, width, height, activeCue.text, activeTheme);
     }
   }

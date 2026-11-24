@@ -419,6 +419,7 @@ export interface EvaluatedPenSnapshot {
   colorHex: string;
   velocity: number;
   alpha: number;
+  seed?: number;
 }
 
 export interface EvaluatedSceneSnapshot {
@@ -498,6 +499,7 @@ export interface SceneNodeTextLineInput {
   indentPx?: number;
   fontSize?: number;
   fontWeight?: 400 | 700;
+  fontFamily?: string;
   color?: ChalkColor;
   msPerChar?: number;
   gapAfterMs?: number;

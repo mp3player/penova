@@ -24,6 +24,7 @@ import {
 import { SceneTextCodec } from '../contracts';
 import { shapeRegistry } from '../registry';
 import {
+  extractTrailingMetaBlock,
   formatMetaString,
   splitMetaPairs,
   stripMarkdownFence,
@@ -89,48 +90,6 @@ function unescapeInlineText(raw: string): string {
 
 function escapeCardTitle(raw: string): string {
   return escapeInlineText(raw).replace(/\|/g, '\\|');
-}
-
-function extractTrailingMetaBlock(
-  text: string
-): { body: string; metaRaw: string } | null {
-  const trimmed = text.trimEnd();
-  if (!trimmed.endsWith('}')) return null;
-
-  let quote: '"' | "'" | null = null;
-  let depth = 0;
-  let topStart = -1;
-
-  for (let i = 0; i < trimmed.length; i++) {
-    const ch = trimmed[i];
-    if (quote) {
-      if (ch === '\\') {
-        i++;
-      } else if (ch === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === '{') {
-      if (depth === 0) topStart = i;
-      depth++;
-    } else if (ch === '}') {
-      if (depth > 0) {
-        depth--;
-        if (depth === 0 && i === trimmed.length - 1 && topStart !== -1) {
-          return {
-            body: trimmed.slice(0, topStart).trimEnd(),
-            metaRaw: trimmed.slice(topStart + 1, i),
-          };
-        }
-      }
-    }
-  }
-  return null;
 }
 
 function findUnescapedPipe(raw: string): number {
@@ -253,7 +212,7 @@ function parseMetaBlock(
       }
     } else if (
       key === 'say' ||
-      key === 'caption' ||
+      (!allowCustomProps && key === 'caption') ||
       key === '字幕' ||
       key === '讲解'
     ) {
@@ -619,8 +578,8 @@ export function parseScriptToScene(
     const line = rawLine.trim();
     if (!line || line.startsWith('//')) return;
 
-    if (line.startsWith('#')) {
-      const parsedTitle = line.replace(/^#+\s*/, '').trim();
+    if (/^#+\s+/.test(line)) {
+      const parsedTitle = line.replace(/^#+\s+/, '').trim();
       if (parsedTitle) {
         title = parsedTitle;
       }
@@ -1103,7 +1062,14 @@ function isStandardCardGroup(node: GroupSceneNode): boolean {
     } else if (
       isCustomSceneNode(child) &&
       resolveCustomNodeKind(child) === 'icon' &&
-      child.color === node.color
+      child.color === node.color &&
+      typeof child.props?.svg !== 'string' &&
+      typeof child.props?.icon === 'string' &&
+      child.props.icon.trim().length > 0 &&
+      (child.props?.size === undefined ||
+        child.props.size === (role === 'root' ? 32 : 26)) &&
+      (child.offset?.x ?? 0) === 0 &&
+      (child.offset?.y ?? 0) === 0
     ) {
       iconCount++;
     } else {
@@ -1475,8 +1441,8 @@ export const graphScriptCodec: SceneTextCodec = {
   ],
   syntaxRules: [
     'Optional scene title line: `# Scene Title`',
-    'Card declaration: `[role] Label | Optional Subtitle {color, shape: <shape|none>, group, say: "spoken subtitle", pause: <ms>, x, y}` (use `[role#id]` when two nodes share the same label; use `\\n` for line breaks)',
-    'Standalone atomic nodes: `[text] Content {color, size, bold, align, maxW, indent, say, pause, x, y}`, `[shape:<shapeId>] Label {color, fit, emphasized, dashed, w, h, say, pause, x, y}`, `[node:<customKind>] Name {color, <prop>: <val>, say, pause}`',
+    'Card declaration: `[role] Label | Optional Subtitle {color, shape: <shape|none>, icon: <iconName>, group, say: "spoken subtitle", pause: <ms>, x, y}` (use `[role#id]` when two nodes share the same label; use `\\n` for line breaks)',
+    'Standalone atomic & widget nodes: `[text] Content {color, size, bold, align, maxW, indent, say, pause, x, y}`, `[shape:<shapeId>] Label {color, fit, emphasized, dashed, w, h, say, pause, x, y}`, `[node:icon|sketch|code|chart|<customKind>] Name {color, <prop>: <val>, say, pause}`',
     'Composite groups: `[group] Group Name {color, arrange: card|stack|free, gap, say, pause}` followed by 2-space-indented child node lines',
     'Valid `role` values: `root`, `step`, `concept`, `highlight`, `note`',
     'Valid `color` values: `white`, `yellow`, `cyan`, `pink`, `green`, `orange`',

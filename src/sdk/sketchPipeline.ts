@@ -30,7 +30,7 @@ export interface SketchBinaryMask {
 
 export type SketchAssetInput =
   | { kind: 'svg'; svgText: string }
-  | { kind: 'bitmap'; bitmap: SketchGrayBitmap; threshold?: number };
+  | { kind: 'bitmap'; bitmap: SketchGrayBitmap; threshold?: number; invert?: boolean };
 
 export interface SketchPipelineOptions {
   seed?: string;
@@ -61,16 +61,13 @@ interface ExtractedSketchSvgPath {
 interface SketchBitmapBranchInput {
   bitmap: SketchGrayBitmap;
   threshold?: number;
+  invert?: boolean;
 }
 
 interface SketchPostProcessInput {
   polylines: SketchRawPolyline[];
   options: SketchPipelineOptions;
 }
-
-type SketchPathToken =
-  | { type: 'cmd'; val: string }
-  | { type: 'num'; val: number };
 
 function mapSvgStrokeColorHint(raw?: string): ChalkColor | undefined {
   if (!raw) return undefined;
@@ -95,7 +92,7 @@ function mapSvgStrokeColorHint(raw?: string): ChalkColor | undefined {
 }
 
 function readSvgAttr(tag: string, name: string): string | undefined {
-  const re = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i');
+  const re = new RegExp(`(?:^|[\\s<])${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i');
   const m = tag.match(re);
   return m ? m[1] ?? m[2] : undefined;
 }
@@ -107,22 +104,27 @@ function readSvgNum(tag: string, name: string, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function stripHiddenSvgBlocks(svgText: string): string {
+  return svgText
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(defs|clipPath|mask|symbol)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+}
+
 function extractSvgPrimitivesFn(svgText: string): ExtractedSketchSvgPath[] {
   const out: ExtractedSketchSvgPath[] = [];
+  const cleanedSvg = stripHiddenSvgBlocks(svgText);
   const tagRe = /<(path|line|rect|circle|ellipse|polyline|polygon)\b([^>]*?)\/?>/gi;
   let match: RegExpExecArray | null;
   let seq = 0;
 
-  while ((match = tagRe.exec(svgText)) !== null) {
+  while ((match = tagRe.exec(cleanedSvg)) !== null) {
     const tagName = match[1].toLowerCase();
     const attrs = match[2];
     const id = readSvgAttr(attrs, 'id') ?? `svg-${tagName}-${seq++}`;
     const strokeAttr = readSvgAttr(attrs, 'stroke');
     const fillAttr = readSvgAttr(attrs, 'fill');
-    const fill =
-      Boolean(fillAttr) &&
-      fillAttr!.trim().toLowerCase() !== 'none' &&
-      fillAttr!.trim().toLowerCase() !== 'transparent';
+    const fillNorm = fillAttr?.trim().toLowerCase();
+    const fill = fillNorm !== 'none' && fillNorm !== 'transparent';
     const colorHint = mapSvgStrokeColorHint(strokeAttr);
 
     if (tagName === 'path') {
@@ -188,22 +190,6 @@ function extractSvgPrimitivesFn(svgText: string): ExtractedSketchSvgPath[] {
   }
 
   return out;
-}
-
-function tokenizeSvgPathD(d: string): SketchPathToken[] {
-  const tokens: SketchPathToken[] = [];
-  const re =
-    /([MmLlHhVvQqTtCcSsAaZz])|([+-]?(?:\d*\.\d+|\d+\.?)(?:[eE][+-]?\d+)?)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(d)) !== null) {
-    if (m[1]) {
-      tokens.push({ type: 'cmd', val: m[1] });
-    } else if (m[2]) {
-      const n = Number.parseFloat(m[2]);
-      if (Number.isFinite(n)) tokens.push({ type: 'num', val: n });
-    }
-  }
-  return tokens;
 }
 
 function sampleSvgArc(
@@ -289,9 +275,9 @@ function sampleSvgDToPolylines(
   colorHint?: ChalkColor,
   fill = false
 ): SketchRawPolyline[] {
-  const tokens = tokenizeSvgPathD(d);
   const polylines: SketchRawPolyline[] = [];
-  let idx = 0;
+  let pos = 0;
+  const len = d.length;
   let cmd = '';
   let cur: Point = { x: 0, y: 0 };
   let start: Point = { x: 0, y: 0 };
@@ -314,12 +300,55 @@ function sampleSvgDToPolylines(
     currentPts = [];
   };
 
-  const hasNum = () => idx < tokens.length && tokens[idx].type === 'num';
-  const nextNum = () => (tokens[idx++] as { type: 'num'; val: number }).val;
+  const skipSep = () => {
+    while (pos < len) {
+      const ch = d[pos];
+      if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === ',') {
+        pos++;
+      } else {
+        break;
+      }
+    }
+  };
 
-  while (idx < tokens.length) {
-    if (tokens[idx].type === 'cmd') {
-      cmd = (tokens[idx++] as { type: 'cmd'; val: string }).val;
+  const numRe = /[+-]?(?:\d*\.\d+|\d+\.?)(?:[eE][+-]?\d+)?/y;
+  const hasNumberAhead = (): boolean => {
+    skipSep();
+    if (pos >= len) return false;
+    numRe.lastIndex = pos;
+    return numRe.test(d);
+  };
+
+  const readNumber = (): number | null => {
+    skipSep();
+    if (pos >= len) return null;
+    numRe.lastIndex = pos;
+    const m = numRe.exec(d);
+    if (!m) return null;
+    const n = Number.parseFloat(m[0]);
+    if (!Number.isFinite(n)) return null;
+    pos = numRe.lastIndex;
+    return n;
+  };
+
+  const readFlag = (): number | null => {
+    skipSep();
+    if (pos >= len) return null;
+    const ch = d[pos];
+    if (ch === '0' || ch === '1') {
+      pos++;
+      return ch === '1' ? 1 : 0;
+    }
+    return null;
+  };
+
+  let abort = false;
+  while (pos < len && !abort) {
+    skipSep();
+    if (pos >= len) break;
+
+    if (/[MmLlHhVvQqTtCcSsAaZz]/.test(d[pos])) {
+      cmd = d[pos++];
       if (cmd === 'Z' || cmd === 'z') {
         if (
           currentPts.length > 0 &&
@@ -333,8 +362,8 @@ function sampleSvgDToPolylines(
         lastQuadCtrl = null;
         continue;
       }
-    } else if (!cmd) {
-      idx++;
+    } else if (!cmd || !hasNumberAhead()) {
+      pos++;
       continue;
     }
 
@@ -342,10 +371,15 @@ function sampleSvgDToPolylines(
     const C = cmd.toUpperCase();
 
     if (C === 'M') {
-      if (!hasNum()) break;
+      const rx = readNumber();
+      const ry = readNumber();
+      if (rx === null || ry === null) {
+        abort = true;
+        break;
+      }
       flushSubpath(false);
-      const x = nextNum() + (rel ? cur.x : 0);
-      const y = nextNum() + (rel ? cur.y : 0);
+      const x = rx + (rel ? cur.x : 0);
+      const y = ry + (rel ? cur.y : 0);
       cur = { x, y };
       start = { x, y };
       currentPts = [{ x, y }];
@@ -353,46 +387,74 @@ function sampleSvgDToPolylines(
       lastQuadCtrl = null;
       cmd = rel ? 'l' : 'L';
     } else if (C === 'L') {
-      while (hasNum()) {
-        const x = nextNum() + (rel ? cur.x : 0);
-        const y = nextNum() + (rel ? cur.y : 0);
+      while (hasNumberAhead()) {
+        const rx = readNumber();
+        const ry = readNumber();
+        if (rx === null || ry === null) {
+          abort = true;
+          break;
+        }
+        const x = rx + (rel ? cur.x : 0);
+        const y = ry + (rel ? cur.y : 0);
         cur = { x, y };
         currentPts.push({ x, y });
         lastCubicCtrl = null;
         lastQuadCtrl = null;
       }
     } else if (C === 'H') {
-      while (hasNum()) {
-        const x = nextNum() + (rel ? cur.x : 0);
+      while (hasNumberAhead()) {
+        const rx = readNumber();
+        if (rx === null) {
+          abort = true;
+          break;
+        }
+        const x = rx + (rel ? cur.x : 0);
         cur = { x, y: cur.y };
         currentPts.push({ ...cur });
         lastCubicCtrl = null;
         lastQuadCtrl = null;
       }
     } else if (C === 'V') {
-      while (hasNum()) {
-        const y = nextNum() + (rel ? cur.y : 0);
+      while (hasNumberAhead()) {
+        const ry = readNumber();
+        if (ry === null) {
+          abort = true;
+          break;
+        }
+        const y = ry + (rel ? cur.y : 0);
         cur = { x: cur.x, y };
         currentPts.push({ ...cur });
         lastCubicCtrl = null;
         lastQuadCtrl = null;
       }
     } else if (C === 'Q' || C === 'T') {
-      while (hasNum()) {
+      while (hasNumberAhead()) {
         let cp: Point;
         if (C === 'Q') {
+          const cx1 = readNumber();
+          const cy1 = readNumber();
+          if (cx1 === null || cy1 === null) {
+            abort = true;
+            break;
+          }
           cp = {
-            x: nextNum() + (rel ? cur.x : 0),
-            y: nextNum() + (rel ? cur.y : 0),
+            x: cx1 + (rel ? cur.x : 0),
+            y: cy1 + (rel ? cur.y : 0),
           };
         } else {
           cp = lastQuadCtrl
             ? { x: 2 * cur.x - lastQuadCtrl.x, y: 2 * cur.y - lastQuadCtrl.y }
             : { ...cur };
         }
+        const rx2 = readNumber();
+        const ry2 = readNumber();
+        if (rx2 === null || ry2 === null) {
+          abort = true;
+          break;
+        }
         const p2 = {
-          x: nextNum() + (rel ? cur.x : 0),
-          y: nextNum() + (rel ? cur.y : 0),
+          x: rx2 + (rel ? cur.x : 0),
+          y: ry2 + (rel ? cur.y : 0),
         };
         const p0 = { ...cur };
         const steps = 10;
@@ -409,25 +471,39 @@ function sampleSvgDToPolylines(
         lastCubicCtrl = null;
       }
     } else if (C === 'C' || C === 'S') {
-      while (hasNum()) {
+      while (hasNumberAhead()) {
         let c1: Point;
         if (C === 'C') {
+          const cx1 = readNumber();
+          const cy1 = readNumber();
+          if (cx1 === null || cy1 === null) {
+            abort = true;
+            break;
+          }
           c1 = {
-            x: nextNum() + (rel ? cur.x : 0),
-            y: nextNum() + (rel ? cur.y : 0),
+            x: cx1 + (rel ? cur.x : 0),
+            y: cy1 + (rel ? cur.y : 0),
           };
         } else {
           c1 = lastCubicCtrl
             ? { x: 2 * cur.x - lastCubicCtrl.x, y: 2 * cur.y - lastCubicCtrl.y }
             : { ...cur };
         }
+        const cx2 = readNumber();
+        const cy2 = readNumber();
+        const rx3 = readNumber();
+        const ry3 = readNumber();
+        if (cx2 === null || cy2 === null || rx3 === null || ry3 === null) {
+          abort = true;
+          break;
+        }
         const c2 = {
-          x: nextNum() + (rel ? cur.x : 0),
-          y: nextNum() + (rel ? cur.y : 0),
+          x: cx2 + (rel ? cur.x : 0),
+          y: cy2 + (rel ? cur.y : 0),
         };
         const p3 = {
-          x: nextNum() + (rel ? cur.x : 0),
-          y: nextNum() + (rel ? cur.y : 0),
+          x: rx3 + (rel ? cur.x : 0),
+          y: ry3 + (rel ? cur.y : 0),
         };
         const p0 = { ...cur };
         const steps = 12;
@@ -452,15 +528,30 @@ function sampleSvgDToPolylines(
         lastQuadCtrl = null;
       }
     } else if (C === 'A') {
-      while (hasNum()) {
-        const rx = nextNum();
-        const ry = nextNum();
-        const rot = nextNum();
-        const largeArc = nextNum();
-        const sweep = nextNum();
-        const x = nextNum() + (rel ? cur.x : 0);
-        const y = nextNum() + (rel ? cur.y : 0);
-        const p1 = { x, y };
+      while (hasNumberAhead()) {
+        const rx = readNumber();
+        const ry = readNumber();
+        const rot = readNumber();
+        const largeArc = readFlag();
+        const sweep = readFlag();
+        const rxEnd = readNumber();
+        const ryEnd = readNumber();
+        if (
+          rx === null ||
+          ry === null ||
+          rot === null ||
+          largeArc === null ||
+          sweep === null ||
+          rxEnd === null ||
+          ryEnd === null
+        ) {
+          abort = true;
+          break;
+        }
+        const p1 = {
+          x: rxEnd + (rel ? cur.x : 0),
+          y: ryEnd + (rel ? cur.y : 0),
+        };
         const arcPts = sampleSvgArc(cur, rx, ry, rot, largeArc, sweep, p1);
         currentPts.push(...arcPts);
         cur = p1;
@@ -547,18 +638,26 @@ function computeOtsuThreshold(data: Uint8Array): number {
 export const binarizeBitmapNode = createAtomicNode<
   SketchBitmapBranchInput,
   SketchBinaryMask
->('bitmap.binarize', ({ bitmap, threshold }) => {
+>('bitmap.binarize', ({ bitmap, threshold, invert }) => {
   const { width, height, data } = bitmap;
+  if (width <= 0 || height <= 0 || data.length < width * height) {
+    return {
+      width: Math.max(0, width),
+      height: Math.max(0, height),
+      mask: new Uint8Array(0),
+    };
+  }
+  const pixelCount = width * height;
   const thresh = threshold ?? computeOtsuThreshold(data);
-  const mask = new Uint8Array(width * height);
+  const mask = new Uint8Array(pixelCount);
 
   let below = 0;
-  for (let i = 0; i < data.length; i++) {
+  for (let i = 0; i < pixelCount; i++) {
     if (data[i] <= thresh) below++;
   }
-  const darkIsInk = below <= data.length / 2;
+  const darkIsInk = invert !== undefined ? !invert : below <= pixelCount / 2;
 
-  for (let i = 0; i < data.length; i++) {
+  for (let i = 0; i < pixelCount; i++) {
     const isDark = data[i] <= thresh;
     mask[i] = darkIsInk ? (isDark ? 1 : 0) : isDark ? 0 : 1;
   }
@@ -569,6 +668,9 @@ export const zhangSuenThinningNode = createAtomicNode<
   SketchBinaryMask,
   SketchBinaryMask
 >('bitmap.thinning', ({ width, height, mask }) => {
+  if (width < 3 || height < 3 || mask.length < width * height) {
+    return { width, height, mask: new Uint8Array(mask) };
+  }
   const img = new Uint8Array(mask);
   for (let x = 0; x < width; x++) {
     img[x] = 0;
@@ -1163,7 +1265,7 @@ export const sketchToStrokePathsNode = createAtomicNode<
       width: strokeWidth,
       color: poly.colorHint ?? defaultColor,
       opacity,
-      fillOpacity: fillClosed && poly.closed && poly.fill !== false ? 1 : undefined,
+      fillOpacity: fillClosed && poly.closed && poly.fill !== false ? 0.75 : undefined,
       speedFactor: 1.25,
     })
   );
@@ -1207,7 +1309,11 @@ export const dispatchSketchIngestNode = createAtomicNode<
     req.asset.kind === 'svg'
       ? svgToPolylinesWorkflow.run(req.asset.svgText, ctx)
       : bitmapToPolylinesWorkflow.run(
-          { bitmap: req.asset.bitmap, threshold: req.asset.threshold },
+          {
+            bitmap: req.asset.bitmap,
+            threshold: req.asset.threshold,
+            invert: req.asset.invert,
+          },
           ctx
         );
   return {

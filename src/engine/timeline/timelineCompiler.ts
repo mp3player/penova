@@ -390,7 +390,8 @@ export function compileTimeline(
             pushTextLine: (input) => {
               const fontSize = input.fontSize ?? 18;
               const weight = input.fontWeight ?? 400;
-              const lineFont = `${weight} ${fontSize}px ${boardFontFamily}`;
+              const lineFontFamily = input.fontFamily ?? boardFontFamily;
+              const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
               const tItem = compileTextLineItem(
                 input.id ?? `${curr.id}-text-${customTextSeq++}`,
                 input.text,

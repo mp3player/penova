@@ -72,18 +72,26 @@ function readSketchCaption(
   props?: Record<string, string | number | boolean | undefined>
 ): string {
   const raw = props?.title ?? props?.text ?? props?.caption;
-  return typeof raw === 'string' ? raw.trim() : '';
+  if (typeof raw === 'string') return raw.trim();
+  if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw);
+  return '';
 }
 
 export const sketchNodePlugin: SceneNodePlugin = {
   id: 'sketch',
   name: 'Hand-Drawn Sketch',
-  measure(node) {
+  measure(node, ctx) {
     const rawW = Number(node.props?.width ?? node.props?.w);
     const rawH = Number(node.props?.height ?? node.props?.h);
-    const width = Number.isFinite(rawW) && rawW >= 40 ? rawW : 168;
-    const baseH = Number.isFinite(rawH) && rawH >= 40 ? rawH : 128;
     const caption = readSketchCaption(node.props);
+    let width = 168;
+    if (Number.isFinite(rawW) && rawW >= 40) {
+      width = rawW;
+    } else if (caption) {
+      const capW = ctx.measureText(caption, `700 15px ${ctx.fontFamily}`);
+      width = Math.max(168, Math.min(360, Math.ceil(capW + 24)));
+    }
+    const baseH = Number.isFinite(rawH) && rawH >= 40 ? rawH : 128;
     return {
       width,
       height: caption ? baseH + 26 : baseH,

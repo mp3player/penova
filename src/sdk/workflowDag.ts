@@ -35,14 +35,15 @@ export function createAtomicNode<I, O>(
   id: string,
   fn: (input: I, ctx?: WorkflowContext) => O
 ): WorkflowNode<I, O> {
-  return {
+  const self: WorkflowNode<I, O> = {
     id,
     kind: 'atomic',
     run(input: I, ctx?: WorkflowContext): O {
-      const target =
-        (ctx?.overrides?.get(id) as WorkflowNode<I, O> | undefined) ?? undefined;
-      if (target && target.kind === 'composite') {
-        return target.run(input, ctx);
+      const target = ctx?.overrides?.get(id) as WorkflowNode<I, O> | undefined;
+      if (target && target !== self) {
+        const nextOverrides = new Map(ctx!.overrides);
+        nextOverrides.delete(id);
+        return target.run(input, { ...ctx, overrides: nextOverrides });
       }
       const start = performance.now();
       const out = fn(input, ctx);
@@ -56,6 +57,7 @@ export function createAtomicNode<I, O>(
       return out;
     },
   };
+  return self;
 }
 
 /**
@@ -156,8 +158,14 @@ export function compileWorkflowGraph<I, O>(
         }
 
         const overrideNode = ctx?.overrides?.get(step.id);
-        const impl = overrideNode ?? step.node;
-        const stepOut = impl.run(stepInput, ctx);
+        let stepOut: unknown;
+        if (overrideNode && overrideNode !== step.node) {
+          const nextOverrides = new Map(ctx!.overrides);
+          nextOverrides.delete(step.id);
+          stepOut = overrideNode.run(stepInput, { ...ctx, overrides: nextOverrides });
+        } else {
+          stepOut = step.node.run(stepInput, ctx);
+        }
         results.set(step.id, stepOut);
       }
 

@@ -37,9 +37,15 @@ Default choices if unspecified: `aspectRatio: 16:9`, `subtitles: auto`, `hand: h
 Write a `.penova.md` file with optional project frontmatter followed by `=== scene ===` blocks:
 
 1. **Diagram scenes** (`flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, `freeform`):
-   - Cards: `[root|step|concept|highlight|note] Label | Optional Subtitle {color, shape: rounded|circle|cloud|underline|diamond|none, group, say: "...", pause: <ms>}`
+   - Cards: `[root|step|concept|highlight|note] Label | Optional Subtitle {color, shape: rounded|circle|cloud|underline|diamond|none, icon: <iconName>, group, say: "...", pause: <ms>}`
    - Atomic text / shapes: `[text] Content {color, size, bold, align, x, y}`, `[shape:<id>] Name {color, fit, dashed, w, h}`
-   - Custom plugin nodes: `[node:<kind>] Name {color, <prop>: <val>, say: "..."}`
+   - Built-in visual widget & custom plugin nodes:
+     - `[node:icon] Name {color, icon: <iconName>, size: 30}`
+     - `[node:sketch] Name {color, icon: <iconName>, svg: "<path d...>", title: "Caption", w, h}`
+     - `[node:code] Name {color, title: "file.ts", lines: "line1\\nline2", w}`
+     - `[node:chart] Name {color, title: "Metrics", values: "20,50,100", labels: "A,B,C", highlight: 2}`
+     - Built-in icon names: `browser`, `server`, `database`, `globe`, `lock`, `handshake`, `cpu`, `brain`, `spark`, `code`, `puzzle`, `user`, `document`, `rocket`, `lightbulb`, `cat`, `chart`, `gear`, `check`, `layers`
+     - Generic custom plugin: `[node:<kind>] Name {color, <prop>: <val>, say: "..."}`
    - Composite groups: `[group] Name {color, arrange: card|stack|free, gap}` + 2-space indented children
    - Arrows: `A -> B : Label`, `-.->` dashed, `#id -> #id` for duplicate names or nested group children, `(x1, y1) -> (x2, y2)` for free coordinates
 2. **Letter / document scenes** (`layout: document`):

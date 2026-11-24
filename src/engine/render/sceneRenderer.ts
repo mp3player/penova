@@ -85,7 +85,13 @@ function drawStrokeInteriorFill(
     return;
   }
   const fillReveal = Math.max(0, Math.min(1, (progress - 0.55) / 0.45));
-  const alpha = baseFillOpacity * stroke.fillOpacity * fillReveal;
+  const isSurfaceCard = allowShadow && Boolean(stroke.surfaceShadow);
+  const effectiveBaseOpacity = isSurfaceCard
+    ? baseFillOpacity
+    : allowShadow
+    ? 0.22
+    : baseFillOpacity;
+  const alpha = effectiveBaseOpacity * stroke.fillOpacity * fillReveal;
   if (alpha <= 0.005) return;
 
   const tracePath = () => {
@@ -97,7 +103,7 @@ function drawStrokeInteriorFill(
     ctx.closePath();
   };
 
-  if (allowShadow && stroke.surfaceShadow && palette.cardShadow) {
+  if (isSurfaceCard && palette.cardShadow) {
     ctx.save();
     ctx.translate(palette.cardShadow.dx, palette.cardShadow.dy);
     ctx.globalAlpha = fillReveal;
@@ -108,7 +114,7 @@ function drawStrokeInteriorFill(
   }
 
   const fillStyle =
-    allowShadow && palette.cardFillColors?.[stroke.color]
+    isSurfaceCard && palette.cardFillColors?.[stroke.color]
       ? palette.cardFillColors[stroke.color]!
       : colorHex;
 

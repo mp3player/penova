@@ -17,6 +17,7 @@ import {
   serializeNodeLines,
 } from './scriptParser';
 import {
+  extractTrailingMetaBlock,
   formatMetaString,
   splitMetaPairs,
   stripMarkdownFence,
@@ -51,13 +52,12 @@ function extractDocBlockMeta(raw: string): {
   text: string;
   meta: DocBlockMeta;
 } {
-  const trimmed = raw.trimEnd();
-  const match = trimmed.match(/\{([^}]+)\}\s*$/);
-  if (!match || match.index === undefined) {
+  const split = extractTrailingMetaBlock(raw);
+  if (!split) {
     return { text: raw, meta: {} };
   }
 
-  const pairs = splitMetaPairs(match[1]);
+  const pairs = splitMetaPairs(split.metaRaw);
   if (pairs.length === 0) {
     return { text: raw, meta: {} };
   }
@@ -127,8 +127,7 @@ function extractDocBlockMeta(raw: string): {
     meta.offset = { x: xVal ?? 0, y: yVal ?? 0 };
   }
 
-  const cleanedText = trimmed.slice(0, match.index).trimEnd();
-  return { text: cleanedText, meta };
+  return { text: split.body, meta };
 }
 
 function formatDocBlockMeta(

@@ -590,6 +590,7 @@ interface EvaluatedPenSnapshot {
   colorHex: string;
   velocity: number;
   alpha: number;
+  seed?: number;
 }
 
 interface EvaluatedSceneSnapshot {
@@ -669,6 +670,7 @@ interface SceneNodeTextLineInput {
   indentPx?: number;
   fontSize?: number;
   fontWeight?: 400 | 700;
+  fontFamily?: string;
   color?: ChalkColor;
   msPerChar?: number;
   gapAfterMs?: number;
@@ -757,7 +759,7 @@ interface SketchBinaryMask {
 
 type SketchAssetInput =
   | { kind: 'svg'; svgText: string }
-  | { kind: 'bitmap'; bitmap: SketchGrayBitmap; threshold?: number };
+  | { kind: 'bitmap'; bitmap: SketchGrayBitmap; threshold?: number; invert?: boolean };
 
 interface SketchPipelineOptions {
   seed?: string;
@@ -788,16 +790,13 @@ interface ExtractedSketchSvgPath {
 interface SketchBitmapBranchInput {
   bitmap: SketchGrayBitmap;
   threshold?: number;
+  invert?: boolean;
 }
 
 interface SketchPostProcessInput {
   polylines: SketchRawPolyline[];
   options: SketchPipelineOptions;
 }
-
-type SketchPathToken =
-  | { type: 'cmd'; val: string }
-  | { type: 'num'; val: number };
 
 // --- Types: src/model/builders.ts ---
 
@@ -1920,14 +1919,15 @@ const { GRAPH_INPUT_ID, createAtomicNode, compileWorkflowGraph } = (() => {
     id: string,
     fn: (input: I, ctx?: WorkflowContext) => O
   ): WorkflowNode<I, O> {
-    return {
+    const self: WorkflowNode<I, O> = {
       id,
       kind: 'atomic',
       run(input: I, ctx?: WorkflowContext): O {
-        const target =
-          (ctx?.overrides?.get(id) as WorkflowNode<I, O> | undefined) ?? undefined;
-        if (target && target.kind === 'composite') {
-          return target.run(input, ctx);
+        const target = ctx?.overrides?.get(id) as WorkflowNode<I, O> | undefined;
+        if (target && target !== self) {
+          const nextOverrides = new Map(ctx!.overrides);
+          nextOverrides.delete(id);
+          return target.run(input, { ...ctx, overrides: nextOverrides });
         }
         const start = performance.now();
         const out = fn(input, ctx);
@@ -1941,6 +1941,7 @@ const { GRAPH_INPUT_ID, createAtomicNode, compileWorkflowGraph } = (() => {
         return out;
       },
     };
+    return self;
   }
   /**
    * Compiles a declarative recursive DAG specification into a composable WorkflowNode.
@@ -2040,8 +2041,14 @@ const { GRAPH_INPUT_ID, createAtomicNode, compileWorkflowGraph } = (() => {
           }
 
           const overrideNode = ctx?.overrides?.get(step.id);
-          const impl = overrideNode ?? step.node;
-          const stepOut = impl.run(stepInput, ctx);
+          let stepOut: unknown;
+          if (overrideNode && overrideNode !== step.node) {
+            const nextOverrides = new Map(ctx!.overrides);
+            nextOverrides.delete(step.id);
+            stepOut = overrideNode.run(stepInput, { ...ctx, overrides: nextOverrides });
+          } else {
+            stepOut = step.node.run(stepInput, ctx);
+          }
           results.set(step.id, stepOut);
         }
 
@@ -2084,7 +2091,7 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
     return undefined;
   }
   function readSvgAttr(tag: string, name: string): string | undefined {
-    const re = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i');
+    const re = new RegExp(`(?:^|[\\s<])${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i');
     const m = tag.match(re);
     return m ? m[1] ?? m[2] : undefined;
   }
@@ -2094,22 +2101,26 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
     const n = Number.parseFloat(raw);
     return Number.isFinite(n) ? n : fallback;
   }
+  function stripHiddenSvgBlocks(svgText: string): string {
+    return svgText
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<(defs|clipPath|mask|symbol)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+  }
   function extractSvgPrimitivesFn(svgText: string): ExtractedSketchSvgPath[] {
     const out: ExtractedSketchSvgPath[] = [];
+    const cleanedSvg = stripHiddenSvgBlocks(svgText);
     const tagRe = /<(path|line|rect|circle|ellipse|polyline|polygon)\b([^>]*?)\/?>/gi;
     let match: RegExpExecArray | null;
     let seq = 0;
 
-    while ((match = tagRe.exec(svgText)) !== null) {
+    while ((match = tagRe.exec(cleanedSvg)) !== null) {
       const tagName = match[1].toLowerCase();
       const attrs = match[2];
       const id = readSvgAttr(attrs, 'id') ?? `svg-${tagName}-${seq++}`;
       const strokeAttr = readSvgAttr(attrs, 'stroke');
       const fillAttr = readSvgAttr(attrs, 'fill');
-      const fill =
-        Boolean(fillAttr) &&
-        fillAttr!.trim().toLowerCase() !== 'none' &&
-        fillAttr!.trim().toLowerCase() !== 'transparent';
+      const fillNorm = fillAttr?.trim().toLowerCase();
+      const fill = fillNorm !== 'none' && fillNorm !== 'transparent';
       const colorHint = mapSvgStrokeColorHint(strokeAttr);
 
       if (tagName === 'path') {
@@ -2175,21 +2186,6 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
     }
 
     return out;
-  }
-  function tokenizeSvgPathD(d: string): SketchPathToken[] {
-    const tokens: SketchPathToken[] = [];
-    const re =
-      /([MmLlHhVvQqTtCcSsAaZz])|([+-]?(?:\d*\.\d+|\d+\.?)(?:[eE][+-]?\d+)?)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(d)) !== null) {
-      if (m[1]) {
-        tokens.push({ type: 'cmd', val: m[1] });
-      } else if (m[2]) {
-        const n = Number.parseFloat(m[2]);
-        if (Number.isFinite(n)) tokens.push({ type: 'num', val: n });
-      }
-    }
-    return tokens;
   }
   function sampleSvgArc(
     p0: Point,
@@ -2273,9 +2269,9 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
     colorHint?: ChalkColor,
     fill = false
   ): SketchRawPolyline[] {
-    const tokens = tokenizeSvgPathD(d);
     const polylines: SketchRawPolyline[] = [];
-    let idx = 0;
+    let pos = 0;
+    const len = d.length;
     let cmd = '';
     let cur: Point = { x: 0, y: 0 };
     let start: Point = { x: 0, y: 0 };
@@ -2298,12 +2294,55 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
       currentPts = [];
     };
 
-    const hasNum = () => idx < tokens.length && tokens[idx].type === 'num';
-    const nextNum = () => (tokens[idx++] as { type: 'num'; val: number }).val;
+    const skipSep = () => {
+      while (pos < len) {
+        const ch = d[pos];
+        if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === ',') {
+          pos++;
+        } else {
+          break;
+        }
+      }
+    };
 
-    while (idx < tokens.length) {
-      if (tokens[idx].type === 'cmd') {
-        cmd = (tokens[idx++] as { type: 'cmd'; val: string }).val;
+    const numRe = /[+-]?(?:\d*\.\d+|\d+\.?)(?:[eE][+-]?\d+)?/y;
+    const hasNumberAhead = (): boolean => {
+      skipSep();
+      if (pos >= len) return false;
+      numRe.lastIndex = pos;
+      return numRe.test(d);
+    };
+
+    const readNumber = (): number | null => {
+      skipSep();
+      if (pos >= len) return null;
+      numRe.lastIndex = pos;
+      const m = numRe.exec(d);
+      if (!m) return null;
+      const n = Number.parseFloat(m[0]);
+      if (!Number.isFinite(n)) return null;
+      pos = numRe.lastIndex;
+      return n;
+    };
+
+    const readFlag = (): number | null => {
+      skipSep();
+      if (pos >= len) return null;
+      const ch = d[pos];
+      if (ch === '0' || ch === '1') {
+        pos++;
+        return ch === '1' ? 1 : 0;
+      }
+      return null;
+    };
+
+    let abort = false;
+    while (pos < len && !abort) {
+      skipSep();
+      if (pos >= len) break;
+
+      if (/[MmLlHhVvQqTtCcSsAaZz]/.test(d[pos])) {
+        cmd = d[pos++];
         if (cmd === 'Z' || cmd === 'z') {
           if (
             currentPts.length > 0 &&
@@ -2317,8 +2356,8 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
           lastQuadCtrl = null;
           continue;
         }
-      } else if (!cmd) {
-        idx++;
+      } else if (!cmd || !hasNumberAhead()) {
+        pos++;
         continue;
       }
 
@@ -2326,10 +2365,15 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
       const C = cmd.toUpperCase();
 
       if (C === 'M') {
-        if (!hasNum()) break;
+        const rx = readNumber();
+        const ry = readNumber();
+        if (rx === null || ry === null) {
+          abort = true;
+          break;
+        }
         flushSubpath(false);
-        const x = nextNum() + (rel ? cur.x : 0);
-        const y = nextNum() + (rel ? cur.y : 0);
+        const x = rx + (rel ? cur.x : 0);
+        const y = ry + (rel ? cur.y : 0);
         cur = { x, y };
         start = { x, y };
         currentPts = [{ x, y }];
@@ -2337,46 +2381,74 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
         lastQuadCtrl = null;
         cmd = rel ? 'l' : 'L';
       } else if (C === 'L') {
-        while (hasNum()) {
-          const x = nextNum() + (rel ? cur.x : 0);
-          const y = nextNum() + (rel ? cur.y : 0);
+        while (hasNumberAhead()) {
+          const rx = readNumber();
+          const ry = readNumber();
+          if (rx === null || ry === null) {
+            abort = true;
+            break;
+          }
+          const x = rx + (rel ? cur.x : 0);
+          const y = ry + (rel ? cur.y : 0);
           cur = { x, y };
           currentPts.push({ x, y });
           lastCubicCtrl = null;
           lastQuadCtrl = null;
         }
       } else if (C === 'H') {
-        while (hasNum()) {
-          const x = nextNum() + (rel ? cur.x : 0);
+        while (hasNumberAhead()) {
+          const rx = readNumber();
+          if (rx === null) {
+            abort = true;
+            break;
+          }
+          const x = rx + (rel ? cur.x : 0);
           cur = { x, y: cur.y };
           currentPts.push({ ...cur });
           lastCubicCtrl = null;
           lastQuadCtrl = null;
         }
       } else if (C === 'V') {
-        while (hasNum()) {
-          const y = nextNum() + (rel ? cur.y : 0);
+        while (hasNumberAhead()) {
+          const ry = readNumber();
+          if (ry === null) {
+            abort = true;
+            break;
+          }
+          const y = ry + (rel ? cur.y : 0);
           cur = { x: cur.x, y };
           currentPts.push({ ...cur });
           lastCubicCtrl = null;
           lastQuadCtrl = null;
         }
       } else if (C === 'Q' || C === 'T') {
-        while (hasNum()) {
+        while (hasNumberAhead()) {
           let cp: Point;
           if (C === 'Q') {
+            const cx1 = readNumber();
+            const cy1 = readNumber();
+            if (cx1 === null || cy1 === null) {
+              abort = true;
+              break;
+            }
             cp = {
-              x: nextNum() + (rel ? cur.x : 0),
-              y: nextNum() + (rel ? cur.y : 0),
+              x: cx1 + (rel ? cur.x : 0),
+              y: cy1 + (rel ? cur.y : 0),
             };
           } else {
             cp = lastQuadCtrl
               ? { x: 2 * cur.x - lastQuadCtrl.x, y: 2 * cur.y - lastQuadCtrl.y }
               : { ...cur };
           }
+          const rx2 = readNumber();
+          const ry2 = readNumber();
+          if (rx2 === null || ry2 === null) {
+            abort = true;
+            break;
+          }
           const p2 = {
-            x: nextNum() + (rel ? cur.x : 0),
-            y: nextNum() + (rel ? cur.y : 0),
+            x: rx2 + (rel ? cur.x : 0),
+            y: ry2 + (rel ? cur.y : 0),
           };
           const p0 = { ...cur };
           const steps = 10;
@@ -2393,25 +2465,39 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
           lastCubicCtrl = null;
         }
       } else if (C === 'C' || C === 'S') {
-        while (hasNum()) {
+        while (hasNumberAhead()) {
           let c1: Point;
           if (C === 'C') {
+            const cx1 = readNumber();
+            const cy1 = readNumber();
+            if (cx1 === null || cy1 === null) {
+              abort = true;
+              break;
+            }
             c1 = {
-              x: nextNum() + (rel ? cur.x : 0),
-              y: nextNum() + (rel ? cur.y : 0),
+              x: cx1 + (rel ? cur.x : 0),
+              y: cy1 + (rel ? cur.y : 0),
             };
           } else {
             c1 = lastCubicCtrl
               ? { x: 2 * cur.x - lastCubicCtrl.x, y: 2 * cur.y - lastCubicCtrl.y }
               : { ...cur };
           }
+          const cx2 = readNumber();
+          const cy2 = readNumber();
+          const rx3 = readNumber();
+          const ry3 = readNumber();
+          if (cx2 === null || cy2 === null || rx3 === null || ry3 === null) {
+            abort = true;
+            break;
+          }
           const c2 = {
-            x: nextNum() + (rel ? cur.x : 0),
-            y: nextNum() + (rel ? cur.y : 0),
+            x: cx2 + (rel ? cur.x : 0),
+            y: cy2 + (rel ? cur.y : 0),
           };
           const p3 = {
-            x: nextNum() + (rel ? cur.x : 0),
-            y: nextNum() + (rel ? cur.y : 0),
+            x: rx3 + (rel ? cur.x : 0),
+            y: ry3 + (rel ? cur.y : 0),
           };
           const p0 = { ...cur };
           const steps = 12;
@@ -2436,15 +2522,30 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
           lastQuadCtrl = null;
         }
       } else if (C === 'A') {
-        while (hasNum()) {
-          const rx = nextNum();
-          const ry = nextNum();
-          const rot = nextNum();
-          const largeArc = nextNum();
-          const sweep = nextNum();
-          const x = nextNum() + (rel ? cur.x : 0);
-          const y = nextNum() + (rel ? cur.y : 0);
-          const p1 = { x, y };
+        while (hasNumberAhead()) {
+          const rx = readNumber();
+          const ry = readNumber();
+          const rot = readNumber();
+          const largeArc = readFlag();
+          const sweep = readFlag();
+          const rxEnd = readNumber();
+          const ryEnd = readNumber();
+          if (
+            rx === null ||
+            ry === null ||
+            rot === null ||
+            largeArc === null ||
+            sweep === null ||
+            rxEnd === null ||
+            ryEnd === null
+          ) {
+            abort = true;
+            break;
+          }
+          const p1 = {
+            x: rxEnd + (rel ? cur.x : 0),
+            y: ryEnd + (rel ? cur.y : 0),
+          };
           const arcPts = sampleSvgArc(cur, rx, ry, rot, largeArc, sweep, p1);
           currentPts.push(...arcPts);
           cur = p1;
@@ -2526,18 +2627,26 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
   const binarizeBitmapNode = createAtomicNode<
     SketchBitmapBranchInput,
     SketchBinaryMask
-  >('bitmap.binarize', ({ bitmap, threshold }) => {
+  >('bitmap.binarize', ({ bitmap, threshold, invert }) => {
     const { width, height, data } = bitmap;
+    if (width <= 0 || height <= 0 || data.length < width * height) {
+      return {
+        width: Math.max(0, width),
+        height: Math.max(0, height),
+        mask: new Uint8Array(0),
+      };
+    }
+    const pixelCount = width * height;
     const thresh = threshold ?? computeOtsuThreshold(data);
-    const mask = new Uint8Array(width * height);
+    const mask = new Uint8Array(pixelCount);
 
     let below = 0;
-    for (let i = 0; i < data.length; i++) {
+    for (let i = 0; i < pixelCount; i++) {
       if (data[i] <= thresh) below++;
     }
-    const darkIsInk = below <= data.length / 2;
+    const darkIsInk = invert !== undefined ? !invert : below <= pixelCount / 2;
 
-    for (let i = 0; i < data.length; i++) {
+    for (let i = 0; i < pixelCount; i++) {
       const isDark = data[i] <= thresh;
       mask[i] = darkIsInk ? (isDark ? 1 : 0) : isDark ? 0 : 1;
     }
@@ -2547,6 +2656,9 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
     SketchBinaryMask,
     SketchBinaryMask
   >('bitmap.thinning', ({ width, height, mask }) => {
+    if (width < 3 || height < 3 || mask.length < width * height) {
+      return { width, height, mask: new Uint8Array(mask) };
+    }
     const img = new Uint8Array(mask);
     for (let x = 0; x < width; x++) {
       img[x] = 0;
@@ -3127,7 +3239,7 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
         width: strokeWidth,
         color: poly.colorHint ?? defaultColor,
         opacity,
-        fillOpacity: fillClosed && poly.closed && poly.fill !== false ? 1 : undefined,
+        fillOpacity: fillClosed && poly.closed && poly.fill !== false ? 0.75 : undefined,
         speedFactor: 1.25,
       })
     );
@@ -3169,7 +3281,11 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
       req.asset.kind === 'svg'
         ? svgToPolylinesWorkflow.run(req.asset.svgText, ctx)
         : bitmapToPolylinesWorkflow.run(
-            { bitmap: req.asset.bitmap, threshold: req.asset.threshold },
+            {
+              bitmap: req.asset.bitmap,
+              threshold: req.asset.threshold,
+              invert: req.asset.invert,
+            },
             ctx
           );
     return {
@@ -3494,17 +3610,25 @@ const { iconNodePlugin, sketchNodePlugin } = (() => {
     props?: Record<string, string | number | boolean | undefined>
   ): string {
     const raw = props?.title ?? props?.text ?? props?.caption;
-    return typeof raw === 'string' ? raw.trim() : '';
+    if (typeof raw === 'string') return raw.trim();
+    if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw);
+    return '';
   }
   const sketchNodePlugin: SceneNodePlugin = {
     id: 'sketch',
     name: 'Hand-Drawn Sketch',
-    measure(node) {
+    measure(node, ctx) {
       const rawW = Number(node.props?.width ?? node.props?.w);
       const rawH = Number(node.props?.height ?? node.props?.h);
-      const width = Number.isFinite(rawW) && rawW >= 40 ? rawW : 168;
-      const baseH = Number.isFinite(rawH) && rawH >= 40 ? rawH : 128;
       const caption = readSketchCaption(node.props);
+      let width = 168;
+      if (Number.isFinite(rawW) && rawW >= 40) {
+        width = rawW;
+      } else if (caption) {
+        const capW = ctx.measureText(caption, `700 15px ${ctx.fontFamily}`);
+        width = Math.max(168, Math.min(360, Math.ceil(capW + 24)));
+      }
+      const baseH = Number.isFinite(rawH) && rawH >= 40 ? rawH : 128;
       return {
         width,
         height: caption ? baseH + 26 : baseH,
@@ -3576,13 +3700,18 @@ const { iconNodePlugin, sketchNodePlugin } = (() => {
 
 // --- Module: src/plugins/nodes/codeNodePlugin.ts ---
 const { codeNodePlugin } = (() => {
+  const CODE_MONO_FONT = '"JetBrains Mono", "SF Mono", "Consolas", monospace';
+  function readPropText(
+    props: Record<string, string | number | boolean | undefined> | undefined,
+    key: string
+  ): string {
+    const val = props?.[key];
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+    return '';
+  }
   function parseCodeLines(node: CustomSceneNode): string[] {
-    const raw =
-      typeof node.props?.lines === 'string'
-        ? node.props.lines
-        : typeof node.props?.code === 'string'
-        ? node.props.code
-        : '';
+    const raw = readPropText(node.props, 'lines') || readPropText(node.props, 'code');
     if (!raw.trim()) {
       return [node.name || 'script.penova.md'];
     }
@@ -3611,11 +3740,9 @@ const { codeNodePlugin } = (() => {
     name: 'Code Window',
     measure(node, ctx) {
       const lines = parseCodeLines(node);
-      const title =
-        typeof node.props?.title === 'string' && node.props.title.trim()
-          ? node.props.title.trim()
-          : node.name || 'script.penova.md';
-      const font = `400 13.5px "JetBrains Mono", "SF Mono", "Consolas", monospace`;
+      const rawTitle = readPropText(node.props, 'title').trim();
+      const title = rawTitle || node.name || 'script.penova.md';
+      const font = `400 13.5px ${CODE_MONO_FONT}`;
       let widest = ctx.measureText(title, `700 12.5px ${ctx.fontFamily}`) + 74;
       for (const line of lines) {
         widest = Math.max(widest, ctx.measureText(line, font) + 38);
@@ -3624,7 +3751,7 @@ const { codeNodePlugin } = (() => {
       const width =
         Number.isFinite(rawW) && rawW >= 180
           ? rawW
-          : Math.max(230, Math.min(520, Math.ceil(widest)));
+          : Math.max(230, Math.min(540, Math.ceil(widest)));
       const height = Math.max(96, 48 + lines.length * 22 + 14);
       return { width, height, payload: { title, lines } };
     },
@@ -3644,10 +3771,8 @@ const { codeNodePlugin } = (() => {
       }
       const node = positioned.node;
       const lines = parseCodeLines(node);
-      const title =
-        typeof node.props?.title === 'string' && node.props.title.trim()
-          ? node.props.title.trim()
-          : node.name || 'script.penova.md';
+      const rawTitle = readPropText(node.props, 'title').trim();
+      const title = rawTitle || node.name || 'script.penova.md';
 
       const x = positioned.cx - positioned.width / 2;
       const y = positioned.cy - positioned.height / 2;
@@ -3731,10 +3856,6 @@ const { codeNodePlugin } = (() => {
       });
 
       // 5. Progressive code lines
-      const codeColor =
-        helpers.theme === 'whiteboard' || helpers.theme === 'letter-paper'
-          ? 'white'
-          : 'white';
       lines.forEach((line, idx) => {
         helpers.pushTextLine({
           id: `${positioned.id}-code-${idx}`,
@@ -3745,7 +3866,8 @@ const { codeNodePlugin } = (() => {
           align: 'left',
           fontSize: 13.5,
           fontWeight: 400,
-          color: codeColor,
+          fontFamily: CODE_MONO_FONT,
+          color: 'white',
           msPerChar: 28,
           gapAfterMs: 24,
         });
@@ -3757,30 +3879,37 @@ const { codeNodePlugin } = (() => {
 
 // --- Module: src/plugins/nodes/chartNodePlugin.ts ---
 const { chartNodePlugin } = (() => {
+  function readChartPropText(
+    props: Record<string, string | number | boolean | undefined> | undefined,
+    key: string
+  ): string {
+    const val = props?.[key];
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+    return '';
+  }
   function parseChartData(node: CustomSceneNode): {
     title: string;
     values: number[];
     labels: string[];
     highlightIdx: number;
   } {
-    const title =
-      typeof node.props?.title === 'string' && node.props.title.trim()
-        ? node.props.title.trim()
-        : node.name || 'Metrics';
+    const rawTitle = readChartPropText(node.props, 'title').trim();
+    const title = rawTitle || node.name || 'Metrics';
 
-    const rawValues =
-      typeof node.props?.values === 'string'
-        ? node.props.values
-            .split(',')
-            .map((v) => Number.parseFloat(v.trim()))
-            .filter((n) => Number.isFinite(n) && n >= 0)
-        : [];
+    const rawValuesStr = readChartPropText(node.props, 'values').trim();
+    const rawValues = rawValuesStr
+      ? rawValuesStr
+          .split(',')
+          .map((v) => Number.parseFloat(v.trim()))
+          .filter((n) => Number.isFinite(n) && n >= 0)
+      : [];
     const values = rawValues.length >= 2 ? rawValues.slice(0, 8) : [25, 48, 76, 100];
 
-    const rawLabels =
-      typeof node.props?.labels === 'string'
-        ? node.props.labels.split(',').map((s) => s.trim())
-        : [];
+    const rawLabelsStr = readChartPropText(node.props, 'labels').trim();
+    const rawLabels = rawLabelsStr
+      ? rawLabelsStr.split(',').map((s) => s.trim())
+      : [];
     const labels = values.map((_, idx) => rawLabels[idx] || `#${idx + 1}`);
 
     const hiRaw = Number(node.props?.highlight);
@@ -3794,10 +3923,32 @@ const { chartNodePlugin } = (() => {
   const chartNodePlugin: SceneNodePlugin = {
     id: 'chart',
     name: 'Bar Chart',
-    measure(node) {
+    measure(node, ctx) {
       const rawW = Number(node.props?.width ?? node.props?.w);
       const rawH = Number(node.props?.height ?? node.props?.h);
-      const width = Number.isFinite(rawW) && rawW >= 180 ? rawW : 296;
+      let width = 296;
+      if (Number.isFinite(rawW) && rawW >= 180) {
+        width = rawW;
+      } else {
+        const { title, values, labels } = parseChartData(node);
+        const titleW = ctx.measureText(title, `700 15px ${ctx.fontFamily}`);
+        const widestLabelW = Math.max(
+          32,
+          ...labels.map((l) => ctx.measureText(l, `700 12px ${ctx.fontFamily}`))
+        );
+        width = Math.max(
+          296,
+          Math.min(
+            560,
+            Math.ceil(
+              Math.max(
+                titleW + 48,
+                values.length * Math.max(54, widestLabelW + 14) + 56
+              )
+            )
+          )
+        );
+      }
       const height = Number.isFinite(rawH) && rawH >= 140 ? rawH : 196;
       return { width, height };
     },
@@ -4673,7 +4824,10 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
         shapeCount++;
       } else if (child.type === 'text') {
         textCount++;
-      } else if (isCustomSceneNode(child) && child.kind === 'icon') {
+      } else if (
+        isCustomSceneNode(child) &&
+        resolveCustomNodeKind(child) === 'icon'
+      ) {
         iconCount++;
       } else {
         return false;
@@ -4723,7 +4877,7 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
       (c): c is ShapeSceneNode => c.type === 'shape'
     );
     const existingIcon = group.children.find(
-      (c): c is CustomSceneNode => isCustomSceneNode(c) && c.kind === 'icon'
+      (c): c is CustomSceneNode => isCustomSceneNode(c) && resolveCustomNodeKind(c) === 'icon'
     );
     const existingTexts = group.children.filter(
       (c): c is TextSceneNode => c.type === 'text'
@@ -4862,7 +5016,7 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
         (c): c is ShapeSceneNode => c.type === 'shape'
       );
       const iconChild = node.children.find(
-        (c): c is CustomSceneNode => isCustomSceneNode(c) && c.kind === 'icon'
+        (c): c is CustomSceneNode => isCustomSceneNode(c) && resolveCustomNodeKind(c) === 'icon'
       );
       const icon =
         (typeof iconChild?.props?.icon === 'string' && iconChild.props.icon.trim()
@@ -4933,7 +5087,7 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
 })();
 
 // --- Module: src/plugins/codecs/shared.ts ---
-const { stripMarkdownFence, splitMetaPairs, unquoteMetaString, formatMetaString } = (() => {
+const { stripMarkdownFence, splitMetaPairs, unquoteMetaString, formatMetaString, extractTrailingMetaBlock } = (() => {
   /**
    * Strips an outer Markdown fenced code block (``` or ~~~) when external tools
    * or pasted snippets wrap the entire script in triple backticks/tildes.
@@ -5004,17 +5158,79 @@ const { stripMarkdownFence, splitMetaPairs, unquoteMetaString, formatMetaString 
     ) {
       inner = trimmed.slice(1, -1);
     }
-    return inner.replace(/\\n/g, '\n').replace(/\\(["'\\])/g, '$1');
+    return inner.replace(/\\(n|"|'|\\)/g, (_, ch: string) =>
+      ch === 'n' ? '\n' : ch
+    );
   }
   function formatMetaString(raw: string): string {
-    const escapedNewlines = raw.replace(/\r?\n/g, '\\n').trim();
-    if (/[,，;；:{}"'\\]/.test(escapedNewlines)) {
-      const escaped = escapedNewlines.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const trimmed = raw.trim();
+    const needsQuoting =
+      /[\r\n,，;；:{}"'\\]/.test(trimmed) ||
+      trimmed === 'true' ||
+      trimmed === 'false' ||
+      (trimmed !== '' && !Number.isNaN(Number(trimmed)));
+    if (needsQuoting) {
+      const escaped = trimmed
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"')
+        .replace(/\r?\n/g, '\\n');
       return `"${escaped}"`;
     }
-    return escapedNewlines;
+    return trimmed;
   }
-  return { stripMarkdownFence, splitMetaPairs, unquoteMetaString, formatMetaString };
+  /**
+   * Extracts a trailing `{...}` metadata block while ignoring apostrophes,
+   * quotes, or unmatched `{` in the body text outside the trailing block.
+   */
+  function extractTrailingMetaBlock(
+    text: string
+  ): { body: string; metaRaw: string } | null {
+    const trimmed = text.trimEnd();
+    if (!trimmed.endsWith('}')) return null;
+
+    for (let start = 0; start < trimmed.length; start++) {
+      if (trimmed[start] !== '{') continue;
+
+      let quote: '"' | "'" | null = null;
+      let depth = 0;
+      let matchedEnd = -1;
+
+      for (let i = start; i < trimmed.length; i++) {
+        const ch = trimmed[i];
+        if (quote) {
+          if (ch === '\\') {
+            i++;
+          } else if (ch === quote) {
+            quote = null;
+          }
+          continue;
+        }
+        if (depth > 0 && (ch === '"' || ch === "'")) {
+          quote = ch;
+          continue;
+        }
+        if (ch === '{') {
+          depth++;
+        } else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            matchedEnd = i;
+            break;
+          }
+        }
+      }
+
+      if (matchedEnd === trimmed.length - 1 && quote === null) {
+        return {
+          body: trimmed.slice(0, start).trimEnd(),
+          metaRaw: trimmed.slice(start + 1, matchedEnd),
+        };
+      }
+    }
+
+    return null;
+  }
+  return { stripMarkdownFence, splitMetaPairs, unquoteMetaString, formatMetaString, extractTrailingMetaBlock };
 })();
 
 // --- Module: src/plugins/codecs/scriptParser.ts ---
@@ -5069,47 +5285,6 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
   }
   function escapeCardTitle(raw: string): string {
     return escapeInlineText(raw).replace(/\|/g, '\\|');
-  }
-  function extractTrailingMetaBlock(
-    text: string
-  ): { body: string; metaRaw: string } | null {
-    const trimmed = text.trimEnd();
-    if (!trimmed.endsWith('}')) return null;
-
-    let quote: '"' | "'" | null = null;
-    let depth = 0;
-    let topStart = -1;
-
-    for (let i = 0; i < trimmed.length; i++) {
-      const ch = trimmed[i];
-      if (quote) {
-        if (ch === '\\') {
-          i++;
-        } else if (ch === quote) {
-          quote = null;
-        }
-        continue;
-      }
-      if (ch === '"' || ch === "'") {
-        quote = ch;
-        continue;
-      }
-      if (ch === '{') {
-        if (depth === 0) topStart = i;
-        depth++;
-      } else if (ch === '}') {
-        if (depth > 0) {
-          depth--;
-          if (depth === 0 && i === trimmed.length - 1 && topStart !== -1) {
-            return {
-              body: trimmed.slice(0, topStart).trimEnd(),
-              metaRaw: trimmed.slice(topStart + 1, i),
-            };
-          }
-        }
-      }
-    }
-    return null;
   }
   function findUnescapedPipe(raw: string): number {
     for (let i = 0; i < raw.length; i++) {
@@ -5201,7 +5376,7 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
         }
       } else if (
         key === 'say' ||
-        key === 'caption' ||
+        (!allowCustomProps && key === 'caption') ||
         key === '字幕' ||
         key === '讲解'
       ) {
@@ -5532,8 +5707,8 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
       const line = rawLine.trim();
       if (!line || line.startsWith('//')) return;
 
-      if (line.startsWith('#')) {
-        const parsedTitle = line.replace(/^#+\s*/, '').trim();
+      if (/^#+\s+/.test(line)) {
+        const parsedTitle = line.replace(/^#+\s+/, '').trim();
         if (parsedTitle) {
           title = parsedTitle;
         }
@@ -6012,7 +6187,14 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
       } else if (
         isCustomSceneNode(child) &&
         resolveCustomNodeKind(child) === 'icon' &&
-        child.color === node.color
+        child.color === node.color &&
+        typeof child.props?.svg !== 'string' &&
+        typeof child.props?.icon === 'string' &&
+        child.props.icon.trim().length > 0 &&
+        (child.props?.size === undefined ||
+          child.props.size === (role === 'root' ? 32 : 26)) &&
+        (child.offset?.x ?? 0) === 0 &&
+        (child.offset?.y ?? 0) === 0
       ) {
         iconCount++;
       } else {
@@ -6380,8 +6562,8 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
     ],
     syntaxRules: [
       'Optional scene title line: `# Scene Title`',
-      'Card declaration: `[role] Label | Optional Subtitle {color, shape: <shape|none>, group, say: "spoken subtitle", pause: <ms>, x, y}` (use `[role#id]` when two nodes share the same label; use `\\n` for line breaks)',
-      'Standalone atomic nodes: `[text] Content {color, size, bold, align, maxW, indent, say, pause, x, y}`, `[shape:<shapeId>] Label {color, fit, emphasized, dashed, w, h, say, pause, x, y}`, `[node:<customKind>] Name {color, <prop>: <val>, say, pause}`',
+      'Card declaration: `[role] Label | Optional Subtitle {color, shape: <shape|none>, icon: <iconName>, group, say: "spoken subtitle", pause: <ms>, x, y}` (use `[role#id]` when two nodes share the same label; use `\\n` for line breaks)',
+      'Standalone atomic & widget nodes: `[text] Content {color, size, bold, align, maxW, indent, say, pause, x, y}`, `[shape:<shapeId>] Label {color, fit, emphasized, dashed, w, h, say, pause, x, y}`, `[node:icon|sketch|code|chart|<customKind>] Name {color, <prop>: <val>, say, pause}`',
       'Composite groups: `[group] Group Name {color, arrange: card|stack|free, gap, say, pause}` followed by 2-space-indented child node lines',
       'Valid `role` values: `root`, `step`, `concept`, `highlight`, `note`',
       'Valid `color` values: `white`, `yellow`, `cyan`, `pink`, `green`, `orange`',
@@ -7188,7 +7370,7 @@ const { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicB
       { length: n },
       () => []
     );
-    const blockedEndpoints = [fromNode, toNode, ...obstacles];
+    const endpointObstacles = [fromNode, toNode];
 
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
@@ -7197,7 +7379,7 @@ const { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicB
         // Do not slice across source/target bodies or any padded obstacle
         if (
           segmentHitsAnyObstacle(a, b, obstacles, 10) ||
-          segmentHitsAnyObstacle(a, b, blockedEndpoints.slice(0, 2), -2)
+          segmentHitsAnyObstacle(a, b, endpointObstacles, -2)
         ) {
           continue;
         }
@@ -7335,13 +7517,22 @@ const { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicB
       directNode.labelPoint && pointHitsAnyObstacle(directNode.labelPoint, obstacles, 24, 12);
 
     if (obstacles.length === 0 || (directHits === 0 && !directLabelHit)) {
+      const directMid =
+        directNode.labelPoint ?? midpointOnPolyline(directPts);
+      if (directMid && options.routedMidpoints) {
+        options.routedMidpoints.push(directMid);
+      }
       return directNode;
     }
 
     const initialBlockers = findBlockingObstacles(directPts, obstacles, 10);
     const baseClearance = 40 + (conn.label ? 18 : 0);
     const routedMidpoints = options.routedMidpoints ?? [];
-    const candidates: Array<{ node: PositionedSceneNode; side?: -1 | 1 }> = [];
+    const candidates: Array<{
+      node: PositionedSceneNode;
+      side?: -1 | 1;
+      isDirect?: boolean;
+    }> = [{ node: directNode, isDirect: true }];
 
     for (const side of [-1, 1] as const) {
       const pts0 = buildEnvelopeArchPoints(
@@ -7400,8 +7591,11 @@ const { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicB
           : 0;
       const sideBias =
         options.preferredSide && cand.side && cand.side !== options.preferredSide ? 28 : 0;
+      const grazePenalty =
+        cand.isDirect && segHits === 0 ? directHits * 120 : 0;
 
-      const score = arcLen + segHits * 10000 + labelHit * 4000 + crowded + sideBias;
+      const score =
+        arcLen + segHits * 10000 + labelHit * 4000 + crowded + sideBias + grazePenalty;
       if (score < bestScore) {
         bestScore = score;
         bestNode = cand.node;
@@ -7653,7 +7847,9 @@ const { computeDagreFlowLayout } = (() => {
           ownerVertexIdMap,
           {
             preferredBow,
-            preferredSide: rankTo > rankFrom ? -1 : 1,
+            // Edge normal flips when direction reverses, so -1 arches forward edges
+            // over the top (-y) and back-edges under the bottom (+y).
+            preferredSide: -1,
             routedMidpoints,
           }
         )
@@ -7935,15 +8131,17 @@ const { mindmapPlugin } = (() => {
       for (const conn of boundConnectors) {
         const fromNode = vertexMap.get(conn.fromId!)!;
         const toNode = vertexMap.get(conn.toId!)!;
+        const topFrom = ownerVertexIdMap.get(conn.fromId!) ?? conn.fromId!;
+        const topTo = ownerVertexIdMap.get(conn.toId!) ?? conn.toId!;
         const obstacles = collectObstaclesForConnector(
           conn,
           positionedVertices,
           ownerVertexIdMap
         );
 
-        if (treeEdgeSet.has(`${conn.fromId}->${conn.toId}`)) {
+        if (treeEdgeSet.has(`${topFrom}->${topTo}`)) {
           const dir: 1 | -1 =
-            branchDir.get(conn.toId!) ?? (toNode.cx >= fromNode.cx ? 1 : -1);
+            branchDir.get(topTo) ?? (toNode.cx >= fromNode.cx ? 1 : -1);
           const start = clipPointToNodeBorder(
             fromNode,
             { x: fromNode.cx + dir * 200, y: fromNode.cy },
@@ -8256,13 +8454,12 @@ const { documentScriptCodec } = (() => {
     text: string;
     meta: DocBlockMeta;
   } {
-    const trimmed = raw.trimEnd();
-    const match = trimmed.match(/\{([^}]+)\}\s*$/);
-    if (!match || match.index === undefined) {
+    const split = extractTrailingMetaBlock(raw);
+    if (!split) {
       return { text: raw, meta: {} };
     }
 
-    const pairs = splitMetaPairs(match[1]);
+    const pairs = splitMetaPairs(split.metaRaw);
     if (pairs.length === 0) {
       return { text: raw, meta: {} };
     }
@@ -8332,8 +8529,7 @@ const { documentScriptCodec } = (() => {
       meta.offset = { x: xVal ?? 0, y: yVal ?? 0 };
     }
 
-    const cleanedText = trimmed.slice(0, match.index).trimEnd();
-    return { text: cleanedText, meta };
+    return { text: split.body, meta };
   }
   function formatDocBlockMeta(
     node: {
@@ -12711,7 +12907,7 @@ const { createProjectFromScene, cloneProject } = (() => {
 })();
 
 // --- Module: src/engine/layout/textMeasure.ts ---
-const { estimateCharAdvanceWidth, wrapText, measureSceneNode, positionGroupChildren } = (() => {
+const { estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode, positionGroupChildren } = (() => {
   const BOARD_FONT_FAMILY =
     "'Segoe Print', 'KaiTi', 'STKaiti', 'LXGW WenKai', 'Microsoft YaHei', cursive";
   let cachedMeasureCtx: CanvasRenderingContext2D | null = null;
@@ -13262,7 +13458,7 @@ const { estimateCharAdvanceWidth, wrapText, measureSceneNode, positionGroupChild
     }
     return undefined;
   }
-  return { estimateCharAdvanceWidth, wrapText, measureSceneNode, positionGroupChildren };
+  return { estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode, positionGroupChildren };
 })();
 
 // --- Module: src/engine/layout/diagramLayout.ts ---
@@ -14230,7 +14426,8 @@ const { compileTimeline } = (() => {
               pushTextLine: (input) => {
                 const fontSize = input.fontSize ?? 18;
                 const weight = input.fontWeight ?? 400;
-                const lineFont = `${weight} ${fontSize}px ${boardFontFamily}`;
+                const lineFontFamily = input.fontFamily ?? boardFontFamily;
+                const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
                 const tItem = compileTextLineItem(
                   input.id ?? `${curr.id}-text-${customTextSeq++}`,
                   input.text,
@@ -15617,7 +15814,13 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
       return;
     }
     const fillReveal = Math.max(0, Math.min(1, (progress - 0.55) / 0.45));
-    const alpha = baseFillOpacity * stroke.fillOpacity * fillReveal;
+    const isSurfaceCard = allowShadow && Boolean(stroke.surfaceShadow);
+    const effectiveBaseOpacity = isSurfaceCard
+      ? baseFillOpacity
+      : allowShadow
+      ? 0.22
+      : baseFillOpacity;
+    const alpha = effectiveBaseOpacity * stroke.fillOpacity * fillReveal;
     if (alpha <= 0.005) return;
 
     const tracePath = () => {
@@ -15629,7 +15832,7 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
       ctx.closePath();
     };
 
-    if (allowShadow && stroke.surfaceShadow && palette.cardShadow) {
+    if (isSurfaceCard && palette.cardShadow) {
       ctx.save();
       ctx.translate(palette.cardShadow.dx, palette.cardShadow.dy);
       ctx.globalAlpha = fillReveal;
@@ -15640,7 +15843,7 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
     }
 
     const fillStyle =
-      allowShadow && palette.cardFillColors?.[stroke.color]
+      isSurfaceCard && palette.cardFillColors?.[stroke.color]
         ? palette.cardFillColors[stroke.color]!
         : colorHex;
 
@@ -15853,6 +16056,14 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
 
 // --- Module: src/engine/render/frameSnapshot.ts ---
 const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFrameSvg, renderProjectFrameSvg } = (() => {
+  function extractFontFamilyFromCssFont(
+    cssFont: string,
+    fallback: string
+  ): string {
+    const m = cssFont.match(/^\s*(?:(?:normal|italic|oblique|bold|\d{3})\s+)*[\d.]+(?:px|pt|rem|em)\s+(.+)$/i);
+    const raw = m ? m[1].trim() : '';
+    return raw || fallback;
+  }
   function escapeXml(raw: string): string {
     return raw
       .replace(/&/g, '&amp;')
@@ -15933,12 +16144,18 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
       return '';
     }
     const fillReveal = Math.max(0, Math.min(1, (progress - 0.55) / 0.45));
-    const alpha = baseFillOpacity * stroke.fillOpacity * fillReveal;
+    const isSurfaceCard = allowShadow && Boolean(stroke.surfaceShadow);
+    const effectiveBaseOpacity = isSurfaceCard
+      ? baseFillOpacity
+      : allowShadow
+      ? 0.22
+      : baseFillOpacity;
+    const alpha = effectiveBaseOpacity * stroke.fillOpacity * fillReveal;
     if (alpha <= 0.005) return '';
 
     const d = `${pointsToSvgPath(stroke.points)} Z`;
     let shadowSvg = '';
-    if (allowShadow && stroke.surfaceShadow && palette.cardShadow) {
+    if (isSurfaceCard && palette.cardShadow) {
       const sh = palette.cardShadow;
       shadowSvg = `<path d="${d}" transform="translate(${sh.dx.toFixed(1)},${sh.dy.toFixed(
         1
@@ -15948,7 +16165,7 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
     }
 
     const fillColor =
-      allowShadow && palette.cardFillColors?.[stroke.color]
+      isSurfaceCard && palette.cardFillColors?.[stroke.color]
         ? palette.cardFillColors[stroke.color]!
         : colorHex;
 
@@ -16131,6 +16348,7 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
         colorHex: resolveColorHex(scene.theme, evalState.pen.color),
         velocity: evalState.pen.velocity,
         alpha: evalState.pen.alpha,
+        seed: evalState.pen.seed,
       },
       subtitleText,
     };
@@ -16394,17 +16612,25 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
         `<rect x="18" y="2" width="68" height="3" fill="rgba(0,0,0,0.18)"/>`
       );
     }
-    // letter-paper fountain pen
+    if (theme === 'letter-paper') {
+      return (
+        `<path d="M0,0 L7,-3.2 L17,-4.6 L19,0 L17,4.6 L7,3.2 Z" fill="#d7ad53" stroke="#8b651e" stroke-width="0.8"/>` +
+        `<line x1="0.8" y1="0" x2="11" y2="0" stroke="#2d2112" stroke-width="0.85"/>` +
+        `<circle cx="11.5" cy="0" r="1.3" fill="${c}"/>` +
+        `<rect x="17" y="-4.7" width="9" height="9.4" fill="#252b3b"/>` +
+        `<rect x="26" y="-5.4" width="3.2" height="10.8" fill="#d7ad53"/>` +
+        `<rect x="29" y="-5.8" width="62" height="11.6" rx="3.5" fill="#1d283f"/>` +
+        `<rect x="42" y="-5.8" width="4.5" height="11.6" fill="${c}"/>` +
+        `<rect x="32" y="-4.1" width="54" height="2.1" fill="rgba(255,255,255,0.18)"/>` +
+        `<rect x="86" y="-5.2" width="5" height="10.4" fill="#d7ad53"/>`
+      );
+    }
+    // Default marker fallback for whiteboard and custom PresentationPlugins
     return (
-      `<path d="M0,0 L7,-3.2 L17,-4.6 L19,0 L17,4.6 L7,3.2 Z" fill="#d7ad53" stroke="#8b651e" stroke-width="0.8"/>` +
-      `<line x1="0.8" y1="0" x2="11" y2="0" stroke="#2d2112" stroke-width="0.85"/>` +
-      `<circle cx="11.5" cy="0" r="1.3" fill="${c}"/>` +
-      `<rect x="17" y="-4.7" width="9" height="9.4" fill="#252b3b"/>` +
-      `<rect x="26" y="-5.4" width="3.2" height="10.8" fill="#d7ad53"/>` +
-      `<rect x="29" y="-5.8" width="62" height="11.6" rx="3.5" fill="#1d283f"/>` +
-      `<rect x="42" y="-5.8" width="4.5" height="11.6" fill="${c}"/>` +
-      `<rect x="32" y="-4.1" width="54" height="2.1" fill="rgba(255,255,255,0.18)"/>` +
-      `<rect x="86" y="-5.2" width="5" height="10.4" fill="#d7ad53"/>`
+      `<path d="M0,-1.5 L9,-3.5 L14,-3.5 L14,3.5 L9,3.5 L0,1.5 Z" fill="${c}"/>` +
+      `<rect x="14" y="-5.4" width="10" height="10.8" fill="${c}"/>` +
+      `<rect x="24" y="-6.2" width="64" height="12.4" rx="3" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>` +
+      `<rect x="78" y="-6.2" width="10" height="12.4" fill="${c}"/>`
     );
   }
   function renderFallingDustSvg(
@@ -16447,17 +16673,6 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
     }
 
     const parts: string[] = [];
-    if (snap.theme === 'chalkboard' && snap.pen.penDown) {
-      parts.push(
-        renderFallingDustSvg(
-          snap.pen.screenX,
-          snap.pen.screenY,
-          snap.pen.colorHex,
-          snap.localTMs,
-          hashString(snap.sceneId)
-        )
-      );
-    }
 
     const lift = snap.pen.lift;
     const px = snap.pen.screenX.toFixed(2);
@@ -16594,7 +16809,9 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
           ? '700'
           : '400';
       const escColor = escapeXml(line.colorHex);
-      const escFont = escapeXml(snap.fontFamily);
+      const escFont = escapeXml(
+        extractFontFamilyFromCssFont(line.font, snap.fontFamily)
+      );
 
       let i = 0;
       while (i < line.spans.length) {
@@ -16706,35 +16923,29 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
       parts.push(`<defs>${maskDefs.join('')}</defs>`);
     }
     parts.push(...textEls);
+
+    if (
+      snap.theme === 'chalkboard' &&
+      snap.handStyle !== 'hidden' &&
+      snap.pen.visible &&
+      snap.pen.penDown
+    ) {
+      parts.push(
+        renderFallingDustSvg(
+          snap.pen.worldX,
+          snap.pen.worldY,
+          snap.pen.colorHex,
+          snap.localTMs,
+          snap.pen.seed ?? hashString(snap.sceneId)
+        )
+      );
+    }
+
     parts.push('</g>');
 
     parts.push(renderHandAndInstrumentSvg(snap, gradId));
 
     return parts.join('');
-  }
-  function wrapSubtitleLinesSvg(text: string, maxCharsPerLine: number): string[] {
-    const clean = text.trim().replace(/\s+/g, ' ');
-    if (!clean) return [];
-    const weightOf = (ch: string) => {
-      const code = ch.codePointAt(0) ?? 0;
-      return code >= 0x2e80 ? 1.0 : 0.56;
-    };
-    const lines: string[] = [];
-    let cur = '';
-    let curWeight = 0;
-    for (const ch of clean) {
-      const w = weightOf(ch);
-      if (cur && curWeight + w > maxCharsPerLine && lines.length === 0) {
-        lines.push(cur.trimEnd());
-        cur = ch === ' ' ? '' : ch;
-        curWeight = ch === ' ' ? 0 : w;
-      } else {
-        cur += ch;
-        curWeight += w;
-      }
-    }
-    if (cur.trim()) lines.push(cur.trim());
-    return lines.slice(0, 2);
   }
   function renderSubtitleSvg(
     width: number,
@@ -16745,30 +16956,29 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
     const trimmed = text?.trim();
     if (!trimmed) return '';
     const fontSize = Math.max(13, Math.round(height * 0.032));
-    const maxBoxW = Math.max(200, width - 32, Math.round(width * 0.74));
-    const clampedMaxW = Math.min(width - 24, Math.round(width * 0.78));
-    const maxChars = Math.max(12, clampedMaxW / Math.max(10, fontSize * 0.96));
-    const lines = wrapSubtitleLinesSvg(trimmed, maxChars);
+    const maxTextW = Math.max(180, width * 0.78);
+    const subtitleFont = `600 ${fontSize}px sans-serif`;
+    const measureSub = (s: string) => defaultMeasureText(s, subtitleFont);
+
+    let lines = wrapText(trimmed, maxTextW, measureSub);
     if (lines.length === 0) return '';
+    if (lines.length > 2) {
+      const second = lines[1];
+      lines = [
+        lines[0],
+        second.length > 2 ? `${second.slice(0, second.length - 1)}…` : second,
+      ];
+    }
 
     const lineHeight = fontSize * 1.32;
+    const padX = Math.max(14, Math.round(fontSize * 0.85));
     const padY = Math.round(fontSize * 0.45);
     const boxH = Math.round(lines.length * lineHeight + padY * 2);
-    const longestChars = Math.max(
-      ...lines.map((l) =>
-        [...l].reduce(
-          (acc, ch) => acc + ((ch.codePointAt(0) ?? 0) >= 0x2e80 ? 1.0 : 0.56),
-          0
-        )
-      )
-    );
-    const boxW = Math.min(
-      clampedMaxW,
-      Math.min(
-        maxBoxW,
-        Math.max(160, Math.round(longestChars * fontSize * 1.02 + fontSize * 1.8))
-      )
-    );
+    let widest = 0;
+    for (const line of lines) {
+      widest = Math.max(widest, measureSub(line));
+    }
+    const boxW = Math.min(width - 24, Math.max(160, Math.ceil(widest + padX * 2)));
     const x = (width - boxW) / 2;
     const y = Math.min(height - boxH - 14, height * 0.89 - boxH / 2);
 
@@ -17161,7 +17371,9 @@ const { renderProjectFrame } = (() => {
         const activeTheme =
           evalState.kind === 'scene'
             ? evalState.segment.scene.theme
-            : evalState.fromSegment.scene.theme;
+            : evalState.progress < 0.5
+            ? evalState.fromSegment.scene.theme
+            : evalState.toSegment.scene.theme;
         drawSubtitleOverlay(ctx, width, height, activeCue.text, activeTheme);
       }
     }
@@ -17243,10 +17455,17 @@ const { exportScriptToVideo } = (() => {
     timeline: CompiledTimeline,
     options: ExportVideoOptions
   ): Promise<ExportVideoResult> {
-    const source = createSceneFrameSource(scene, timeline, options.fps ?? 30);
-    const plugin = exportRegistry.getOrDefault(
-      options.exporterId ?? 'mediarecorder-video'
+    const exporterId = options.exporterId ?? 'mediarecorder-video';
+    const defaultFps =
+      exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
+        ? 12
+        : 30;
+    const source = createSceneFrameSource(
+      scene,
+      timeline,
+      options.fps ?? defaultFps
     );
+    const plugin = exportRegistry.getOrDefault(exporterId);
     return plugin.export(source, {
       onProgress: options.onProgress,
       signal: options.signal,
@@ -17256,10 +17475,16 @@ const { exportScriptToVideo } = (() => {
     compiledProject: CompiledProjectTimeline,
     options: ExportVideoOptions
   ): Promise<ExportVideoResult> {
-    const source = createProjectFrameSource(compiledProject, options.fps ?? 30);
-    const plugin = exportRegistry.getOrDefault(
-      options.exporterId ?? 'mediarecorder-video'
+    const exporterId = options.exporterId ?? 'mediarecorder-video';
+    const defaultFps =
+      exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
+        ? 12
+        : 30;
+    const source = createProjectFrameSource(
+      compiledProject,
+      options.fps ?? defaultFps
     );
+    const plugin = exportRegistry.getOrDefault(exporterId);
     return plugin.export(source, {
       onProgress: options.onProgress,
       signal: options.signal,

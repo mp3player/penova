@@ -13,30 +13,38 @@ import {
 import { SceneNodePlugin } from '../contracts';
 import { clipRayToRect } from '../shapes/clipHelpers';
 
+function readChartPropText(
+  props: Record<string, string | number | boolean | undefined> | undefined,
+  key: string
+): string {
+  const val = props?.[key];
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  return '';
+}
+
 function parseChartData(node: CustomSceneNode): {
   title: string;
   values: number[];
   labels: string[];
   highlightIdx: number;
 } {
-  const title =
-    typeof node.props?.title === 'string' && node.props.title.trim()
-      ? node.props.title.trim()
-      : node.name || 'Metrics';
+  const rawTitle = readChartPropText(node.props, 'title').trim();
+  const title = rawTitle || node.name || 'Metrics';
 
-  const rawValues =
-    typeof node.props?.values === 'string'
-      ? node.props.values
-          .split(',')
-          .map((v) => Number.parseFloat(v.trim()))
-          .filter((n) => Number.isFinite(n) && n >= 0)
-      : [];
+  const rawValuesStr = readChartPropText(node.props, 'values').trim();
+  const rawValues = rawValuesStr
+    ? rawValuesStr
+        .split(',')
+        .map((v) => Number.parseFloat(v.trim()))
+        .filter((n) => Number.isFinite(n) && n >= 0)
+    : [];
   const values = rawValues.length >= 2 ? rawValues.slice(0, 8) : [25, 48, 76, 100];
 
-  const rawLabels =
-    typeof node.props?.labels === 'string'
-      ? node.props.labels.split(',').map((s) => s.trim())
-      : [];
+  const rawLabelsStr = readChartPropText(node.props, 'labels').trim();
+  const rawLabels = rawLabelsStr
+    ? rawLabelsStr.split(',').map((s) => s.trim())
+    : [];
   const labels = values.map((_, idx) => rawLabels[idx] || `#${idx + 1}`);
 
   const hiRaw = Number(node.props?.highlight);
@@ -51,10 +59,32 @@ function parseChartData(node: CustomSceneNode): {
 export const chartNodePlugin: SceneNodePlugin = {
   id: 'chart',
   name: 'Bar Chart',
-  measure(node) {
+  measure(node, ctx) {
     const rawW = Number(node.props?.width ?? node.props?.w);
     const rawH = Number(node.props?.height ?? node.props?.h);
-    const width = Number.isFinite(rawW) && rawW >= 180 ? rawW : 296;
+    let width = 296;
+    if (Number.isFinite(rawW) && rawW >= 180) {
+      width = rawW;
+    } else {
+      const { title, values, labels } = parseChartData(node);
+      const titleW = ctx.measureText(title, `700 15px ${ctx.fontFamily}`);
+      const widestLabelW = Math.max(
+        32,
+        ...labels.map((l) => ctx.measureText(l, `700 12px ${ctx.fontFamily}`))
+      );
+      width = Math.max(
+        296,
+        Math.min(
+          560,
+          Math.ceil(
+            Math.max(
+              titleW + 48,
+              values.length * Math.max(54, widestLabelW + 14) + 56
+            )
+          )
+        )
+      );
+    }
     const height = Number.isFinite(rawH) && rawH >= 140 ? rawH : 196;
     return { width, height };
   },

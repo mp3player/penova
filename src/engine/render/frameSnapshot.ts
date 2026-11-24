@@ -13,6 +13,7 @@ import { presentationRegistry } from '../../plugins/registry';
 import { hashString, mulberry32 } from '../../sdk/random';
 import { StrokePath } from '../../sdk/strokePath';
 import { getActiveSubtitleAt } from '../subtitle/subtitleEngine';
+import { defaultMeasureText, wrapText } from '../layout/textMeasure';
 import {
   CompiledProjectTimeline,
   evaluateProjectAt,
@@ -20,6 +21,15 @@ import {
 import { CompiledTimeline, evaluateTimelineAt } from '../timeline/timelineEngine';
 import { getActiveCamera, worldToScreen } from './sceneRenderer';
 import { resolveColorHex } from './themes';
+
+function extractFontFamilyFromCssFont(
+  cssFont: string,
+  fallback: string
+): string {
+  const m = cssFont.match(/^\s*(?:(?:normal|italic|oblique|bold|\d{3})\s+)*[\d.]+(?:px|pt|rem|em)\s+(.+)$/i);
+  const raw = m ? m[1].trim() : '';
+  return raw || fallback;
+}
 
 function escapeXml(raw: string): string {
   return raw
@@ -104,12 +114,18 @@ function renderStrokeFillSvg(
     return '';
   }
   const fillReveal = Math.max(0, Math.min(1, (progress - 0.55) / 0.45));
-  const alpha = baseFillOpacity * stroke.fillOpacity * fillReveal;
+  const isSurfaceCard = allowShadow && Boolean(stroke.surfaceShadow);
+  const effectiveBaseOpacity = isSurfaceCard
+    ? baseFillOpacity
+    : allowShadow
+    ? 0.22
+    : baseFillOpacity;
+  const alpha = effectiveBaseOpacity * stroke.fillOpacity * fillReveal;
   if (alpha <= 0.005) return '';
 
   const d = `${pointsToSvgPath(stroke.points)} Z`;
   let shadowSvg = '';
-  if (allowShadow && stroke.surfaceShadow && palette.cardShadow) {
+  if (isSurfaceCard && palette.cardShadow) {
     const sh = palette.cardShadow;
     shadowSvg = `<path d="${d}" transform="translate(${sh.dx.toFixed(1)},${sh.dy.toFixed(
       1
@@ -119,7 +135,7 @@ function renderStrokeFillSvg(
   }
 
   const fillColor =
-    allowShadow && palette.cardFillColors?.[stroke.color]
+    isSurfaceCard && palette.cardFillColors?.[stroke.color]
       ? palette.cardFillColors[stroke.color]!
       : colorHex;
 
@@ -304,6 +320,7 @@ export function evaluateSceneFrameSnapshot(
       colorHex: resolveColorHex(scene.theme, evalState.pen.color),
       velocity: evalState.pen.velocity,
       alpha: evalState.pen.alpha,
+      seed: evalState.pen.seed,
     },
     subtitleText,
   };
@@ -571,17 +588,25 @@ function renderInstrumentSvg(theme: ThemeId, colorHex: string): string {
       `<rect x="18" y="2" width="68" height="3" fill="rgba(0,0,0,0.18)"/>`
     );
   }
-  // letter-paper fountain pen
+  if (theme === 'letter-paper') {
+    return (
+      `<path d="M0,0 L7,-3.2 L17,-4.6 L19,0 L17,4.6 L7,3.2 Z" fill="#d7ad53" stroke="#8b651e" stroke-width="0.8"/>` +
+      `<line x1="0.8" y1="0" x2="11" y2="0" stroke="#2d2112" stroke-width="0.85"/>` +
+      `<circle cx="11.5" cy="0" r="1.3" fill="${c}"/>` +
+      `<rect x="17" y="-4.7" width="9" height="9.4" fill="#252b3b"/>` +
+      `<rect x="26" y="-5.4" width="3.2" height="10.8" fill="#d7ad53"/>` +
+      `<rect x="29" y="-5.8" width="62" height="11.6" rx="3.5" fill="#1d283f"/>` +
+      `<rect x="42" y="-5.8" width="4.5" height="11.6" fill="${c}"/>` +
+      `<rect x="32" y="-4.1" width="54" height="2.1" fill="rgba(255,255,255,0.18)"/>` +
+      `<rect x="86" y="-5.2" width="5" height="10.4" fill="#d7ad53"/>`
+    );
+  }
+  // Default marker fallback for whiteboard and custom PresentationPlugins
   return (
-    `<path d="M0,0 L7,-3.2 L17,-4.6 L19,0 L17,4.6 L7,3.2 Z" fill="#d7ad53" stroke="#8b651e" stroke-width="0.8"/>` +
-    `<line x1="0.8" y1="0" x2="11" y2="0" stroke="#2d2112" stroke-width="0.85"/>` +
-    `<circle cx="11.5" cy="0" r="1.3" fill="${c}"/>` +
-    `<rect x="17" y="-4.7" width="9" height="9.4" fill="#252b3b"/>` +
-    `<rect x="26" y="-5.4" width="3.2" height="10.8" fill="#d7ad53"/>` +
-    `<rect x="29" y="-5.8" width="62" height="11.6" rx="3.5" fill="#1d283f"/>` +
-    `<rect x="42" y="-5.8" width="4.5" height="11.6" fill="${c}"/>` +
-    `<rect x="32" y="-4.1" width="54" height="2.1" fill="rgba(255,255,255,0.18)"/>` +
-    `<rect x="86" y="-5.2" width="5" height="10.4" fill="#d7ad53"/>`
+    `<path d="M0,-1.5 L9,-3.5 L14,-3.5 L14,3.5 L9,3.5 L0,1.5 Z" fill="${c}"/>` +
+    `<rect x="14" y="-5.4" width="10" height="10.8" fill="${c}"/>` +
+    `<rect x="24" y="-6.2" width="64" height="12.4" rx="3" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>` +
+    `<rect x="78" y="-6.2" width="10" height="12.4" fill="${c}"/>`
   );
 }
 
@@ -626,17 +651,6 @@ function renderHandAndInstrumentSvg(
   }
 
   const parts: string[] = [];
-  if (snap.theme === 'chalkboard' && snap.pen.penDown) {
-    parts.push(
-      renderFallingDustSvg(
-        snap.pen.screenX,
-        snap.pen.screenY,
-        snap.pen.colorHex,
-        snap.localTMs,
-        hashString(snap.sceneId)
-      )
-    );
-  }
 
   const lift = snap.pen.lift;
   const px = snap.pen.screenX.toFixed(2);
@@ -774,7 +788,9 @@ function renderSceneLayerSvg(
         ? '700'
         : '400';
     const escColor = escapeXml(line.colorHex);
-    const escFont = escapeXml(snap.fontFamily);
+    const escFont = escapeXml(
+      extractFontFamilyFromCssFont(line.font, snap.fontFamily)
+    );
 
     let i = 0;
     while (i < line.spans.length) {
@@ -886,36 +902,29 @@ function renderSceneLayerSvg(
     parts.push(`<defs>${maskDefs.join('')}</defs>`);
   }
   parts.push(...textEls);
+
+  if (
+    snap.theme === 'chalkboard' &&
+    snap.handStyle !== 'hidden' &&
+    snap.pen.visible &&
+    snap.pen.penDown
+  ) {
+    parts.push(
+      renderFallingDustSvg(
+        snap.pen.worldX,
+        snap.pen.worldY,
+        snap.pen.colorHex,
+        snap.localTMs,
+        snap.pen.seed ?? hashString(snap.sceneId)
+      )
+    );
+  }
+
   parts.push('</g>');
 
   parts.push(renderHandAndInstrumentSvg(snap, gradId));
 
   return parts.join('');
-}
-
-function wrapSubtitleLinesSvg(text: string, maxCharsPerLine: number): string[] {
-  const clean = text.trim().replace(/\s+/g, ' ');
-  if (!clean) return [];
-  const weightOf = (ch: string) => {
-    const code = ch.codePointAt(0) ?? 0;
-    return code >= 0x2e80 ? 1.0 : 0.56;
-  };
-  const lines: string[] = [];
-  let cur = '';
-  let curWeight = 0;
-  for (const ch of clean) {
-    const w = weightOf(ch);
-    if (cur && curWeight + w > maxCharsPerLine && lines.length === 0) {
-      lines.push(cur.trimEnd());
-      cur = ch === ' ' ? '' : ch;
-      curWeight = ch === ' ' ? 0 : w;
-    } else {
-      cur += ch;
-      curWeight += w;
-    }
-  }
-  if (cur.trim()) lines.push(cur.trim());
-  return lines.slice(0, 2);
 }
 
 function renderSubtitleSvg(
@@ -927,30 +936,29 @@ function renderSubtitleSvg(
   const trimmed = text?.trim();
   if (!trimmed) return '';
   const fontSize = Math.max(13, Math.round(height * 0.032));
-  const maxBoxW = Math.max(200, width - 32, Math.round(width * 0.74));
-  const clampedMaxW = Math.min(width - 24, Math.round(width * 0.78));
-  const maxChars = Math.max(12, clampedMaxW / Math.max(10, fontSize * 0.96));
-  const lines = wrapSubtitleLinesSvg(trimmed, maxChars);
+  const maxTextW = Math.max(180, width * 0.78);
+  const subtitleFont = `600 ${fontSize}px sans-serif`;
+  const measureSub = (s: string) => defaultMeasureText(s, subtitleFont);
+
+  let lines = wrapText(trimmed, maxTextW, measureSub);
   if (lines.length === 0) return '';
+  if (lines.length > 2) {
+    const second = lines[1];
+    lines = [
+      lines[0],
+      second.length > 2 ? `${second.slice(0, second.length - 1)}…` : second,
+    ];
+  }
 
   const lineHeight = fontSize * 1.32;
+  const padX = Math.max(14, Math.round(fontSize * 0.85));
   const padY = Math.round(fontSize * 0.45);
   const boxH = Math.round(lines.length * lineHeight + padY * 2);
-  const longestChars = Math.max(
-    ...lines.map((l) =>
-      [...l].reduce(
-        (acc, ch) => acc + ((ch.codePointAt(0) ?? 0) >= 0x2e80 ? 1.0 : 0.56),
-        0
-      )
-    )
-  );
-  const boxW = Math.min(
-    clampedMaxW,
-    Math.min(
-      maxBoxW,
-      Math.max(160, Math.round(longestChars * fontSize * 1.02 + fontSize * 1.8))
-    )
-  );
+  let widest = 0;
+  for (const line of lines) {
+    widest = Math.max(widest, measureSub(line));
+  }
+  const boxW = Math.min(width - 24, Math.max(160, Math.ceil(widest + padX * 2)));
   const x = (width - boxW) / 2;
   const y = Math.min(height - boxH - 14, height * 0.89 - boxH / 2);
 

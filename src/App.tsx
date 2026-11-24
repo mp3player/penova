@@ -75,7 +75,6 @@ export const App: React.FC = () => {
 
     try {
       const result = await exportProjectVideo(workspace.compiledProject, {
-        fps: 30,
         exporterId,
         onProgress: setExportProgress,
         signal: controller.signal,

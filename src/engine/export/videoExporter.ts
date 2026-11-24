@@ -122,10 +122,17 @@ export async function exportSceneVideo(
   timeline: CompiledTimeline,
   options: ExportVideoOptions
 ): Promise<ExportVideoResult> {
-  const source = createSceneFrameSource(scene, timeline, options.fps ?? 30);
-  const plugin = exportRegistry.getOrDefault(
-    options.exporterId ?? 'mediarecorder-video'
+  const exporterId = options.exporterId ?? 'mediarecorder-video';
+  const defaultFps =
+    exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
+      ? 12
+      : 30;
+  const source = createSceneFrameSource(
+    scene,
+    timeline,
+    options.fps ?? defaultFps
   );
+  const plugin = exportRegistry.getOrDefault(exporterId);
   return plugin.export(source, {
     onProgress: options.onProgress,
     signal: options.signal,
@@ -136,10 +143,16 @@ export async function exportProjectVideo(
   compiledProject: CompiledProjectTimeline,
   options: ExportVideoOptions
 ): Promise<ExportVideoResult> {
-  const source = createProjectFrameSource(compiledProject, options.fps ?? 30);
-  const plugin = exportRegistry.getOrDefault(
-    options.exporterId ?? 'mediarecorder-video'
+  const exporterId = options.exporterId ?? 'mediarecorder-video';
+  const defaultFps =
+    exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
+      ? 12
+      : 30;
+  const source = createProjectFrameSource(
+    compiledProject,
+    options.fps ?? defaultFps
   );
+  const plugin = exportRegistry.getOrDefault(exporterId);
   return plugin.export(source, {
     onProgress: options.onProgress,
     signal: options.signal,

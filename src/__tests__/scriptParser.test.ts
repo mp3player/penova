@@ -545,7 +545,7 @@ describe('scriptParser', () => {
     const layout = computeDiagramLayout(reparsedNested.scene);
     const routedConn = layout.nodes.find((n) => n.node.type === 'connector');
     const nestedChildPos = layout.nodeMap.get('child-leaf');
-    const outsidePos = layout.nodeMap.get('outside-node');
+    const outsidePos = layout.nodeMap.get(parsedConn!.toId!);
     expect(routedConn?.routedPoints?.length).toBeGreaterThan(2);
     expect(nestedChildPos).toBeDefined();
     expect(outsidePos).toBeDefined();

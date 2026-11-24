@@ -8,13 +8,20 @@ import {
 import { SceneNodePlugin } from '../contracts';
 import { clipRayToRect } from '../shapes/clipHelpers';
 
+const CODE_MONO_FONT = '"JetBrains Mono", "SF Mono", "Consolas", monospace';
+
+function readPropText(
+  props: Record<string, string | number | boolean | undefined> | undefined,
+  key: string
+): string {
+  const val = props?.[key];
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  return '';
+}
+
 function parseCodeLines(node: CustomSceneNode): string[] {
-  const raw =
-    typeof node.props?.lines === 'string'
-      ? node.props.lines
-      : typeof node.props?.code === 'string'
-      ? node.props.code
-      : '';
+  const raw = readPropText(node.props, 'lines') || readPropText(node.props, 'code');
   if (!raw.trim()) {
     return [node.name || 'script.penova.md'];
   }
@@ -45,11 +52,9 @@ export const codeNodePlugin: SceneNodePlugin = {
   name: 'Code Window',
   measure(node, ctx) {
     const lines = parseCodeLines(node);
-    const title =
-      typeof node.props?.title === 'string' && node.props.title.trim()
-        ? node.props.title.trim()
-        : node.name || 'script.penova.md';
-    const font = `400 13.5px "JetBrains Mono", "SF Mono", "Consolas", monospace`;
+    const rawTitle = readPropText(node.props, 'title').trim();
+    const title = rawTitle || node.name || 'script.penova.md';
+    const font = `400 13.5px ${CODE_MONO_FONT}`;
     let widest = ctx.measureText(title, `700 12.5px ${ctx.fontFamily}`) + 74;
     for (const line of lines) {
       widest = Math.max(widest, ctx.measureText(line, font) + 38);
@@ -58,7 +63,7 @@ export const codeNodePlugin: SceneNodePlugin = {
     const width =
       Number.isFinite(rawW) && rawW >= 180
         ? rawW
-        : Math.max(230, Math.min(520, Math.ceil(widest)));
+        : Math.max(230, Math.min(540, Math.ceil(widest)));
     const height = Math.max(96, 48 + lines.length * 22 + 14);
     return { width, height, payload: { title, lines } };
   },
@@ -78,10 +83,8 @@ export const codeNodePlugin: SceneNodePlugin = {
     }
     const node = positioned.node;
     const lines = parseCodeLines(node);
-    const title =
-      typeof node.props?.title === 'string' && node.props.title.trim()
-        ? node.props.title.trim()
-        : node.name || 'script.penova.md';
+    const rawTitle = readPropText(node.props, 'title').trim();
+    const title = rawTitle || node.name || 'script.penova.md';
 
     const x = positioned.cx - positioned.width / 2;
     const y = positioned.cy - positioned.height / 2;
@@ -165,10 +168,6 @@ export const codeNodePlugin: SceneNodePlugin = {
     });
 
     // 5. Progressive code lines
-    const codeColor =
-      helpers.theme === 'whiteboard' || helpers.theme === 'letter-paper'
-        ? 'white'
-        : 'white';
     lines.forEach((line, idx) => {
       helpers.pushTextLine({
         id: `${positioned.id}-code-${idx}`,
@@ -179,7 +178,8 @@ export const codeNodePlugin: SceneNodePlugin = {
         align: 'left',
         fontSize: 13.5,
         fontWeight: 400,
-        color: codeColor,
+        fontFamily: CODE_MONO_FONT,
+        color: 'white',
         msPerChar: 28,
         gapAfterMs: 24,
       });

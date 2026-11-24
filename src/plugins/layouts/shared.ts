@@ -834,7 +834,7 @@ function buildVisibilityDetourPoints(
     { length: n },
     () => []
   );
-  const blockedEndpoints = [fromNode, toNode, ...obstacles];
+  const endpointObstacles = [fromNode, toNode];
 
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
@@ -843,7 +843,7 @@ function buildVisibilityDetourPoints(
       // Do not slice across source/target bodies or any padded obstacle
       if (
         segmentHitsAnyObstacle(a, b, obstacles, 10) ||
-        segmentHitsAnyObstacle(a, b, blockedEndpoints.slice(0, 2), -2)
+        segmentHitsAnyObstacle(a, b, endpointObstacles, -2)
       ) {
         continue;
       }
@@ -982,13 +982,22 @@ export function routeObstacleAwareConnector(
     directNode.labelPoint && pointHitsAnyObstacle(directNode.labelPoint, obstacles, 24, 12);
 
   if (obstacles.length === 0 || (directHits === 0 && !directLabelHit)) {
+    const directMid =
+      directNode.labelPoint ?? midpointOnPolyline(directPts);
+    if (directMid && options.routedMidpoints) {
+      options.routedMidpoints.push(directMid);
+    }
     return directNode;
   }
 
   const initialBlockers = findBlockingObstacles(directPts, obstacles, 10);
   const baseClearance = 40 + (conn.label ? 18 : 0);
   const routedMidpoints = options.routedMidpoints ?? [];
-  const candidates: Array<{ node: PositionedSceneNode; side?: -1 | 1 }> = [];
+  const candidates: Array<{
+    node: PositionedSceneNode;
+    side?: -1 | 1;
+    isDirect?: boolean;
+  }> = [{ node: directNode, isDirect: true }];
 
   for (const side of [-1, 1] as const) {
     const pts0 = buildEnvelopeArchPoints(
@@ -1047,8 +1056,11 @@ export function routeObstacleAwareConnector(
         : 0;
     const sideBias =
       options.preferredSide && cand.side && cand.side !== options.preferredSide ? 28 : 0;
+    const grazePenalty =
+      cand.isDirect && segHits === 0 ? directHits * 120 : 0;
 
-    const score = arcLen + segHits * 10000 + labelHit * 4000 + crowded + sideBias;
+    const score =
+      arcLen + segHits * 10000 + labelHit * 4000 + crowded + sideBias + grazePenalty;
     if (score < bestScore) {
       bestScore = score;
       bestNode = cand.node;

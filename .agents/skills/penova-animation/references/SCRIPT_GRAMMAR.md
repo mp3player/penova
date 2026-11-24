@@ -62,20 +62,26 @@ Used by `flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, and `fre
 
 ### Card Declaration
 ```text
-[role] Label | Optional Subtitle {color: yellow, shape: circle, group: "Cluster Name", say: "Spoken caption", pause: 900, x: 40, y: -20}
+[role] Label | Optional Subtitle {color: yellow, shape: circle, icon: rocket, group: "Cluster Name", say: "Spoken caption", pause: 900, x: 40, y: -20}
 ```
 - Use `[role#my-id]` when two nodes share the same label or when the label contains `:`, `：`, `|`, or `->`.
 - Escape literal `|` inside a card title as `\|` (e.g., `[concept] Input \| Output | Pipeline`).
 - Use `\n` for explicit line breaks inside labels, subtitles, or text nodes.
+- Optional `icon`: attaches any built-in sketch icon (`browser`, `server`, `database`, `globe`, `lock`, `handshake`, `cpu`, `brain`, `spark`, `code`, `puzzle`, `user`, `document`, `rocket`, `lightbulb`, `cat`, `chart`, `gear`, `check`, `layers`).
 
 ### Atomic & Custom Nodes
 - **Standalone text**:
   `[text] Content {color: cyan, size: 22, bold: true, align: left, maxW: 320, indent: 2, say: "...", pause: 800, x: 0, y: 0}`
 - **Standalone shape**:
   `[shape:rounded] Frame Name {color: pink, fit: fixed, emphasized: true, dashed: true, w: 220, h: 80}`
+- **Built-in visual widget nodes**:
+  - `[node:icon] Label {color: cyan, icon: rocket, size: 32}`
+  - `[node:sketch] Art {color: pink, icon: cat, title: "Caption", svg: "<svg or path d>", w: 180, h: 140}`
+  - `[node:code] Snippet {color: cyan, title: "plugin.ts", lines: "const a = 1;\\nreturn a;", w: 320}`
+  - `[node:chart] Speedup {color: orange, title: "Speed", values: "18,45,80,100", labels: "Manual,Tpl,Code,Penova", highlight: 3}`
 - **Custom plugin node (`[node:<kind>]`)**:
   `[node:<kind>] Display Name {color: green, customKey: "value with, comma", numericKey: 42, say: "..."}`
-  Note: On `[node:<kind>]`, all keys except `color`, `group`/`zone`, `x`, `y`, `say`/`caption`, and `pause` are preserved in `node.props`. Quote strings containing commas, colons, or spaces (`"..."`).
+  Note: On `[node:<kind>]`, all keys except `color`, `group`/`zone`, `x`, `y`, `say`, and `pause` are preserved in `node.props` (including `caption`, `title`, `lines`, etc.). Quote strings containing commas, colons, spaces, or numeric/boolean literals (`"404"`, `"true"`).
 
 ### Composite Groups
 ```text
