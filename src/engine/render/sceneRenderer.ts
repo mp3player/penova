@@ -1,7 +1,8 @@
 import '../../plugins';
 import { LessonScene, Point } from '../../model/scene';
-import { CameraPenHint } from '../../plugins/contracts';
+import { CameraPenHint, ThemePalette } from '../../plugins/contracts';
 import { presentationRegistry } from '../../plugins/registry';
+import { StrokePath } from '../../sdk/strokePath';
 import { CameraState, evaluateCameraAt } from '../camera/cameraDirector';
 import { drawProgressiveGlyph } from '../sketch/textStrokes';
 import { CompiledTimeline, evaluateTimelineAt } from '../timeline/timelineEngine';
@@ -71,6 +72,54 @@ export function getActiveCamera(
   );
 }
 
+function drawStrokeInteriorFill(
+  ctx: CanvasRenderingContext2D,
+  stroke: StrokePath,
+  colorHex: string,
+  progress: number,
+  baseFillOpacity: number,
+  palette: ThemePalette,
+  allowShadow: boolean
+): void {
+  if (!stroke.fillOpacity || stroke.fillOpacity <= 0 || stroke.points.length < 3) {
+    return;
+  }
+  const fillReveal = Math.max(0, Math.min(1, (progress - 0.55) / 0.45));
+  const alpha = baseFillOpacity * stroke.fillOpacity * fillReveal;
+  if (alpha <= 0.005) return;
+
+  const tracePath = () => {
+    ctx.beginPath();
+    ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+    for (let i = 1; i < stroke.points.length; i++) {
+      ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+    }
+    ctx.closePath();
+  };
+
+  if (allowShadow && stroke.surfaceShadow && palette.cardShadow) {
+    ctx.save();
+    ctx.translate(palette.cardShadow.dx, palette.cardShadow.dy);
+    ctx.globalAlpha = fillReveal;
+    ctx.fillStyle = palette.cardShadow.color;
+    tracePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  const fillStyle =
+    allowShadow && palette.cardFillColors?.[stroke.color]
+      ? palette.cardFillColors[stroke.color]!
+      : colorHex;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = fillStyle;
+  tracePath();
+  ctx.fill();
+  ctx.restore();
+}
+
 export function renderSceneFrame(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -106,12 +155,24 @@ export function renderSceneFrame(
   ctx.translate(-cam.cx, -cam.cy);
 
   const scratch = getScratchCanvas();
+  const zoneFillOpacity = palette.zoneFillOpacity ?? 0.05;
+  const cardFillOpacity = palette.cardFillOpacity ?? 0.085;
 
   // Pass A: Group frames first so node content sits cleanly above them
   for (const item of timeline.allItems) {
     if (item.kind !== 'group-frame') continue;
     const p = evalState.itemProgress.get(item.id) ?? 0;
     if (p <= 0) continue;
+    const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
+    drawStrokeInteriorFill(
+      ctx,
+      item.stroke,
+      fillHex,
+      p,
+      zoneFillOpacity,
+      palette,
+      false
+    );
     presentation.drawStroke(ctx, item.stroke, p);
   }
 
@@ -120,6 +181,16 @@ export function renderSceneFrame(
     if (item.kind !== 'stroke') continue;
     const p = evalState.itemProgress.get(item.id) ?? 0;
     if (p <= 0) continue;
+    const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
+    drawStrokeInteriorFill(
+      ctx,
+      item.stroke,
+      fillHex,
+      p,
+      cardFillOpacity,
+      palette,
+      true
+    );
     presentation.drawStroke(ctx, item.stroke, p);
   }
 

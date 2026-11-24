@@ -59,6 +59,8 @@ export const circleShapePlugin: ShapePlugin = {
         width: baseWidth,
         color,
         opacity: 0.94,
+        fillOpacity: 1,
+        surfaceShadow: true,
         dashed,
         speedFactor: 1.1,
       })

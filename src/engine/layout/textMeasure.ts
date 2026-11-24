@@ -44,6 +44,48 @@ function isWideChar(ch: string): boolean {
   );
 }
 
+const NARROW_ASCII = new Set([
+  'i', 'l', 'I', '!', '|', '.', ',', ':', ';', "'", '`', '1',
+]);
+const SEMI_NARROW_ASCII = new Set([
+  'j', 't', 'f', 'r', '(', ')', '[', ']', '{', '}', '/', '\\', '-', '"', '*',
+]);
+const WIDE_LOWER_ASCII = new Set(['m', 'w']);
+const WIDE_UPPER_ASCII = new Set(['M', 'W', '@', '%', '&']);
+
+/**
+ * 估算单字符在无浏览器 Canvas 上下文时的排版前进宽度，用于修复等宽近似导致的 ASCII 间距失真。
+ */
+export function estimateCharAdvanceWidth(
+  ch: string,
+  fontSize: number,
+  boldBoost = 1.0,
+): number {
+  if (ch === ' ') {
+    return fontSize * 0.33;
+  }
+  if (isWideChar(ch)) {
+    return fontSize * 1.02 * boldBoost;
+  }
+  if (NARROW_ASCII.has(ch)) {
+    return fontSize * 0.3 * boldBoost;
+  }
+  if (SEMI_NARROW_ASCII.has(ch)) {
+    return fontSize * 0.4 * boldBoost;
+  }
+  if (WIDE_LOWER_ASCII.has(ch)) {
+    return fontSize * 0.82 * boldBoost;
+  }
+  if (WIDE_UPPER_ASCII.has(ch)) {
+    return fontSize * 0.88 * boldBoost;
+  }
+  const code = ch.codePointAt(0) ?? 0;
+  if ((code >= 65 && code <= 90) || (code >= 48 && code <= 57)) {
+    return fontSize * 0.64 * boldBoost;
+  }
+  return fontSize * 0.55 * boldBoost;
+}
+
 export function defaultMeasureText(text: string, font: string): number {
   const ctx = getBrowserMeasureCtx();
   if (ctx) {
@@ -56,13 +98,7 @@ export function defaultMeasureText(text: string, font: string): number {
     font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
   let total = 0;
   for (const ch of text) {
-    if (ch === ' ') {
-      total += fontSize * 0.34;
-    } else if (isWideChar(ch)) {
-      total += fontSize * 1.02 * boldBoost;
-    } else {
-      total += fontSize * 0.58 * boldBoost;
-    }
+    total += estimateCharAdvanceWidth(ch, fontSize, boldBoost);
   }
   return total;
 }
@@ -294,7 +330,7 @@ export function measureSceneNode(
       contentH += (measuredContentCount - 1) * gap;
     }
 
-    if (autoShape && shapePlugin) {
+    if (autoShape && autoShape.type === 'shape' && shapePlugin) {
       const box = shapePlugin.measureBox(contentW, contentH);
       const shapedM: MeasuredShapeNode = {
         type: 'shape',

@@ -5,9 +5,17 @@ import {
   handRegistry,
   layoutRegistry,
   presentationRegistry,
+  sceneNodeRegistry,
   shapeRegistry,
   transitionRegistry,
 } from './registry';
+
+import {
+  iconNodePlugin,
+  sketchNodePlugin,
+} from './nodes/sketchNodePlugin';
+import { codeNodePlugin } from './nodes/codeNodePlugin';
+import { chartNodePlugin } from './nodes/chartNodePlugin';
 
 import { roundedShapePlugin } from './shapes/roundedShape';
 import { circleShapePlugin } from './shapes/circleShape';
@@ -70,6 +78,12 @@ export function registerBuiltinPlugins(): void {
   shapeRegistry.register(underlineShapePlugin, { override: true });
   shapeRegistry.register(diamondShapePlugin, { override: true });
   shapeRegistry.register(dividerShapePlugin, { override: true });
+
+  // Register custom SceneNode visual widgets
+  sceneNodeRegistry.register(iconNodePlugin, { override: true });
+  sceneNodeRegistry.register(sketchNodePlugin, { override: true });
+  sceneNodeRegistry.register(codeNodePlugin, { override: true });
+  sceneNodeRegistry.register(chartNodePlugin, { override: true });
 
   // Register layouts
   layoutRegistry.register(flowHorizontalPlugin, { override: true });

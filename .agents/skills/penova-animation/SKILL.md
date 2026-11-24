@@ -67,9 +67,14 @@ node ./scripts/render-script.ts path/to/story.penova.md ./out
 node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=svg-sequence-tar --fps=12
 ```
 
-### Step 4: Quality Checklist Before Delivering
+### Step 4: Quality Checklist & Visual Anti-Patterns
 
 1. Verify zero parser warnings from [render-script.ts](./scripts/render-script.ts) — no unknown colors, shapes, or plugins.
 2. Verify every connected label matches its node declaration (use `#id` whenever two nodes share a label or contain `:`, `|`, or `->`).
 3. Include `{say: "..."}` narration cues on key nodes when `subtitles: auto` is enabled so subtitles read as natural spoken sentences.
 4. Include `{pause: 800..1500}` after dense visual reveals so viewers have time to read before the camera pans away.
+
+Avoid these common anti-patterns when producing multi-scene explainers or video renders:
+
+- **Do NOT lock every scene to `chalkboard` + `flow-horizontal` + `camera: static-overview`**: Vary `theme` (`chalkboard`, `blueprint`, `whiteboard`, `letter-paper`), `layout` (`mindmap`, `concept-graph`, `flow-vertical`, `freeform`, `document`), and `camera` (`auto-follow` / `progressive-fit` / `pen-follow`) across scenes so the explainer feels alive rather than 4 identical slide rows.
+- **Do NOT replace Penova's handwriting font with industrial sans-serif (e.g. `Noto Sans`) or inject static PPT header overlays**: Preserve the handwritten feel (`LXGW WenKai` / `KaiTi` / `Segoe Print`) when rasterizing SVGs to PNG/MP4, and use `subtitles: auto` + scene framing instead of pasting static slide chrome on top of the board.

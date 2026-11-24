@@ -128,6 +128,7 @@ export function createCardNode(opts: {
   role?: CardRole;
   color: ChalkColor;
   shape?: NodeShape;
+  icon?: string;
   zone?: string;
   say?: string;
   pause?: number;
@@ -136,6 +137,7 @@ export function createCardNode(opts: {
 }): GroupSceneNode {
   const role: CardRole = opts.role ?? 'concept';
   const shape: NodeShape = opts.shape ?? 'rounded';
+  const cleanIcon = opts.icon?.trim() ? opts.icon.trim().toLowerCase() : undefined;
 
   const titleFontSize =
     role === 'root'
@@ -157,6 +159,20 @@ export function createCardNode(opts: {
       : 210;
 
   const emphasized = role === 'root' || role === 'highlight';
+
+  const iconNode: CustomSceneNode | null = cleanIcon
+    ? {
+        id: `${opts.id}-icon`,
+        type: 'custom:icon',
+        kind: 'icon',
+        name: cleanIcon,
+        color: opts.color,
+        props: {
+          icon: cleanIcon,
+          size: role === 'root' ? 32 : 26,
+        },
+      }
+    : null;
 
   const titleNode: TextSceneNode = {
     id: `${opts.id}-title`,
@@ -197,13 +213,19 @@ export function createCardNode(opts: {
           emphasized,
         };
 
+  const contentNodes: SceneNode[] = [
+    ...(iconNode ? [iconNode] : []),
+    titleNode,
+    ...(subtitleNode ? [subtitleNode] : []),
+  ];
+
   // Child order naturally determines draw order:
   // underline draws after text; enclosed frames draw before text; shape === 'none' omits frame.
   const children: SceneNode[] = !shapeNode
-    ? [titleNode, ...(subtitleNode ? [subtitleNode] : [])]
+    ? contentNodes
     : shape === 'underline'
-    ? [titleNode, ...(subtitleNode ? [subtitleNode] : []), shapeNode]
-    : [shapeNode, titleNode, ...(subtitleNode ? [subtitleNode] : [])];
+    ? [...contentNodes, shapeNode]
+    : [shapeNode, ...contentNodes];
 
   return {
     id: opts.id,
@@ -217,6 +239,7 @@ export function createCardNode(opts: {
       ...(opts.meta ?? {}),
       role,
       isCard: true,
+      ...(cleanIcon ? { icon: cleanIcon } : {}),
       zone: opts.zone,
       ...(opts.say !== undefined ? { say: opts.say } : {}),
       ...(opts.pause !== undefined ? { pause: opts.pause } : {}),
@@ -231,16 +254,19 @@ export function isCardGroupNode(node: SceneNode): node is GroupSceneNode {
   }
   let shapeCount = 0;
   let textCount = 0;
+  let iconCount = 0;
   for (const child of node.children) {
     if (child.type === 'shape') {
       shapeCount++;
     } else if (child.type === 'text') {
       textCount++;
+    } else if (isCustomSceneNode(child) && child.kind === 'icon') {
+      iconCount++;
     } else {
       return false;
     }
   }
-  return shapeCount <= 1 && textCount >= 1 && textCount <= 2;
+  return shapeCount <= 1 && iconCount <= 1 && textCount >= 1 && textCount <= 2;
 }
 
 export function updateCardGroupNode(
@@ -254,6 +280,8 @@ export function updateCardGroupNode(
   const nextRole: CardRole = patch.role ?? current.role;
   const nextColor: ChalkColor = patch.color ?? current.color;
   const nextShape: NodeShape = patch.shape ?? current.shape;
+  const nextIconRaw = patch.icon !== undefined ? patch.icon : current.icon;
+  const nextIcon = nextIconRaw?.trim() ? nextIconRaw.trim().toLowerCase() : undefined;
   const nextZone = patch.zone !== undefined ? patch.zone : current.zone;
   const nextSay = patch.say !== undefined ? patch.say : current.say;
   const nextPause = patch.pause !== undefined ? patch.pause : current.pause;
@@ -282,11 +310,29 @@ export function updateCardGroupNode(
   const existingShape = group.children.find(
     (c): c is ShapeSceneNode => c.type === 'shape'
   );
+  const existingIcon = group.children.find(
+    (c): c is CustomSceneNode => isCustomSceneNode(c) && c.kind === 'icon'
+  );
   const existingTexts = group.children.filter(
     (c): c is TextSceneNode => c.type === 'text'
   );
   const existingTitle = existingTexts[0];
   const existingSub = existingTexts[1];
+
+  const iconNode: CustomSceneNode | null = nextIcon
+    ? {
+        ...(existingIcon ?? {}),
+        id: existingIcon?.id ?? `${group.id}-icon`,
+        type: 'custom:icon',
+        kind: 'icon',
+        name: nextIcon,
+        color: nextColor,
+        props: {
+          icon: nextIcon,
+          size: nextRole === 'root' ? 32 : 26,
+        },
+      }
+    : null;
 
   const titleNode: TextSceneNode = {
     ...(existingTitle ?? {}),
@@ -331,16 +377,23 @@ export function updateCardGroupNode(
           emphasized,
         };
 
+  const contentNodes: SceneNode[] = [
+    ...(iconNode ? [iconNode] : []),
+    titleNode,
+    ...(subtitleNode ? [subtitleNode] : []),
+  ];
+
   const children: SceneNode[] = !shapeNode
-    ? [titleNode, ...(subtitleNode ? [subtitleNode] : [])]
+    ? contentNodes
     : nextShape === 'underline'
-    ? [titleNode, ...(subtitleNode ? [subtitleNode] : []), shapeNode]
-    : [shapeNode, titleNode, ...(subtitleNode ? [subtitleNode] : [])];
+    ? [...contentNodes, shapeNode]
+    : [shapeNode, ...contentNodes];
 
   const nextMeta: Record<string, string | number | boolean | undefined> = {
     ...(group.meta ?? {}),
     role: nextRole,
     isCard: true,
+    icon: nextIcon,
     zone: nextZone || undefined,
     say: nextSay || undefined,
     pause:
@@ -367,6 +420,7 @@ export interface CardSummary {
   role: CardRole;
   color: ChalkColor;
   shape: NodeShape;
+  icon?: string;
   zone?: string;
   say?: string;
   pause?: number;
@@ -386,6 +440,10 @@ export function getCardSummary(node: SceneNode): CardSummary {
     typeof node.meta?.zone === 'string' && node.meta.zone.trim()
       ? node.meta.zone
       : undefined;
+  const iconFromMeta =
+    typeof node.meta?.icon === 'string' && node.meta.icon.trim()
+      ? node.meta.icon.trim()
+      : undefined;
   const say =
     typeof node.meta?.say === 'string' && node.meta.say.trim()
       ? node.meta.say.trim()
@@ -404,6 +462,13 @@ export function getCardSummary(node: SceneNode): CardSummary {
     const frame = node.children.find(
       (c): c is ShapeSceneNode => c.type === 'shape'
     );
+    const iconChild = node.children.find(
+      (c): c is CustomSceneNode => isCustomSceneNode(c) && c.kind === 'icon'
+    );
+    const icon =
+      (typeof iconChild?.props?.icon === 'string' && iconChild.props.icon.trim()
+        ? iconChild.props.icon.trim()
+        : undefined) ?? iconFromMeta;
     const titleText = texts[0]?.text ?? node.name;
     const subText = texts[1]?.text;
     return {
@@ -412,6 +477,7 @@ export function getCardSummary(node: SceneNode): CardSummary {
       role,
       color: texts[0]?.color ?? node.color,
       shape: frame?.shape ?? 'none',
+      icon,
       zone,
       say,
       pause,

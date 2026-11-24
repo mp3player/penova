@@ -11,6 +11,7 @@ import {
   finalizeLayout,
   indexNodesRecursively,
   makePositionedNode,
+  routeObstacleAwareConnector,
   splitSceneNodes,
 } from './shared';
 
@@ -222,27 +223,43 @@ export function computeDagreFlowLayout(
 
   const positionedNodes: PositionedSceneNode[] = [];
   const vertexMap = new Map<string, PositionedSceneNode>();
+  const positionedVertices: PositionedSceneNode[] = [];
 
   for (const node of vertices) {
     const m = measuredMap.get(node.id)!;
     const pt = positions.get(node.id) ?? { x: 0, y: 0 };
     const pNode = makePositionedNode(node, pt.x, pt.y, m, helpers);
     positionedNodes.push(pNode);
+    positionedVertices.push(pNode);
     indexNodesRecursively([pNode], vertexMap);
   }
 
   const bowMap = computeConnectorBowMap(boundConnectors);
+  const routedMidpoints: Point[] = [];
   for (const conn of boundConnectors) {
     const topFrom = ownerVertexIdMap.get(conn.fromId!);
     const topTo = ownerVertexIdMap.get(conn.toId!);
     const rankFrom = topFrom ? ranks.get(topFrom) ?? 0 : 0;
     const rankTo = topTo ? ranks.get(topTo) ?? 0 : 0;
 
-    let bow = bowMap.get(conn.id) ?? 0;
-    if (bow === 0 && (Math.abs(rankTo - rankFrom) > 1 || rankTo < rankFrom)) {
-      bow = rankTo < rankFrom ? -48 : 44;
+    let preferredBow = bowMap.get(conn.id) ?? 0;
+    if (preferredBow === 0 && rankTo < rankFrom) {
+      preferredBow = -48;
     }
-    positionedNodes.push(buildConnectorNode(conn, vertexMap, bow));
+
+    positionedNodes.push(
+      routeObstacleAwareConnector(
+        conn,
+        vertexMap,
+        positionedVertices,
+        ownerVertexIdMap,
+        {
+          preferredBow,
+          preferredSide: rankTo > rankFrom ? -1 : 1,
+          routedMidpoints,
+        }
+      )
+    );
   }
 
   for (const conn of unboundConnectors) {

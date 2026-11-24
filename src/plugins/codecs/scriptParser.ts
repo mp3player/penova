@@ -91,6 +91,48 @@ function escapeCardTitle(raw: string): string {
   return escapeInlineText(raw).replace(/\|/g, '\\|');
 }
 
+function extractTrailingMetaBlock(
+  text: string
+): { body: string; metaRaw: string } | null {
+  const trimmed = text.trimEnd();
+  if (!trimmed.endsWith('}')) return null;
+
+  let quote: '"' | "'" | null = null;
+  let depth = 0;
+  let topStart = -1;
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (quote) {
+      if (ch === '\\') {
+        i++;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '{') {
+      if (depth === 0) topStart = i;
+      depth++;
+    } else if (ch === '}') {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && i === trimmed.length - 1 && topStart !== -1) {
+          return {
+            body: trimmed.slice(0, topStart).trimEnd(),
+            metaRaw: trimmed.slice(topStart + 1, i),
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function findUnescapedPipe(raw: string): number {
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] === '|' && raw[i - 1] !== '\\') {
@@ -122,6 +164,7 @@ function sanitizeIdFragment(label: string): string {
 interface ParsedMetaBlock {
   color?: ChalkColor;
   shape?: NodeShape;
+  icon?: string;
   zone?: string;
   role?: CardRole;
   x?: number;
@@ -238,6 +281,9 @@ function parseMetaBlock(
       } else {
         warnings.push(`第 ${lineNum} 行未知形状 "${val}"`);
       }
+    } else if (key === 'icon' || key === '图标') {
+      const iconVal = unquoteMetaString(val).trim().toLowerCase();
+      if (iconVal) result.icon = iconVal;
     } else if (key === 'role' || key === '角色') {
       const lower = val.toLowerCase() as CardRole;
       if (VALID_ROLES.has(lower)) {
@@ -347,6 +393,7 @@ interface NodeDraft {
   explicitRole?: CardRole;
   color: ChalkColor;
   shape: NodeShape;
+  icon?: string;
   zone?: string;
   say?: string;
   pause?: number;
@@ -527,6 +574,7 @@ export function parseScriptToScene(
           role: prev.summary.role,
           color: prev.summary.color,
           shape: prev.summary.shape,
+          icon: prev.summary.icon,
           zone: prev.summary.zone,
           say: prev.summary.say,
           pause: prev.summary.pause,
@@ -579,10 +627,11 @@ export function parseScriptToScene(
       return;
     }
 
-    const lineWithoutMeta = line.replace(/\s*\{[^}]*\}\s*$/, '');
+    const outerMetaSplit = extractTrailingMetaBlock(line);
+    const lineWithoutMeta = outerMetaSplit ? outerMetaSplit.body : line;
     const hasCardPrefix =
       /^\[[a-zA-Z0-9_:-]+(?:#[a-zA-Z0-9_:-]+)?\]\s+/.test(line);
-    const hasMetaSuffix = /\{[^}]*\}\s*$/.test(line);
+    const hasMetaSuffix = outerMetaSplit !== null;
     const rawPipeIdx = findUnescapedPipe(lineWithoutMeta);
     const arrowIdx = lineWithoutMeta.search(/-\.->|->/);
     const hasPipeBeforeArrow =
@@ -602,10 +651,10 @@ export function parseScriptToScene(
       let rhs = edgeMatch[3].trim();
 
       let edgeMeta: ParsedMetaBlock = {};
-      const edgeMetaMatch = rhs.match(/\{([^}]*)\}\s*$/);
-      if (edgeMetaMatch && edgeMetaMatch.index !== undefined) {
-        edgeMeta = parseMetaBlock(edgeMetaMatch[1], lineNum, warnings, false);
-        rhs = rhs.slice(0, edgeMetaMatch.index).trim();
+      const edgeMetaSplit = extractTrailingMetaBlock(rhs);
+      if (edgeMetaSplit) {
+        edgeMeta = parseMetaBlock(edgeMetaSplit.metaRaw, lineNum, warnings, false);
+        rhs = edgeMetaSplit.body.trim();
       }
 
       let toLabel = rhs;
@@ -733,15 +782,15 @@ export function parseScriptToScene(
     }
 
     let meta: ParsedMetaBlock = {};
-    const metaMatch = body.match(/\{([^}]*)\}\s*$/);
-    if (metaMatch) {
+    const nodeMetaSplit = extractTrailingMetaBlock(body);
+    if (nodeMetaSplit) {
       meta = parseMetaBlock(
-        metaMatch[1],
+        nodeMetaSplit.metaRaw,
         lineNum,
         warnings,
         draftType === 'custom'
       );
-      body = body.slice(0, metaMatch.index).trim();
+      body = nodeMetaSplit.body.trim();
     }
 
     let label = body;
@@ -796,6 +845,7 @@ export function parseScriptToScene(
         explicitRole: meta.role,
         color: meta.color ?? 'white',
         shape: explicitShape ?? meta.shape ?? 'rounded',
+        icon: meta.icon,
         zone: meta.zone,
         say: meta.say,
         pause: meta.pause,
@@ -854,6 +904,7 @@ export function parseScriptToScene(
       existing?.shape ??
       prev?.summary.shape ??
       'rounded';
+    const resolvedIcon = meta.icon ?? existing?.icon ?? prev?.summary.icon;
     const resolvedZone = meta.zone ?? existing?.zone ?? prev?.summary.zone;
     const resolvedSay = meta.say ?? existing?.say ?? prev?.summary.say;
     const resolvedPause = meta.pause ?? existing?.pause ?? prev?.summary.pause;
@@ -872,6 +923,7 @@ export function parseScriptToScene(
       if (meta.role) existing.explicitRole = meta.role;
       existing.color = resolvedColor;
       existing.shape = resolvedShape;
+      if (resolvedIcon !== undefined) existing.icon = resolvedIcon;
       if (subtitle !== undefined) existing.subtitle = subtitle;
       if (resolvedZone !== undefined) existing.zone = resolvedZone;
       if (resolvedSay !== undefined) existing.say = resolvedSay;
@@ -913,6 +965,7 @@ export function parseScriptToScene(
         explicitRole: meta.role,
         color: resolvedColor,
         shape: resolvedShape,
+        icon: resolvedIcon,
         zone: resolvedZone,
         say: resolvedSay,
         pause: resolvedPause,
@@ -1040,18 +1093,25 @@ function isStandardCardGroup(node: GroupSceneNode): boolean {
 
   const shapes: ShapeSceneNode[] = [];
   const texts: TextSceneNode[] = [];
+  let iconCount = 0;
   for (const child of node.children) {
     if (child.visible === false) return false;
     if (child.type === 'shape') {
       shapes.push(child);
     } else if (child.type === 'text') {
       texts.push(child);
+    } else if (
+      isCustomSceneNode(child) &&
+      resolveCustomNodeKind(child) === 'icon' &&
+      child.color === node.color
+    ) {
+      iconCount++;
     } else {
       return false;
     }
   }
 
-  if (shapes.length > 1 || texts.length < 1 || texts.length > 2) {
+  if (shapes.length > 1 || iconCount > 1 || texts.length < 1 || texts.length > 2) {
     return false;
   }
 
@@ -1256,6 +1316,9 @@ export function serializeNodeLines(
     const metaParts: string[] = [`color: ${summary.color}`];
     if (summary.shape !== 'rounded') {
       metaParts.push(`shape: ${summary.shape}`);
+    }
+    if (summary.icon) {
+      metaParts.push(`icon: ${summary.icon}`);
     }
     if (summary.zone) {
       metaParts.push(`group: ${formatMetaString(summary.zone)}`);

@@ -1,3 +1,4 @@
+import { Point } from '../../model/scene';
 import { hashString, mulberry32 } from '../../sdk/random';
 import { buildStrokePath, sketchSegment } from '../../sdk/strokePath';
 import { ShapePlugin } from '../contracts';
@@ -39,18 +40,22 @@ export const diamondShapePlugin: ShapePlugin = {
       [left, top],
     ];
 
-    return edges.map(([a, b], idx) =>
-      buildStrokePath(
-        `${id}-diamond-${idx}`,
-        sketchSegment(a, b, rand, 1.5, 14),
-        {
-          width: baseWidth,
-          color,
-          opacity: 0.94,
-          dashed,
-          speedFactor: 1.15,
-        }
-      )
-    );
+    const pts: Point[] = [];
+    edges.forEach(([a, b], idx) => {
+      const seg = sketchSegment(a, b, rand, 1.5, 14);
+      pts.push(...(idx === 0 ? seg : seg.slice(1)));
+    });
+
+    return [
+      buildStrokePath(`${id}-diamond-1`, pts, {
+        width: baseWidth,
+        color,
+        opacity: 0.94,
+        fillOpacity: 1,
+        surfaceShadow: true,
+        dashed,
+        speedFactor: 1.15,
+      }),
+    ];
   },
 };

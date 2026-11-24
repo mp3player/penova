@@ -34,7 +34,7 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
   onAddChildToGroup,
 }) => {
   const { t, pluginName } = useI18n();
-  const isCard = isCardGroupNode(node);
+  const isCard: boolean = isCardGroupNode(node);
   const summary = getCardSummary(node);
   const zoneVal = typeof node.meta?.zone === 'string' ? node.meta.zone : '';
   const sayVal = typeof node.meta?.say === 'string' ? node.meta.say : '';

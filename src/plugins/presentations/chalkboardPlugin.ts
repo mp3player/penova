@@ -15,19 +15,29 @@ const CHALKBOARD_FONT =
 const palette: ThemePalette = {
   id: 'chalkboard',
   label: 'Chalkboard',
-  bgPrimary: '#192e25',
-  bgSecondary: '#0f1d17',
-  vignetteColor: 'rgba(5, 11, 8, 0.52)',
-  subtitleColor: '#cdd9cf',
-  labelPillBg: 'rgba(17, 33, 26, 0.88)',
-  labelPillBorder: 'rgba(242, 244, 238, 0.16)',
+  bgPrimary: '#1e2c26',
+  bgSecondary: '#131d19',
+  vignetteColor: 'rgba(6, 11, 9, 0.56)',
+  subtitleColor: '#d2ddd6',
+  labelPillBg: 'rgba(20, 32, 27, 0.92)',
+  labelPillBorder: 'rgba(244, 241, 234, 0.18)',
+  cardFillOpacity: 0.13,
+  zoneFillOpacity: 0.06,
+  cardShadow: {
+    dx: 3,
+    dy: 4,
+    color: 'rgba(0, 0, 0, 0.24)',
+  },
+  subtitleBg: 'rgba(13, 21, 18, 0.80)',
+  subtitleBorder: 'rgba(244, 241, 234, 0.16)',
+  subtitleTextColor: '#f4f1ea',
   colors: {
-    white: '#f2f4ee',
-    yellow: '#fde06b',
-    cyan: '#7dd8f7',
-    pink: '#ff9bb3',
-    green: '#8be8a8',
-    orange: '#ffb870',
+    white: '#f4f1ea',
+    yellow: '#f3cf7a',
+    cyan: '#89c9dc',
+    pink: '#e89ca3',
+    green: '#98cf9e',
+    orange: '#ebaa76',
   },
 };
 
@@ -130,14 +140,23 @@ export const chalkboardPlugin: PresentationPlugin = {
 
       const ledgeH = Math.max(8, Math.round(h * 0.012));
       const ledgeGrad = c.createLinearGradient(0, h - ledgeH, 0, h);
-      ledgeGrad.addColorStop(0, '#4f3723');
-      ledgeGrad.addColorStop(0.5, '#3b2819');
-      ledgeGrad.addColorStop(1, '#26190f');
+      ledgeGrad.addColorStop(0, '#5c4028');
+      ledgeGrad.addColorStop(0.5, '#3e2a19');
+      ledgeGrad.addColorStop(1, '#24170d');
       c.fillStyle = ledgeGrad;
       c.fillRect(0, h - ledgeH, w, ledgeH);
 
-      c.fillStyle = 'rgba(255, 232, 198, 0.14)';
+      c.fillStyle = 'rgba(255, 238, 210, 0.16)';
       c.fillRect(0, h - ledgeH, w, 1);
+
+      c.strokeStyle = 'rgba(244, 241, 234, 0.05)';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(0.5, h - ledgeH);
+      c.lineTo(0.5, 0.5);
+      c.lineTo(w - 0.5, 0.5);
+      c.lineTo(w - 0.5, h - ledgeH);
+      c.stroke();
     });
   },
   drawStroke(ctx, stroke, progress) {

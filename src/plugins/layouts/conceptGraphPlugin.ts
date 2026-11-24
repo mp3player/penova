@@ -17,6 +17,7 @@ import {
   finalizeLayout,
   indexNodesRecursively,
   makePositionedNode,
+  routeObstacleAwareConnector,
   splitSceneNodes,
 } from './shared';
 
@@ -31,9 +32,8 @@ export const conceptGraphPlugin: LayoutPlugin = {
   textCodec: graphScriptCodec,
   deriveSteps: deriveTeachingSteps,
   compute(scene, helpers) {
-    const { vertices, boundConnectors, unboundConnectors } = splitSceneNodes(
-      scene.nodes
-    );
+    const { vertices, ownerVertexIdMap, boundConnectors, unboundConnectors } =
+      splitSceneNodes(scene.nodes);
 
     if (vertices.length === 0) {
       const emptyMap = new Map<string, PositionedSceneNode>();
@@ -172,6 +172,7 @@ export const conceptGraphPlugin: LayoutPlugin = {
 
     const positionedNodes: PositionedSceneNode[] = [];
     const vertexMap = new Map<string, PositionedSceneNode>();
+    const positionedVertices: PositionedSceneNode[] = [];
     const zones: GroupBox[] = [];
 
     packedGroups.forEach((pg, idx) => {
@@ -196,6 +197,7 @@ export const conceptGraphPlugin: LayoutPlugin = {
           helpers
         );
         positionedNodes.push(pNode);
+        positionedVertices.push(pNode);
         indexNodesRecursively([pNode], vertexMap);
 
         minX = Math.min(minX, pNode.cx - pNode.width / 2);
@@ -216,6 +218,7 @@ export const conceptGraphPlugin: LayoutPlugin = {
     });
 
     const bowMap = computeConnectorBowMap(boundConnectors);
+    const routedMidpoints: Point[] = [];
     for (const conn of boundConnectors) {
       const fromNode = vertexMap.get(conn.fromId!)!;
       const toNode = vertexMap.get(conn.toId!)!;
@@ -227,7 +230,18 @@ export const conceptGraphPlugin: LayoutPlugin = {
       if (bow === 0 && dist > 320) {
         bow = 28;
       }
-      positionedNodes.push(buildConnectorNode(conn, vertexMap, bow));
+      positionedNodes.push(
+        routeObstacleAwareConnector(
+          conn,
+          vertexMap,
+          positionedVertices,
+          ownerVertexIdMap,
+          {
+            preferredBow: bow,
+            routedMidpoints,
+          }
+        )
+      );
     }
 
     for (const conn of unboundConnectors) {

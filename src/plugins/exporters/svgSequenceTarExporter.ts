@@ -27,10 +27,11 @@ export const svgSequenceTarExporterPlugin: ExportPlugin = {
 
     const width = source.width;
     const height = source.height;
-    const frameIntervalMs = 1000 / SVG_TAR_EXPORT_FPS;
+    const exportFps = Math.max(1, Math.round(source.fps || SVG_TAR_EXPORT_FPS));
+    const frameIntervalMs = 1000 / exportFps;
     const totalFrames = Math.max(
       1,
-      Math.ceil((source.totalDurationMs / 1000) * SVG_TAR_EXPORT_FPS)
+      Math.ceil((source.totalDurationMs / 1000) * exportFps)
     );
 
     const entries: TarEntry[] = [];
@@ -61,11 +62,11 @@ export const svgSequenceTarExporterPlugin: ExportPlugin = {
       aspectRatio: source.aspectRatio,
       width,
       height,
-      fps: SVG_TAR_EXPORT_FPS,
+      fps: exportFps,
       frameFormat: 'svg',
       frameCount,
       totalDurationMs: source.totalDurationMs,
-      ffmpegCommand: `for f in frames/*.svg; do rsvg-convert "$f" -o "\${f%.svg}.png"; done && ffmpeg -framerate ${SVG_TAR_EXPORT_FPS} -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4`,
+      ffmpegCommand: `for f in frames/*.svg; do rsvg-convert "$f" -o "\${f%.svg}.png"; done && ffmpeg -framerate ${exportFps} -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4`,
     };
     entries.push({
       name: 'manifest.json',
@@ -76,7 +77,7 @@ export const svgSequenceTarExporterPlugin: ExportPlugin = {
       data: encoder.encode(
         [
           `Penova Platform-Agnostic Vector Frame Bundle · ${source.title}`,
-          `Resolution: ${width}x${height}, FPS: ${SVG_TAR_EXPORT_FPS} fps, Frames: ${frameCount}`,
+          `Resolution: ${width}x${height}, FPS: ${exportFps} fps, Frames: ${frameCount}`,
           '',
           'Rasterize SVG frames (e.g. via rsvg-convert / resvg / Inkscape) and encode MP4 with FFmpeg:',
           manifest.ffmpegCommand,
@@ -91,7 +92,7 @@ export const svgSequenceTarExporterPlugin: ExportPlugin = {
       blob: new Blob([tarBytes.slice()], { type: 'application/x-tar' }),
       filename: safeFilename(source.title, 'tar'),
       mimeType: 'application/x-tar',
-      summary: `${frameCount} SVG frames @ ${SVG_TAR_EXPORT_FPS}fps`,
+      summary: `${frameCount} SVG frames @ ${exportFps}fps`,
     };
   },
 };

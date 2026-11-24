@@ -1,4 +1,4 @@
-import { deriveTeachingSteps } from '../../model/scene';
+import { deriveTeachingSteps, Point } from '../../model/scene';
 import { graphScriptCodec } from '../codecs/scriptParser';
 import { LayoutPlugin, PositionedSceneNode } from '../contracts';
 import {
@@ -7,6 +7,7 @@ import {
   finalizeLayout,
   indexNodesRecursively,
   makePositionedNode,
+  routeObstacleAwareConnector,
   splitSceneNodes,
 } from './shared';
 
@@ -21,11 +22,11 @@ export const freeformLayoutPlugin: LayoutPlugin = {
   textCodec: graphScriptCodec,
   deriveSteps: deriveTeachingSteps,
   compute(scene, helpers) {
-    const { vertices, boundConnectors, unboundConnectors } = splitSceneNodes(
-      scene.nodes
-    );
+    const { vertices, ownerVertexIdMap, boundConnectors, unboundConnectors } =
+      splitSceneNodes(scene.nodes);
 
     const positionedNodes: PositionedSceneNode[] = [];
+    const positionedVertices: PositionedSceneNode[] = [];
     const nodeMap = new Map<string, PositionedSceneNode>();
 
     if (vertices.length > 0) {
@@ -80,14 +81,25 @@ export const freeformLayoutPlugin: LayoutPlugin = {
           helpers
         );
         positionedNodes.push(pNode);
+        positionedVertices.push(pNode);
         indexNodesRecursively([pNode], nodeMap);
       });
     }
 
     const bowMap = computeConnectorBowMap(boundConnectors);
+    const routedMidpoints: Point[] = [];
     for (const conn of boundConnectors) {
       positionedNodes.push(
-        buildConnectorNode(conn, nodeMap, bowMap.get(conn.id) ?? 0)
+        routeObstacleAwareConnector(
+          conn,
+          nodeMap,
+          positionedVertices,
+          ownerVertexIdMap,
+          {
+            preferredBow: bowMap.get(conn.id) ?? 0,
+            routedMidpoints,
+          }
+        )
       );
     }
     for (const conn of unboundConnectors) {

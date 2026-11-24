@@ -12,19 +12,38 @@ const LETTER_PAPER_FONT =
 const palette: ThemePalette = {
   id: 'letter-paper',
   label: 'Letter Paper',
-  bgPrimary: '#fcf6e8',
-  bgSecondary: '#efe2c6',
-  vignetteColor: 'rgba(138, 108, 68, 0.2)',
-  subtitleColor: '#6b5742',
-  labelPillBg: 'rgba(255, 250, 238, 0.94)',
-  labelPillBorder: 'rgba(139, 107, 74, 0.28)',
+  bgPrimary: '#fdf8ee',
+  bgSecondary: '#f3e8d2',
+  vignetteColor: 'rgba(128, 98, 62, 0.16)',
+  subtitleColor: '#5c4d3c',
+  labelPillBg: 'rgba(253, 248, 238, 0.96)',
+  labelPillBorder: 'rgba(128, 98, 62, 0.24)',
+  cardFillOpacity: 0.76,
+  zoneFillOpacity: 0.05,
+  cardFillColors: {
+    white: '#fffdf7',
+    yellow: '#fbf0d1',
+    cyan: '#e4edf7',
+    pink: '#f8e2e4',
+    green: '#e3f0e8',
+    orange: '#fae7d7',
+  },
+  cardShadow: {
+    dx: 3,
+    dy: 4,
+    color: 'rgba(108, 82, 52, 0.09)',
+  },
+  preferNeutralCardTitle: true,
+  subtitleBg: 'rgba(253, 248, 238, 0.94)',
+  subtitleBorder: 'rgba(128, 98, 62, 0.26)',
+  subtitleTextColor: '#1f2733',
   colors: {
-    white: '#162033',
-    yellow: '#8a5a00',
-    cyan: '#1d409c',
-    pink: '#a61b1b',
-    green: '#145a2f',
-    orange: '#9c3f08',
+    white: '#1f2733',
+    yellow: '#916216',
+    cyan: '#264c7d',
+    pink: '#9e3039',
+    green: '#255941',
+    orange: '#a64d24',
   },
 };
 
@@ -93,7 +112,7 @@ export const letterPaperPlugin: PresentationPlugin = {
       // Subtle ruled stationery horizontal lines (scales evenly across preview & 1080p export)
       const linePitch = Math.max(26, Math.round(Math.min(w, h) * 0.068));
       const firstRuleY = Math.round(h * 0.115);
-      c.strokeStyle = 'rgba(155, 130, 96, 0.2)';
+      c.strokeStyle = 'rgba(150, 126, 94, 0.18)';
       c.lineWidth = Math.max(1, h / 650);
       c.beginPath();
       for (let y = firstRuleY; y < h - linePitch * 0.7; y += linePitch) {
@@ -103,9 +122,17 @@ export const letterPaperPlugin: PresentationPlugin = {
       }
       c.stroke();
 
+      // Delicate double top header rule
+      const headerY = Math.round(firstRuleY - 4) + 0.5;
+      c.strokeStyle = 'rgba(150, 126, 94, 0.15)';
+      c.beginPath();
+      c.moveTo(0, headerY);
+      c.lineTo(w, headerY);
+      c.stroke();
+
       // Classic double terracotta left margin lines
       const marginX = Math.max(34, Math.round(w * 0.082));
-      c.strokeStyle = 'rgba(196, 104, 94, 0.26)';
+      c.strokeStyle = 'rgba(194, 96, 84, 0.24)';
       c.lineWidth = Math.max(1, h / 650);
       c.beginPath();
       c.moveTo(marginX + 0.5, 0);

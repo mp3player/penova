@@ -180,7 +180,8 @@ describe('exporters infrastructure & plugins', () => {
     expect(svgPoster.filename).toBe('Headless_Pipeline_Demo.svg');
     const svgText = await svgPoster.blob.text();
     expect(svgText).toContain('<svg');
-    expect(svgText).toContain('Plain Text');
+    expect(svgText).toContain('>Plain</text>');
+    expect(svgText).toContain('>Text</text>');
 
     // 2. Direct script -> svg-sequence-tar export (headless default when MediaRecorder is unavailable)
     const svgTar = await exportScriptToVideo(script);
@@ -258,6 +259,6 @@ describe('exporters infrastructure & plugins', () => {
     });
     const lpCompiled = compileProjectTimeline(letterProj);
     const lpSvg = renderProjectFrameSvg(lpCompiled, 500, 1280, 720);
-    expect(lpSvg).toContain('rgba(196, 104, 94, 0.26)');
+    expect(lpSvg).toContain('rgba(194, 96, 84, 0.24)');
   });
 });

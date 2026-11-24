@@ -12,11 +12,15 @@ import {
 import {
   buildConnectorNode,
   clipPointToNodeBorder,
+  collectObstaclesForConnector,
   computeConnectorBowMap,
+  countPolylineCollisions,
   createPositionedConnectorFromPoints,
   finalizeLayout,
   indexNodesRecursively,
   makePositionedNode,
+  pointHitsAnyObstacle,
+  routeObstacleAwareConnector,
   sampleCubicBezier,
   splitSceneNodes,
 } from './shared';
@@ -228,6 +232,7 @@ export const mindmapPlugin: LayoutPlugin = {
 
     const positionedNodes: PositionedSceneNode[] = [];
     const vertexMap = new Map<string, PositionedSceneNode>();
+    const positionedVertices: PositionedSceneNode[] = [];
     for (const n of vertices) {
       const pt = baseCenters.get(n.id)!;
       const pNode = makePositionedNode(
@@ -238,14 +243,21 @@ export const mindmapPlugin: LayoutPlugin = {
         helpers
       );
       positionedNodes.push(pNode);
+      positionedVertices.push(pNode);
       indexNodesRecursively([pNode], vertexMap);
     }
 
     const bowMap = computeConnectorBowMap(boundConnectors);
+    const routedMidpoints: Point[] = [];
 
     for (const conn of boundConnectors) {
       const fromNode = vertexMap.get(conn.fromId!)!;
       const toNode = vertexMap.get(conn.toId!)!;
+      const obstacles = collectObstaclesForConnector(
+        conn,
+        positionedVertices,
+        ownerVertexIdMap
+      );
 
       if (treeEdgeSet.has(`${conn.fromId}->${conn.toId}`)) {
         const dir: 1 | -1 =
@@ -264,11 +276,39 @@ export const mindmapPlugin: LayoutPlugin = {
         const c1 = { x: start.x + dir * spanX, y: start.y };
         const c2 = { x: end.x - dir * spanX, y: end.y };
         const pts = sampleCubicBezier(start, c1, c2, end, 20);
+        const treeEdge = createPositionedConnectorFromPoints(conn, pts);
 
-        positionedNodes.push(createPositionedConnectorFromPoints(conn, pts));
+        const hitsObstacle =
+          countPolylineCollisions(pts, obstacles, 6) > 0 ||
+          (treeEdge.labelPoint &&
+            pointHitsAnyObstacle(treeEdge.labelPoint, obstacles, 20, 10));
+
+        positionedNodes.push(
+          hitsObstacle
+            ? routeObstacleAwareConnector(
+                conn,
+                vertexMap,
+                positionedVertices,
+                ownerVertexIdMap,
+                {
+                  preferredBow: bowMap.get(conn.id) ?? 0,
+                  routedMidpoints,
+                }
+              )
+            : treeEdge
+        );
       } else {
         positionedNodes.push(
-          buildConnectorNode(conn, vertexMap, bowMap.get(conn.id) || 44)
+          routeObstacleAwareConnector(
+            conn,
+            vertexMap,
+            positionedVertices,
+            ownerVertexIdMap,
+            {
+              preferredBow: bowMap.get(conn.id) || 44,
+              routedMidpoints,
+            }
+          )
         );
       }
     }

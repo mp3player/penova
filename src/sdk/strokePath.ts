@@ -7,6 +7,8 @@ export interface StrokePath {
   width: number;
   color: ChalkColor;
   opacity: number;
+  fillOpacity?: number;
+  surfaceShadow?: boolean;
   dashed?: boolean;
   speedFactor?: number;
   totalLength: number;
@@ -20,6 +22,8 @@ export function buildStrokePath(
     width: number;
     color: ChalkColor;
     opacity?: number;
+    fillOpacity?: number;
+    surfaceShadow?: boolean;
     dashed?: boolean;
     speedFactor?: number;
   }
@@ -45,6 +49,8 @@ export function buildStrokePath(
     width: options.width,
     color: options.color,
     opacity: options.opacity ?? 0.94,
+    fillOpacity: options.fillOpacity,
+    surfaceShadow: options.surfaceShadow,
     dashed: options.dashed,
     speedFactor: options.speedFactor ?? 1,
     totalLength: total,

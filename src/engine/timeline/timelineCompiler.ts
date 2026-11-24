@@ -285,7 +285,7 @@ export function compileTimeline(
       }
     }
 
-    const compilePositionedNode = (curr: PositionedSceneNode) => {
+    const compilePositionedNode = (curr: PositionedSceneNode, insideCard = false) => {
       if (curr.node.visible === false) return;
 
       if (curr.node.type === 'shape') {
@@ -334,6 +334,10 @@ export function compileTimeline(
         const lineFont = `${weight} ${m.fontSize}px ${boardFontFamily}`;
         const boxLeftX = curr.cx - curr.width / 2;
         const msPerChar = m.fontSize >= 20 ? 122 : 88;
+        const textColor: ChalkColor =
+          insideCard && presentation.palette.preferNeutralCardTitle
+            ? 'white'
+            : curr.node.color;
         let yCursor = curr.cy - m.height / 2;
 
         m.lines.forEach((line, lineIdx) => {
@@ -349,7 +353,7 @@ export function compileTimeline(
             lineIndent,
             lineFont,
             m.fontSize,
-            curr.node.color,
+            textColor,
             scene.theme,
             itemCursor,
             msPerChar
@@ -363,8 +367,9 @@ export function compileTimeline(
       }
 
       if (curr.node.type === 'group') {
+        const nextInsideCard = insideCard || curr.node.meta?.isCard === true;
         for (const child of curr.children ?? []) {
-          compilePositionedNode(child);
+          compilePositionedNode(child, nextInsideCard);
         }
         return;
       }

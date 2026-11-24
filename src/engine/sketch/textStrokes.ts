@@ -6,6 +6,7 @@ import {
   presentationRegistry,
 } from '../../plugins/registry';
 import { hash2D, hashString } from '../../sdk/random';
+import { estimateCharAdvanceWidth } from '../layout/textMeasure';
 
 export type { GlyphStrokeSegment };
 
@@ -200,12 +201,7 @@ export function getGlyphStrokeData(
   if (!mCtx || typeof document === 'undefined') {
     const boldBoost =
       font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
-    const advanceWidth =
-      char === ' '
-        ? fontSize * 0.34
-        : isWide(char)
-        ? fontSize * 1.02 * boldBoost
-        : fontSize * 0.58 * boldBoost;
+    const advanceWidth = estimateCharAdvanceWidth(char, fontSize, boldBoost);
     const padX = Math.ceil(fontSize * 0.24);
     const width = Math.max(8, advanceWidth + padX * 2);
     const height = Math.max(12, fontSize * 1.48);

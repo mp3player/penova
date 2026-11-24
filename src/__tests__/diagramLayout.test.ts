@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { computeDiagramLayout } from '../engine/layout/diagramLayout';
+import {
+  computeDiagramLayout,
+} from '../engine/layout/diagramLayout';
 import { defaultMeasureText, measureSceneNode } from '../engine/layout/textMeasure';
 import { PositionedSceneNode } from '../plugins/contracts';
+import { segmentIntersectsBox } from '../plugins/layouts/shared';
 import {
   createCardNode,
   createConnectorNode,
@@ -214,6 +217,59 @@ describe('diagramLayout', () => {
       const line0Width = defaultMeasureText(measured.lines[0], measured.font);
       expect(line0Width + measured.indentPx).toBeLessThanOrEqual(maxWidth + 1);
       expect(measured.width).toBe(maxWidth);
+    }
+  });
+
+  it('routes connectors around non-endpoint vertices with zero segment or label collisions across all presets and graph layouts', () => {
+    const graphModes: LayoutMode[] = [
+      'flow-horizontal',
+      'flow-vertical',
+      'mindmap',
+      'concept-graph',
+      'freeform',
+    ];
+
+    for (const preset of PRESET_SCENES) {
+      for (const mode of graphModes) {
+        const scene = {
+          ...cloneScene(preset),
+          layoutMode: mode,
+        };
+        const layout = computeDiagramLayout(scene);
+        const vertices = layout.nodes.filter((n) => n.node.type !== 'connector');
+        const connectors = layout.nodes.filter((n) => n.node.type === 'connector');
+
+        for (const conn of connectors) {
+          if (conn.node.type !== 'connector') continue;
+          const pts = conn.routedPoints ?? [];
+          for (const box of vertices) {
+            if (box.id === conn.node.fromId || box.id === conn.node.toId) continue;
+            const minX = box.cx - box.width / 2;
+            const maxX = box.cx + box.width / 2;
+            const minY = box.cy - box.height / 2;
+            const maxY = box.cy + box.height / 2;
+
+            for (let i = 1; i < pts.length; i++) {
+              expect(
+                segmentIntersectsBox(pts[i - 1], pts[i], minX, minY, maxX, maxY),
+                `Connector "${conn.id}" intersects "${box.id}" in ${preset.id}/${mode}`
+              ).toBe(false);
+            }
+
+            if (conn.labelPoint) {
+              const insideLabel =
+                conn.labelPoint.x >= minX &&
+                conn.labelPoint.x <= maxX &&
+                conn.labelPoint.y >= minY &&
+                conn.labelPoint.y <= maxY;
+              expect(
+                insideLabel,
+                `Label of "${conn.id}" overlaps "${box.id}" in ${preset.id}/${mode}`
+              ).toBe(false);
+            }
+          }
+        }
+      }
     }
   });
 });

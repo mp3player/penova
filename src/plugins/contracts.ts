@@ -23,6 +23,14 @@ export interface ThemePalette {
   subtitleColor: string;
   labelPillBg: string;
   labelPillBorder: string;
+  cardFillOpacity?: number;
+  zoneFillOpacity?: number;
+  cardFillColors?: Partial<Record<ChalkColor, string>>;
+  cardShadow?: { dx: number; dy: number; color: string };
+  preferNeutralCardTitle?: boolean;
+  subtitleBg?: string;
+  subtitleBorder?: string;
+  subtitleTextColor?: string;
   colors: Record<ChalkColor, string>;
 }
 

@@ -54,6 +54,8 @@ export const cloudShapePlugin: ShapePlugin = {
         width: baseWidth,
         color,
         opacity: 0.92,
+        fillOpacity: 1,
+        surfaceShadow: true,
         dashed,
         speedFactor: 1.15,
       }),

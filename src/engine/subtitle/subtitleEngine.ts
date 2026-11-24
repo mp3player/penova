@@ -1,6 +1,7 @@
 import { getCardSummary } from '../../model/builders';
 import { SubtitleCue } from '../../model/project';
 import { findNodeById, ThemeId } from '../../model/scene';
+import { presentationRegistry } from '../../plugins/registry';
 import { wrapText } from '../layout/textMeasure';
 import { CompiledProjectTimeline } from '../timeline/projectTimeline';
 
@@ -143,11 +144,12 @@ export function drawSubtitleOverlay(
   width: number,
   height: number,
   text: string,
-  _theme?: ThemeId
+  theme?: ThemeId
 ): void {
   const trimmed = text.trim();
   if (!trimmed) return;
 
+  const palette = presentationRegistry.getOrDefault(theme ?? 'chalkboard').palette;
   const fontSize = Math.max(13, Math.round(height * 0.032));
   const lineHeight = Math.round(fontSize * 1.32);
   const maxTextW = Math.max(180, width * 0.78);
@@ -178,15 +180,15 @@ export function drawSubtitleOverlay(
   const x = (width - boxW) / 2;
   const y = centerY - boxH / 2;
 
-  ctx.fillStyle = 'rgba(11, 15, 22, 0.78)';
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+  ctx.fillStyle = palette.subtitleBg ?? 'rgba(11, 15, 22, 0.78)';
+  ctx.strokeStyle = palette.subtitleBorder ?? 'rgba(255, 255, 255, 0.2)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(x, y, boxW, boxH, 9);
+  ctx.roundRect(x, y, boxW, boxH, 10);
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = '#f8fafc';
+  ctx.fillStyle = palette.subtitleTextColor ?? '#f8fafc';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   lines.forEach((line, idx) => {

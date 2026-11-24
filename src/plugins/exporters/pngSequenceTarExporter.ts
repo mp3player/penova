@@ -27,10 +27,11 @@ export const pngSequenceTarExporterPlugin: ExportPlugin = {
     const height = source.height || (source.aspectRatio === '9:16' ? 1920 : 1080);
     const { canvas, ctx } = createOffscreenCanvas(width, height);
 
-    const frameIntervalMs = 1000 / TAR_EXPORT_FPS;
+    const exportFps = Math.max(1, Math.round(source.fps || TAR_EXPORT_FPS));
+    const frameIntervalMs = 1000 / exportFps;
     const totalFrames = Math.max(
       1,
-      Math.ceil((source.totalDurationMs / 1000) * TAR_EXPORT_FPS)
+      Math.ceil((source.totalDurationMs / 1000) * exportFps)
     );
 
     const entries: TarEntry[] = [];
@@ -66,10 +67,10 @@ export const pngSequenceTarExporterPlugin: ExportPlugin = {
       aspectRatio: source.aspectRatio,
       width,
       height,
-      fps: TAR_EXPORT_FPS,
+      fps: exportFps,
       frameCount,
       totalDurationMs: source.totalDurationMs,
-      ffmpegCommand: `ffmpeg -framerate ${TAR_EXPORT_FPS} -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4`,
+      ffmpegCommand: `ffmpeg -framerate ${exportFps} -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4`,
     };
     entries.push({
       name: 'manifest.json',
@@ -80,13 +81,13 @@ export const pngSequenceTarExporterPlugin: ExportPlugin = {
       data: encoder.encode(
         [
           `Penova Offline Lossless Frame Bundle · ${source.title}`,
-          `Resolution: ${width}x${height}, FPS: ${TAR_EXPORT_FPS} fps, Frames: ${frameCount}`,
+          `Resolution: ${width}x${height}, FPS: ${exportFps} fps, Frames: ${frameCount}`,
           '',
           'Extract this archive and run the following command in the extracted folder to build MP4:',
           manifest.ffmpegCommand,
           '',
           'To mux a local voiceover or background audio track (e.g. audio.mp3):',
-          `ffmpeg -framerate ${TAR_EXPORT_FPS} -i frames/frame_%05d.png -i audio.mp3 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest output_with_audio.mp4`,
+          `ffmpeg -framerate ${exportFps} -i frames/frame_%05d.png -i audio.mp3 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest output_with_audio.mp4`,
         ].join('\n')
       ),
     });
@@ -100,7 +101,7 @@ export const pngSequenceTarExporterPlugin: ExportPlugin = {
       }),
       filename: safeFilename(source.title, 'tar'),
       mimeType: 'application/x-tar',
-      summary: `${frameCount} frames @ ${TAR_EXPORT_FPS}fps`,
+      summary: `${frameCount} frames @ ${exportFps}fps`,
     };
   },
 };

@@ -11,19 +11,38 @@ const WHITEBOARD_FONT =
 const palette: ThemePalette = {
   id: 'whiteboard',
   label: 'Whiteboard',
-  bgPrimary: '#fbfcfe',
-  bgSecondary: '#eef2f6',
-  vignetteColor: 'rgba(148, 163, 184, 0.14)',
-  subtitleColor: '#475569',
-  labelPillBg: 'rgba(255, 255, 255, 0.92)',
-  labelPillBorder: 'rgba(30, 41, 59, 0.15)',
+  bgPrimary: '#faf9f5',
+  bgSecondary: '#f2efe9',
+  vignetteColor: 'rgba(120, 113, 108, 0.10)',
+  subtitleColor: '#4b5563',
+  labelPillBg: 'rgba(250, 249, 245, 0.96)',
+  labelPillBorder: 'rgba(35, 38, 41, 0.14)',
+  cardFillOpacity: 0.92,
+  zoneFillOpacity: 0.055,
+  cardFillColors: {
+    white: '#ffffff',
+    yellow: '#fef3c7',
+    cyan: '#e0f2fe',
+    pink: '#ffe4e6',
+    green: '#dcfce7',
+    orange: '#ffedd5',
+  },
+  cardShadow: {
+    dx: 4,
+    dy: 5,
+    color: 'rgba(35, 38, 41, 0.08)',
+  },
+  preferNeutralCardTitle: true,
+  subtitleBg: 'rgba(255, 254, 250, 0.93)',
+  subtitleBorder: 'rgba(35, 38, 41, 0.15)',
+  subtitleTextColor: '#1f2421',
   colors: {
-    white: '#1e293b',
-    yellow: '#ca8a04',
-    cyan: '#0284c7',
-    pink: '#db2777',
-    green: '#16a34a',
-    orange: '#ea580c',
+    white: '#232629',
+    yellow: '#b7791f',
+    cyan: '#1d6fa5',
+    pink: '#be3a68',
+    green: '#2b7a57',
+    orange: '#c85a28',
   },
 };
 
@@ -42,11 +61,11 @@ export const whiteboardPlugin: PresentationPlugin = {
     drawCachedSurface(ctx, 'whiteboard', width, height, (c, w, h) => {
       paintRadialBackdrop(c, w, h, palette);
 
-      c.fillStyle = 'rgba(148, 163, 184, 0.22)';
-      const pitch = 28;
+      c.fillStyle = 'rgba(120, 113, 108, 0.18)';
+      const pitch = 24;
       for (let y = pitch; y < h; y += pitch) {
         for (let x = pitch; x < w; x += pitch) {
-          c.fillRect(x, y, 1.3, 1.3);
+          c.fillRect(x, y, 1.4, 1.4);
         }
       }
 

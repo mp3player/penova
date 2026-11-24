@@ -45,6 +45,7 @@ export function generateGroupFrameStrokes(zone: GroupBox): StrokePath[] {
       width: 2.1,
       color: zone.color,
       opacity: 0.52,
+      fillOpacity: 1,
       dashed: true,
       speedFactor: 1.45,
     }),

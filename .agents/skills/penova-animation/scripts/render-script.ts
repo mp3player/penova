@@ -175,6 +175,8 @@ interface StrokePath {
   width: number;
   color: ChalkColor;
   opacity: number;
+  fillOpacity?: number;
+  surfaceShadow?: boolean;
   dashed?: boolean;
   speedFactor?: number;
   totalLength: number;
@@ -192,6 +194,14 @@ interface ThemePalette {
   subtitleColor: string;
   labelPillBg: string;
   labelPillBorder: string;
+  cardFillOpacity?: number;
+  zoneFillOpacity?: number;
+  cardFillColors?: Partial<Record<ChalkColor, string>>;
+  cardShadow?: { dx: number; dy: number; color: string };
+  preferNeutralCardTitle?: boolean;
+  subtitleBg?: string;
+  subtitleBorder?: string;
+  subtitleTextColor?: string;
   colors: Record<ChalkColor, string>;
 }
 
@@ -690,6 +700,105 @@ interface SceneNodePlugin {
   ): Point;
 }
 
+// --- Types: src/sdk/workflowDag.ts ---
+
+interface WorkflowTraceEntry {
+  nodeId: string;
+  kind: 'atomic' | 'composite';
+  durationMs: number;
+}
+
+interface WorkflowContext {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  overrides?: Map<string, WorkflowNode<any, any>>;
+  trace?: WorkflowTraceEntry[];
+}
+
+interface WorkflowNode<I, O> {
+  id: string;
+  kind: 'atomic' | 'composite';
+  run(input: I, ctx?: WorkflowContext): O;
+}
+
+interface DagNodeSpec {
+  id: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  node: WorkflowNode<any, any>;
+  from: string[];
+}
+
+interface WorkflowGraphSpec {
+  id: string;
+  nodes: DagNodeSpec[];
+  output: string;
+}
+
+// --- Types: src/sdk/sketchPipeline.ts ---
+
+interface SketchRawPolyline {
+  id: string;
+  points: Point[];
+  closed: boolean;
+  colorHint?: ChalkColor;
+  fill?: boolean;
+}
+
+interface SketchGrayBitmap {
+  width: number;
+  height: number;
+  data: Uint8Array;
+}
+
+interface SketchBinaryMask {
+  width: number;
+  height: number;
+  mask: Uint8Array;
+}
+
+type SketchAssetInput =
+  | { kind: 'svg'; svgText: string }
+  | { kind: 'bitmap'; bitmap: SketchGrayBitmap; threshold?: number };
+
+interface SketchPipelineOptions {
+  seed?: string;
+  centerX?: number;
+  centerY?: number;
+  targetWidth?: number;
+  targetHeight?: number;
+  defaultColor?: ChalkColor;
+  strokeWidth?: number;
+  opacity?: number;
+  wobbleAmp?: number;
+  orderStrategy?: 'nearest-top-down' | 'longest-first' | 'preserve';
+  fillClosedShapes?: boolean;
+}
+
+interface SketchPipelineRequest {
+  asset: SketchAssetInput;
+  options?: SketchPipelineOptions;
+}
+
+interface ExtractedSketchSvgPath {
+  id: string;
+  d: string;
+  colorHint?: ChalkColor;
+  fill: boolean;
+}
+
+interface SketchBitmapBranchInput {
+  bitmap: SketchGrayBitmap;
+  threshold?: number;
+}
+
+interface SketchPostProcessInput {
+  polylines: SketchRawPolyline[];
+  options: SketchPipelineOptions;
+}
+
+type SketchPathToken =
+  | { type: 'cmd'; val: string }
+  | { type: 'num'; val: number };
+
 // --- Types: src/model/builders.ts ---
 
 interface CardSummary {
@@ -698,6 +807,7 @@ interface CardSummary {
   role: CardRole;
   color: ChalkColor;
   shape: NodeShape;
+  icon?: string;
   zone?: string;
   say?: string;
   pause?: number;
@@ -708,6 +818,7 @@ interface CardSummary {
 interface ParsedMetaBlock {
   color?: ChalkColor;
   shape?: NodeShape;
+  icon?: string;
   zone?: string;
   role?: CardRole;
   x?: number;
@@ -739,6 +850,7 @@ interface NodeDraft {
   explicitRole?: CardRole;
   color: ChalkColor;
   shape: NodeShape;
+  icon?: string;
   zone?: string;
   say?: string;
   pause?: number;
@@ -767,6 +879,12 @@ interface SplitSceneNodes {
   ownerVertexIdMap: Map<string, string>;
   boundConnectors: ConnectorSceneNode[];
   unboundConnectors: ConnectorSceneNode[];
+}
+
+interface ObstacleAwareRouteOptions {
+  preferredBow?: number;
+  preferredSide?: -1 | 1;
+  routedMidpoints?: Point[];
 }
 
 // --- Types: src/plugins/layouts/dagreFlow.ts ---
@@ -1547,6 +1665,8 @@ const { buildStrokePath, samplePointAlongStroke, sketchSegment, sketchPolyline, 
       width: number;
       color: ChalkColor;
       opacity?: number;
+      fillOpacity?: number;
+      surfaceShadow?: boolean;
       dashed?: boolean;
       speedFactor?: number;
     }
@@ -1572,6 +1692,8 @@ const { buildStrokePath, samplePointAlongStroke, sketchSegment, sketchPolyline, 
       width: options.width,
       color: options.color,
       opacity: options.opacity ?? 0.94,
+      fillOpacity: options.fillOpacity,
+      surfaceShadow: options.surfaceShadow,
       dashed: options.dashed,
       speedFactor: options.speedFactor ?? 1,
       totalLength: total,
@@ -1791,6 +1913,1457 @@ const { layoutRegistry, presentationRegistry, shapeRegistry, glyphProviderRegist
   return { layoutRegistry, presentationRegistry, shapeRegistry, glyphProviderRegistry, handRegistry, cameraRegistry, transitionRegistry, exportRegistry, sceneNodeRegistry };
 })();
 
+// --- Module: src/sdk/workflowDag.ts ---
+const { GRAPH_INPUT_ID, createAtomicNode, compileWorkflowGraph } = (() => {
+  const GRAPH_INPUT_ID = '__input__';
+  function createAtomicNode<I, O>(
+    id: string,
+    fn: (input: I, ctx?: WorkflowContext) => O
+  ): WorkflowNode<I, O> {
+    return {
+      id,
+      kind: 'atomic',
+      run(input: I, ctx?: WorkflowContext): O {
+        const target =
+          (ctx?.overrides?.get(id) as WorkflowNode<I, O> | undefined) ?? undefined;
+        if (target && target.kind === 'composite') {
+          return target.run(input, ctx);
+        }
+        const start = performance.now();
+        const out = fn(input, ctx);
+        if (ctx?.trace) {
+          ctx.trace.push({
+            nodeId: id,
+            kind: 'atomic',
+            durationMs: Math.max(0, performance.now() - start),
+          });
+        }
+        return out;
+      },
+    };
+  }
+  /**
+   * Compiles a declarative recursive DAG specification into a composable WorkflowNode.
+   * Validates upstream bindings and detects cycles at compile time via Kahn topological sort.
+   */
+  function compileWorkflowGraph<I, O>(
+    spec: WorkflowGraphSpec
+  ): WorkflowNode<I, O> {
+    const nodeMap = new Map<string, DagNodeSpec>();
+    for (const item of spec.nodes) {
+      if (item.id === GRAPH_INPUT_ID) {
+        throw new Error(`Workflow "${spec.id}": reserved node id "${GRAPH_INPUT_ID}"`);
+      }
+      if (nodeMap.has(item.id)) {
+        throw new Error(`Workflow "${spec.id}": duplicate node id "${item.id}"`);
+      }
+      nodeMap.set(item.id, item);
+    }
+
+    if (!nodeMap.has(spec.output)) {
+      throw new Error(
+        `Workflow "${spec.id}": output node "${spec.output}" does not exist`
+      );
+    }
+
+    const dependents = new Map<string, string[]>();
+    const inDegree = new Map<string, number>();
+
+    for (const item of spec.nodes) {
+      dependents.set(item.id, []);
+      inDegree.set(item.id, 0);
+    }
+
+    for (const item of spec.nodes) {
+      const seenUp = new Set<string>();
+      for (const up of item.from) {
+        if (up === GRAPH_INPUT_ID) continue;
+        if (!nodeMap.has(up)) {
+          throw new Error(
+            `Workflow "${spec.id}": node "${item.id}" depends on unknown node "${up}"`
+          );
+        }
+        if (!seenUp.has(up)) {
+          seenUp.add(up);
+          dependents.get(up)!.push(item.id);
+          inDegree.set(item.id, (inDegree.get(item.id) ?? 0) + 1);
+        }
+      }
+    }
+
+    const queue: string[] = [];
+    for (const item of spec.nodes) {
+      if ((inDegree.get(item.id) ?? 0) === 0) {
+        queue.push(item.id);
+      }
+    }
+
+    const sortedOrder: DagNodeSpec[] = [];
+    while (queue.length > 0) {
+      const currId = queue.shift()!;
+      sortedOrder.push(nodeMap.get(currId)!);
+      for (const nextId of dependents.get(currId) ?? []) {
+        const rem = (inDegree.get(nextId) ?? 0) - 1;
+        inDegree.set(nextId, rem);
+        if (rem === 0) {
+          queue.push(nextId);
+        }
+      }
+    }
+
+    if (sortedOrder.length !== spec.nodes.length) {
+      throw new Error(
+        `Workflow "${spec.id}": cyclic dependency detected in DAG specification`
+      );
+    }
+
+    return {
+      id: spec.id,
+      kind: 'composite',
+      run(input: I, ctx?: WorkflowContext): O {
+        const start = performance.now();
+        const results = new Map<string, unknown>();
+        results.set(GRAPH_INPUT_ID, input);
+
+        for (const step of sortedOrder) {
+          let stepInput: unknown;
+          if (step.from.length === 0) {
+            stepInput = undefined;
+          } else if (step.from.length === 1) {
+            stepInput = results.get(step.from[0]);
+          } else {
+            const bundled: Record<string, unknown> = {};
+            for (const up of step.from) {
+              bundled[up] = results.get(up);
+            }
+            stepInput = bundled;
+          }
+
+          const overrideNode = ctx?.overrides?.get(step.id);
+          const impl = overrideNode ?? step.node;
+          const stepOut = impl.run(stepInput, ctx);
+          results.set(step.id, stepOut);
+        }
+
+        if (ctx?.trace) {
+          ctx.trace.push({
+            nodeId: spec.id,
+            kind: 'composite',
+            durationMs: Math.max(0, performance.now() - start),
+          });
+        }
+
+        return results.get(spec.output) as O;
+      },
+    };
+  }
+  return { GRAPH_INPUT_ID, createAtomicNode, compileWorkflowGraph };
+})();
+
+// --- Module: src/sdk/sketchPipeline.ts ---
+const { sketchPipeline, getSketchIconSvg } = (() => {
+  function mapSvgStrokeColorHint(raw?: string): ChalkColor | undefined {
+    if (!raw) return undefined;
+    const v = raw.trim().toLowerCase();
+    if (!v || v === 'none' || v === 'transparent') return undefined;
+    if (
+      v === 'white' ||
+      v === 'yellow' ||
+      v === 'cyan' ||
+      v === 'pink' ||
+      v === 'green' ||
+      v === 'orange'
+    ) {
+      return v;
+    }
+    if (v.includes('gold') || v.includes('amber')) return 'yellow';
+    if (v.includes('blue') || v.includes('cyan') || v.includes('sky')) return 'cyan';
+    if (v.includes('red') || v.includes('pink') || v.includes('rose')) return 'pink';
+    if (v.includes('green') || v.includes('emerald') || v.includes('mint')) return 'green';
+    if (v.includes('orange')) return 'orange';
+    return undefined;
+  }
+  function readSvgAttr(tag: string, name: string): string | undefined {
+    const re = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i');
+    const m = tag.match(re);
+    return m ? m[1] ?? m[2] : undefined;
+  }
+  function readSvgNum(tag: string, name: string, fallback = 0): number {
+    const raw = readSvgAttr(tag, name);
+    if (!raw) return fallback;
+    const n = Number.parseFloat(raw);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  function extractSvgPrimitivesFn(svgText: string): ExtractedSketchSvgPath[] {
+    const out: ExtractedSketchSvgPath[] = [];
+    const tagRe = /<(path|line|rect|circle|ellipse|polyline|polygon)\b([^>]*?)\/?>/gi;
+    let match: RegExpExecArray | null;
+    let seq = 0;
+
+    while ((match = tagRe.exec(svgText)) !== null) {
+      const tagName = match[1].toLowerCase();
+      const attrs = match[2];
+      const id = readSvgAttr(attrs, 'id') ?? `svg-${tagName}-${seq++}`;
+      const strokeAttr = readSvgAttr(attrs, 'stroke');
+      const fillAttr = readSvgAttr(attrs, 'fill');
+      const fill =
+        Boolean(fillAttr) &&
+        fillAttr!.trim().toLowerCase() !== 'none' &&
+        fillAttr!.trim().toLowerCase() !== 'transparent';
+      const colorHint = mapSvgStrokeColorHint(strokeAttr);
+
+      if (tagName === 'path') {
+        const d = readSvgAttr(attrs, 'd');
+        if (d && d.trim()) out.push({ id, d, colorHint, fill });
+        continue;
+      }
+
+      if (tagName === 'line') {
+        const x1 = readSvgNum(attrs, 'x1');
+        const y1 = readSvgNum(attrs, 'y1');
+        const x2 = readSvgNum(attrs, 'x2');
+        const y2 = readSvgNum(attrs, 'y2');
+        out.push({ id, d: `M ${x1} ${y1} L ${x2} ${y2}`, colorHint, fill: false });
+        continue;
+      }
+
+      if (tagName === 'rect') {
+        const x = readSvgNum(attrs, 'x');
+        const y = readSvgNum(attrs, 'y');
+        const w = readSvgNum(attrs, 'width');
+        const h = readSvgNum(attrs, 'height');
+        if (w <= 0 || h <= 0) continue;
+        let rx = readSvgNum(attrs, 'rx', readSvgNum(attrs, 'ry', 0));
+        let ry = readSvgNum(attrs, 'ry', rx);
+        rx = Math.max(0, Math.min(rx, w / 2));
+        ry = Math.max(0, Math.min(ry, h / 2));
+        const d =
+          rx > 0.2 || ry > 0.2
+            ? `M ${x + rx} ${y} L ${x + w - rx} ${y} A ${rx} ${ry} 0 0 1 ${x + w} ${y + ry} L ${x + w} ${y + h - ry} A ${rx} ${ry} 0 0 1 ${x + w - rx} ${y + h} L ${x + rx} ${y + h} A ${rx} ${ry} 0 0 1 ${x} ${y + h - ry} L ${x} ${y + ry} A ${rx} ${ry} 0 0 1 ${x + rx} ${y} Z`
+            : `M ${x} ${y} L ${x + w} ${y} L ${x + w} ${y + h} L ${x} ${y + h} Z`;
+        out.push({ id, d, colorHint, fill });
+        continue;
+      }
+
+      if (tagName === 'circle' || tagName === 'ellipse') {
+        const cx = readSvgNum(attrs, 'cx');
+        const cy = readSvgNum(attrs, 'cy');
+        const rx =
+          tagName === 'circle' ? readSvgNum(attrs, 'r') : readSvgNum(attrs, 'rx');
+        const ry = tagName === 'circle' ? rx : readSvgNum(attrs, 'ry', rx);
+        if (rx <= 0 || ry <= 0) continue;
+        const d = `M ${cx - rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx + rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx - rx} ${cy} Z`;
+        out.push({ id, d, colorHint, fill });
+        continue;
+      }
+
+      if (tagName === 'polyline' || tagName === 'polygon') {
+        const rawPts = readSvgAttr(attrs, 'points') ?? '';
+        const nums = rawPts
+          .trim()
+          .split(/[\s,]+/)
+          .map(Number)
+          .filter(Number.isFinite);
+        if (nums.length < 4) continue;
+        const segs = [`M ${nums[0]} ${nums[1]}`];
+        for (let i = 2; i + 1 < nums.length; i += 2) {
+          segs.push(`L ${nums[i]} ${nums[i + 1]}`);
+        }
+        if (tagName === 'polygon') segs.push('Z');
+        out.push({ id, d: segs.join(' '), colorHint, fill });
+      }
+    }
+
+    return out;
+  }
+  function tokenizeSvgPathD(d: string): SketchPathToken[] {
+    const tokens: SketchPathToken[] = [];
+    const re =
+      /([MmLlHhVvQqTtCcSsAaZz])|([+-]?(?:\d*\.\d+|\d+\.?)(?:[eE][+-]?\d+)?)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(d)) !== null) {
+      if (m[1]) {
+        tokens.push({ type: 'cmd', val: m[1] });
+      } else if (m[2]) {
+        const n = Number.parseFloat(m[2]);
+        if (Number.isFinite(n)) tokens.push({ type: 'num', val: n });
+      }
+    }
+    return tokens;
+  }
+  function sampleSvgArc(
+    p0: Point,
+    rxRaw: number,
+    ryRaw: number,
+    angleDeg: number,
+    largeArcFlag: number,
+    sweepFlag: number,
+    p1: Point
+  ): Point[] {
+    if (Math.hypot(p1.x - p0.x, p1.y - p0.y) < 1e-5) return [];
+    if (rxRaw === 0 || ryRaw === 0) return [p1];
+
+    let rx = Math.abs(rxRaw);
+    let ry = Math.abs(ryRaw);
+    const phi = (angleDeg * Math.PI) / 180;
+    const cosPhi = Math.cos(phi);
+    const sinPhi = Math.sin(phi);
+
+    const dx2 = (p0.x - p1.x) / 2;
+    const dy2 = (p0.y - p1.y) / 2;
+    const x1p = cosPhi * dx2 + sinPhi * dy2;
+    const y1p = -sinPhi * dx2 + cosPhi * dy2;
+
+    const lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
+    if (lambda > 1) {
+      const scale = Math.sqrt(lambda);
+      rx *= scale;
+      ry *= scale;
+    }
+
+    const rx2 = rx * rx;
+    const ry2 = ry * ry;
+    const x1p2 = x1p * x1p;
+    const y1p2 = y1p * y1p;
+    const num = Math.max(0, rx2 * ry2 - rx2 * y1p2 - ry2 * x1p2);
+    const den = rx2 * y1p2 + ry2 * x1p2;
+    const coef =
+      (largeArcFlag !== sweepFlag ? 1 : -1) *
+      (den > 1e-9 ? Math.sqrt(num / den) : 0);
+
+    const cxp = coef * ((rx * y1p) / ry);
+    const cyp = coef * (-(ry * x1p) / rx);
+
+    const cx = cosPhi * cxp - sinPhi * cyp + (p0.x + p1.x) / 2;
+    const cy = sinPhi * cxp + cosPhi * cyp + (p0.y + p1.y) / 2;
+
+    const vecAngle = (ux: number, uy: number, vx: number, vy: number) => {
+      const dot = ux * vx + uy * vy;
+      const len = Math.hypot(ux, uy) * Math.hypot(vx, vy) || 1;
+      const ang = Math.acos(Math.max(-1, Math.min(1, dot / len)));
+      return ux * vy - uy * vx < 0 ? -ang : ang;
+    };
+
+    const theta1 = vecAngle(1, 0, (x1p - cxp) / rx, (y1p - cyp) / ry);
+    let dTheta = vecAngle(
+      (x1p - cxp) / rx,
+      (y1p - cyp) / ry,
+      (-x1p - cxp) / rx,
+      (-y1p - cyp) / ry
+    );
+    if (!sweepFlag && dTheta > 0) dTheta -= Math.PI * 2;
+    if (sweepFlag && dTheta < 0) dTheta += Math.PI * 2;
+
+    const steps = Math.max(8, Math.ceil((Math.abs(dTheta) / (Math.PI * 2)) * 28));
+    const pts: Point[] = [];
+    for (let i = 1; i <= steps; i++) {
+      const t = theta1 + (dTheta * i) / steps;
+      const cosT = Math.cos(t);
+      const sinT = Math.sin(t);
+      pts.push({
+        x: cx + cosPhi * rx * cosT - sinPhi * ry * sinT,
+        y: cy + sinPhi * rx * cosT + cosPhi * ry * sinT,
+      });
+    }
+    return pts;
+  }
+  function sampleSvgDToPolylines(
+    baseId: string,
+    d: string,
+    colorHint?: ChalkColor,
+    fill = false
+  ): SketchRawPolyline[] {
+    const tokens = tokenizeSvgPathD(d);
+    const polylines: SketchRawPolyline[] = [];
+    let idx = 0;
+    let cmd = '';
+    let cur: Point = { x: 0, y: 0 };
+    let start: Point = { x: 0, y: 0 };
+    let currentPts: Point[] = [];
+    let lastCubicCtrl: Point | null = null;
+    let lastQuadCtrl: Point | null = null;
+    let subSeq = 0;
+
+    const flushSubpath = (closed: boolean) => {
+      if (currentPts.length >= 2) {
+        polylines.push({
+          id: subSeq === 0 ? baseId : `${baseId}-${subSeq}`,
+          points: currentPts,
+          closed,
+          colorHint,
+          fill,
+        });
+        subSeq++;
+      }
+      currentPts = [];
+    };
+
+    const hasNum = () => idx < tokens.length && tokens[idx].type === 'num';
+    const nextNum = () => (tokens[idx++] as { type: 'num'; val: number }).val;
+
+    while (idx < tokens.length) {
+      if (tokens[idx].type === 'cmd') {
+        cmd = (tokens[idx++] as { type: 'cmd'; val: string }).val;
+        if (cmd === 'Z' || cmd === 'z') {
+          if (
+            currentPts.length > 0 &&
+            Math.hypot(cur.x - start.x, cur.y - start.y) > 0.5
+          ) {
+            currentPts.push({ ...start });
+          }
+          cur = { ...start };
+          flushSubpath(true);
+          lastCubicCtrl = null;
+          lastQuadCtrl = null;
+          continue;
+        }
+      } else if (!cmd) {
+        idx++;
+        continue;
+      }
+
+      const rel = cmd === cmd.toLowerCase();
+      const C = cmd.toUpperCase();
+
+      if (C === 'M') {
+        if (!hasNum()) break;
+        flushSubpath(false);
+        const x = nextNum() + (rel ? cur.x : 0);
+        const y = nextNum() + (rel ? cur.y : 0);
+        cur = { x, y };
+        start = { x, y };
+        currentPts = [{ x, y }];
+        lastCubicCtrl = null;
+        lastQuadCtrl = null;
+        cmd = rel ? 'l' : 'L';
+      } else if (C === 'L') {
+        while (hasNum()) {
+          const x = nextNum() + (rel ? cur.x : 0);
+          const y = nextNum() + (rel ? cur.y : 0);
+          cur = { x, y };
+          currentPts.push({ x, y });
+          lastCubicCtrl = null;
+          lastQuadCtrl = null;
+        }
+      } else if (C === 'H') {
+        while (hasNum()) {
+          const x = nextNum() + (rel ? cur.x : 0);
+          cur = { x, y: cur.y };
+          currentPts.push({ ...cur });
+          lastCubicCtrl = null;
+          lastQuadCtrl = null;
+        }
+      } else if (C === 'V') {
+        while (hasNum()) {
+          const y = nextNum() + (rel ? cur.y : 0);
+          cur = { x: cur.x, y };
+          currentPts.push({ ...cur });
+          lastCubicCtrl = null;
+          lastQuadCtrl = null;
+        }
+      } else if (C === 'Q' || C === 'T') {
+        while (hasNum()) {
+          let cp: Point;
+          if (C === 'Q') {
+            cp = {
+              x: nextNum() + (rel ? cur.x : 0),
+              y: nextNum() + (rel ? cur.y : 0),
+            };
+          } else {
+            cp = lastQuadCtrl
+              ? { x: 2 * cur.x - lastQuadCtrl.x, y: 2 * cur.y - lastQuadCtrl.y }
+              : { ...cur };
+          }
+          const p2 = {
+            x: nextNum() + (rel ? cur.x : 0),
+            y: nextNum() + (rel ? cur.y : 0),
+          };
+          const p0 = { ...cur };
+          const steps = 10;
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const mt = 1 - t;
+            currentPts.push({
+              x: mt * mt * p0.x + 2 * mt * t * cp.x + t * t * p2.x,
+              y: mt * mt * p0.y + 2 * mt * t * cp.y + t * t * p2.y,
+            });
+          }
+          cur = p2;
+          lastQuadCtrl = cp;
+          lastCubicCtrl = null;
+        }
+      } else if (C === 'C' || C === 'S') {
+        while (hasNum()) {
+          let c1: Point;
+          if (C === 'C') {
+            c1 = {
+              x: nextNum() + (rel ? cur.x : 0),
+              y: nextNum() + (rel ? cur.y : 0),
+            };
+          } else {
+            c1 = lastCubicCtrl
+              ? { x: 2 * cur.x - lastCubicCtrl.x, y: 2 * cur.y - lastCubicCtrl.y }
+              : { ...cur };
+          }
+          const c2 = {
+            x: nextNum() + (rel ? cur.x : 0),
+            y: nextNum() + (rel ? cur.y : 0),
+          };
+          const p3 = {
+            x: nextNum() + (rel ? cur.x : 0),
+            y: nextNum() + (rel ? cur.y : 0),
+          };
+          const p0 = { ...cur };
+          const steps = 12;
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const mt = 1 - t;
+            currentPts.push({
+              x:
+                mt * mt * mt * p0.x +
+                3 * mt * mt * t * c1.x +
+                3 * mt * t * t * c2.x +
+                t * t * t * p3.x,
+              y:
+                mt * mt * mt * p0.y +
+                3 * mt * mt * t * c1.y +
+                3 * mt * t * t * c2.y +
+                t * t * t * p3.y,
+            });
+          }
+          cur = p3;
+          lastCubicCtrl = c2;
+          lastQuadCtrl = null;
+        }
+      } else if (C === 'A') {
+        while (hasNum()) {
+          const rx = nextNum();
+          const ry = nextNum();
+          const rot = nextNum();
+          const largeArc = nextNum();
+          const sweep = nextNum();
+          const x = nextNum() + (rel ? cur.x : 0);
+          const y = nextNum() + (rel ? cur.y : 0);
+          const p1 = { x, y };
+          const arcPts = sampleSvgArc(cur, rx, ry, rot, largeArc, sweep, p1);
+          currentPts.push(...arcPts);
+          cur = p1;
+          lastCubicCtrl = null;
+          lastQuadCtrl = null;
+        }
+      } else {
+        break;
+      }
+    }
+
+    flushSubpath(false);
+    return polylines;
+  }
+  const extractSvgPrimitivesNode = createAtomicNode<
+    string,
+    ExtractedSketchSvgPath[]
+  >('svg.extractPrimitives', extractSvgPrimitivesFn);
+  const sampleSvgCurvesNode = createAtomicNode<
+    ExtractedSketchSvgPath[],
+    SketchRawPolyline[]
+  >('svg.sampleCurves', (items) => {
+    const out: SketchRawPolyline[] = [];
+    for (const item of items) {
+      out.push(...sampleSvgDToPolylines(item.id, item.d, item.colorHint, item.fill));
+    }
+    return out;
+  });
+  const svgToPolylinesWorkflow = compileWorkflowGraph<
+    string,
+    SketchRawPolyline[]
+  >({
+    id: 'svg.toPolylines',
+    nodes: [
+      {
+        id: 'svg.extractPrimitives',
+        node: extractSvgPrimitivesNode,
+        from: [GRAPH_INPUT_ID],
+      },
+      {
+        id: 'svg.sampleCurves',
+        node: sampleSvgCurvesNode,
+        from: ['svg.extractPrimitives'],
+      },
+    ],
+    output: 'svg.sampleCurves',
+  });
+  function computeOtsuThreshold(data: Uint8Array): number {
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < data.length; i++) {
+      hist[data[i]]++;
+    }
+    const total = data.length;
+    let sum = 0;
+    for (let t = 0; t < 256; t++) sum += t * hist[t];
+
+    let sumB = 0;
+    let wB = 0;
+    let maxVar = -1;
+    let threshold = 128;
+
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (wB === 0) continue;
+      const wF = total - wB;
+      if (wF === 0) break;
+
+      sumB += t * hist[t];
+      const mB = sumB / wB;
+      const mF = (sum - sumB) / wF;
+      const between = wB * wF * (mB - mF) * (mB - mF);
+      if (between > maxVar) {
+        maxVar = between;
+        threshold = t;
+      }
+    }
+    return threshold;
+  }
+  const binarizeBitmapNode = createAtomicNode<
+    SketchBitmapBranchInput,
+    SketchBinaryMask
+  >('bitmap.binarize', ({ bitmap, threshold }) => {
+    const { width, height, data } = bitmap;
+    const thresh = threshold ?? computeOtsuThreshold(data);
+    const mask = new Uint8Array(width * height);
+
+    let below = 0;
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] <= thresh) below++;
+    }
+    const darkIsInk = below <= data.length / 2;
+
+    for (let i = 0; i < data.length; i++) {
+      const isDark = data[i] <= thresh;
+      mask[i] = darkIsInk ? (isDark ? 1 : 0) : isDark ? 0 : 1;
+    }
+    return { width, height, mask };
+  });
+  const zhangSuenThinningNode = createAtomicNode<
+    SketchBinaryMask,
+    SketchBinaryMask
+  >('bitmap.thinning', ({ width, height, mask }) => {
+    const img = new Uint8Array(mask);
+    for (let x = 0; x < width; x++) {
+      img[x] = 0;
+      img[(height - 1) * width + x] = 0;
+    }
+    for (let y = 0; y < height; y++) {
+      img[y * width] = 0;
+      img[y * width + (width - 1)] = 0;
+    }
+
+    const toDelete: number[] = [];
+
+    for (let pass = 0; pass < 64; pass++) {
+      let changed = false;
+
+      for (let sub = 0; sub < 2; sub++) {
+        toDelete.length = 0;
+        for (let y = 1; y < height - 1; y++) {
+          const row = y * width;
+          for (let x = 1; x < width - 1; x++) {
+            const idx = row + x;
+            if (img[idx] === 0) continue;
+
+            const p2 = img[idx - width];
+            const p3 = img[idx - width + 1];
+            const p4 = img[idx + 1];
+            const p5 = img[idx + width + 1];
+            const p6 = img[idx + width];
+            const p7 = img[idx + width - 1];
+            const p8 = img[idx - 1];
+            const p9 = img[idx - width - 1];
+
+            const b = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+            if (b < 2 || b > 6) continue;
+
+            let a = 0;
+            if (p2 === 0 && p3 === 1) a++;
+            if (p3 === 0 && p4 === 1) a++;
+            if (p4 === 0 && p5 === 1) a++;
+            if (p5 === 0 && p6 === 1) a++;
+            if (p6 === 0 && p7 === 1) a++;
+            if (p7 === 0 && p8 === 1) a++;
+            if (p8 === 0 && p9 === 1) a++;
+            if (p9 === 0 && p2 === 1) a++;
+            if (a !== 1) continue;
+
+            if (sub === 0) {
+              if (p2 * p4 * p6 === 0 && p4 * p6 * p8 === 0) {
+                toDelete.push(idx);
+              }
+            } else {
+              if (p2 * p4 * p8 === 0 && p2 * p6 * p8 === 0) {
+                toDelete.push(idx);
+              }
+            }
+          }
+        }
+        if (toDelete.length > 0) {
+          changed = true;
+          for (const idx of toDelete) img[idx] = 0;
+        }
+      }
+
+      if (!changed) break;
+    }
+
+    // Sequential staircase-elbow cleanup preserving 8-connectivity and endpoints
+    const ringCoords = [
+      [0, -1],
+      [1, -1],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+      [-1, 1],
+      [-1, 0],
+      [-1, -1],
+    ];
+    for (let y = 1; y < height - 1; y++) {
+      const row = y * width;
+      for (let x = 1; x < width - 1; x++) {
+        const idx = row + x;
+        if (img[idx] === 0) continue;
+
+        const p2 = img[idx - width];
+        const p3 = img[idx - width + 1];
+        const p4 = img[idx + 1];
+        const p5 = img[idx + width + 1];
+        const p6 = img[idx + width];
+        const p7 = img[idx + width - 1];
+        const p8 = img[idx - 1];
+        const p9 = img[idx - width - 1];
+
+        const hasOrthElbow =
+          (p2 === 1 && p4 === 1) ||
+          (p4 === 1 && p6 === 1) ||
+          (p6 === 1 && p8 === 1) ||
+          (p8 === 1 && p2 === 1);
+        if (!hasOrthElbow) continue;
+
+        const ring = [p2, p3, p4, p5, p6, p7, p8, p9];
+        const seen = [false, false, false, false, false, false, false, false];
+        let components = 0;
+        for (let s = 0; s < 8; s++) {
+          if (ring[s] === 0 || seen[s]) continue;
+          components++;
+          if (components > 1) break;
+          const stack = [s];
+          seen[s] = true;
+          while (stack.length > 0) {
+            const u = stack.pop()!;
+            for (let v = 0; v < 8; v++) {
+              if (ring[v] === 1 && !seen[v]) {
+                const dx = Math.abs(ringCoords[u][0] - ringCoords[v][0]);
+                const dy = Math.abs(ringCoords[u][1] - ringCoords[v][1]);
+                if (dx <= 1 && dy <= 1) {
+                  seen[v] = true;
+                  stack.push(v);
+                }
+              }
+            }
+          }
+        }
+        if (components === 1) {
+          img[idx] = 0;
+        }
+      }
+    }
+
+    return { width, height, mask: img };
+  });
+  const SKELETON_NEIGHBORS = [
+    [0, -1],
+    [1, -1],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+    [-1, 1],
+    [-1, 0],
+    [-1, -1],
+  ] as const;
+  function skelEdgeKey(a: number, b: number): string {
+    return a < b ? `${a}_${b}` : `${b}_${a}`;
+  }
+  function sketchPolylineLen(pts: Point[]): number {
+    let sum = 0;
+    for (let i = 1; i < pts.length; i++) {
+      sum += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    }
+    return sum;
+  }
+  const traceSkeletonPolylinesNode = createAtomicNode<
+    SketchBinaryMask,
+    SketchRawPolyline[]
+  >('bitmap.tracePolylines', ({ width, height, mask }) => {
+    const neighborsOf = new Map<number, number[]>();
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const idx = y * width + x;
+        if (mask[idx] === 0) continue;
+        const nbs: number[] = [];
+        for (const [dx, dy] of SKELETON_NEIGHBORS) {
+          const nIdx = (y + dy) * width + (x + dx);
+          if (mask[nIdx] === 1) nbs.push(nIdx);
+        }
+        neighborsOf.set(idx, nbs);
+      }
+    }
+
+    const visitedEdges = new Set<string>();
+    const rawChains: number[][] = [];
+
+    const walkChain = (startIdx: number, firstNextIdx: number): number[] => {
+      const chain = [startIdx, firstNextIdx];
+      visitedEdges.add(skelEdgeKey(startIdx, firstNextIdx));
+      let prev = startIdx;
+      let curr = firstNextIdx;
+
+      while (true) {
+        const nbs = neighborsOf.get(curr) ?? [];
+        if (curr === startIdx) break;
+        if (nbs.length !== 2 && nbs.length > 0) {
+          const unvisited = nbs.filter((n) => !visitedEdges.has(skelEdgeKey(curr, n)));
+          if (nbs.length >= 3 || unvisited.length === 0) break;
+        }
+
+        const dirX = (curr % width) - (prev % width);
+        const dirY = Math.floor(curr / width) - Math.floor(prev / width);
+        const dirLen = Math.hypot(dirX, dirY) || 1;
+
+        const candidates = nbs.filter(
+          (n) => n !== prev && !visitedEdges.has(skelEdgeKey(curr, n))
+        );
+        if (candidates.length === 0) break;
+
+        candidates.sort((a, b) => {
+          const ax = (a % width) - (curr % width);
+          const ay = Math.floor(a / width) - Math.floor(curr / width);
+          const bx = (b % width) - (curr % width);
+          const by = Math.floor(b / width) - Math.floor(curr / width);
+          const dotA = (ax * dirX + ay * dirY) / ((Math.hypot(ax, ay) || 1) * dirLen);
+          const dotB = (bx * dirX + by * dirY) / ((Math.hypot(bx, by) || 1) * dirLen);
+          return dotB - dotA;
+        });
+
+        const next = candidates[0];
+        visitedEdges.add(skelEdgeKey(curr, next));
+        chain.push(next);
+        prev = curr;
+        curr = next;
+      }
+      return chain;
+    };
+
+    const anchors = [...neighborsOf.entries()]
+      .filter(([, nbs]) => nbs.length === 1 || nbs.length >= 3)
+      .sort((a, b) => a[1].length - b[1].length);
+
+    for (const [startIdx, nbs] of anchors) {
+      for (const nextIdx of nbs) {
+        if (!visitedEdges.has(skelEdgeKey(startIdx, nextIdx))) {
+          rawChains.push(walkChain(startIdx, nextIdx));
+        }
+      }
+    }
+
+    for (const [startIdx, nbs] of neighborsOf.entries()) {
+      for (const nextIdx of nbs) {
+        if (!visitedEdges.has(skelEdgeKey(startIdx, nextIdx))) {
+          rawChains.push(walkChain(startIdx, nextIdx));
+        }
+      }
+    }
+
+    const chains = rawChains.map((c) => [...c]);
+    const junctionOutTangent = (chain: number[], atStart: boolean): Point => {
+      const a = atStart ? chain[0] : chain[chain.length - 1];
+      const lookIdx = atStart
+        ? Math.min(chain.length - 1, 5)
+        : Math.max(0, chain.length - 1 - 5);
+      const b = chain[lookIdx];
+      const dx = (b % width) - (a % width);
+      const dy = Math.floor(b / width) - Math.floor(a / width);
+      const len = Math.hypot(dx, dy) || 1;
+      return { x: dx / len, y: dy / len };
+    };
+
+    const mergeCosThreshold = Math.cos((42 * Math.PI) / 180);
+    let mergedAny = true;
+    while (mergedAny) {
+      mergedAny = false;
+      for (let i = 0; i < chains.length; i++) {
+        if (chains[i].length === 0) continue;
+        for (const endIsStart of [false, true]) {
+          const jNode = endIsStart ? chains[i][0] : chains[i][chains[i].length - 1];
+          if ((neighborsOf.get(jNode)?.length ?? 0) < 3) continue;
+          const tI = junctionOutTangent(chains[i], endIsStart);
+
+          let bestJ = -1;
+          let bestJAtStart = true;
+          let bestAlign = -Infinity;
+
+          for (let j = i + 1; j < chains.length; j++) {
+            if (chains[j].length === 0) continue;
+            for (const jStart of [true, false]) {
+              const candNode = jStart ? chains[j][0] : chains[j][chains[j].length - 1];
+              if (candNode !== jNode) continue;
+              const tJ = junctionOutTangent(chains[j], jStart);
+              const align = -(tI.x * tJ.x + tI.y * tJ.y);
+              if (align > mergeCosThreshold && align > bestAlign) {
+                bestAlign = align;
+                bestJ = j;
+                bestJAtStart = jStart;
+              }
+            }
+          }
+
+          if (bestJ !== -1) {
+            const cA = endIsStart ? [...chains[i]].reverse() : chains[i];
+            const cB = bestJAtStart ? chains[bestJ] : [...chains[bestJ]].reverse();
+            chains[i] = [...cA, ...cB.slice(1)];
+            chains[bestJ] = [];
+            mergedAny = true;
+            break;
+          }
+        }
+        if (mergedAny) break;
+      }
+    }
+
+    const polylines: SketchRawPolyline[] = [];
+    let seq = 0;
+    for (const ch of chains) {
+      if (ch.length < 4) continue;
+      const pts: Point[] = ch.map((idx) => ({
+        x: idx % width,
+        y: Math.floor(idx / width),
+      }));
+      if (sketchPolylineLen(pts) < 4) continue;
+      const head = pts[0];
+      const tail = pts[pts.length - 1];
+      const closed = Math.hypot(tail.x - head.x, tail.y - head.y) <= 2.5;
+      polylines.push({
+        id: `skel-${seq++}`,
+        points: pts,
+        closed,
+      });
+    }
+
+    return polylines;
+  });
+  function perpendicularPtDist(pt: Point, a: Point, b: Point): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return Math.hypot(pt.x - a.x, pt.y - a.y);
+    return Math.abs(dy * pt.x - dx * pt.y + b.x * a.y - b.y * a.x) / len;
+  }
+  function rdpSimplifyPts(points: Point[], epsilon: number): Point[] {
+    if (points.length <= 2) return points;
+    let maxDist = 0;
+    let index = 0;
+    const first = points[0];
+    const last = points[points.length - 1];
+
+    for (let i = 1; i < points.length - 1; i++) {
+      const d = perpendicularPtDist(points[i], first, last);
+      if (d > maxDist) {
+        maxDist = d;
+        index = i;
+      }
+    }
+
+    if (maxDist > epsilon) {
+      const left = rdpSimplifyPts(points.slice(0, index + 1), epsilon);
+      const right = rdpSimplifyPts(points.slice(index), epsilon);
+      return [...left.slice(0, -1), ...right];
+    }
+    return [first, last];
+  }
+  function chaikinSmoothPts(points: Point[], closed: boolean): Point[] {
+    if (points.length < 3) return points;
+    const out: Point[] = [];
+    if (!closed) out.push(points[0]);
+    const limit = closed ? points.length : points.length - 1;
+    for (let i = 0; i < limit; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      out.push({ x: 0.75 * a.x + 0.25 * b.x, y: 0.75 * a.y + 0.25 * b.y });
+      out.push({ x: 0.25 * a.x + 0.75 * b.x, y: 0.25 * a.y + 0.75 * b.y });
+    }
+    if (!closed) {
+      out.push(points[points.length - 1]);
+    } else if (out.length > 0) {
+      out.push({ ...out[0] });
+    }
+    return out;
+  }
+  const simplifyBitmapPolylinesNode = createAtomicNode<
+    SketchRawPolyline[],
+    SketchRawPolyline[]
+  >('bitmap.simplify', (polylines) => {
+    return polylines
+      .map((poly) => ({
+        ...poly,
+        points: chaikinSmoothPts(rdpSimplifyPts(poly.points, 1.4), poly.closed),
+      }))
+      .filter((p) => p.points.length >= 2);
+  });
+  const bitmapToPolylinesWorkflow = compileWorkflowGraph<
+    SketchBitmapBranchInput,
+    SketchRawPolyline[]
+  >({
+    id: 'bitmap.toPolylines',
+    nodes: [
+      {
+        id: 'bitmap.binarize',
+        node: binarizeBitmapNode,
+        from: [GRAPH_INPUT_ID],
+      },
+      {
+        id: 'bitmap.thinning',
+        node: zhangSuenThinningNode,
+        from: ['bitmap.binarize'],
+      },
+      {
+        id: 'bitmap.tracePolylines',
+        node: traceSkeletonPolylinesNode,
+        from: ['bitmap.thinning'],
+      },
+      {
+        id: 'bitmap.simplify',
+        node: simplifyBitmapPolylinesNode,
+        from: ['bitmap.tracePolylines'],
+      },
+    ],
+    output: 'bitmap.simplify',
+  });
+  const normalizeSketchFitNode = createAtomicNode<
+    SketchPostProcessInput,
+    SketchPostProcessInput
+  >('sketch.normalizeFit', ({ polylines, options }) => {
+    if (polylines.length === 0) return { polylines: [], options };
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const poly of polylines) {
+      for (const pt of poly.points) {
+        minX = Math.min(minX, pt.x);
+        minY = Math.min(minY, pt.y);
+        maxX = Math.max(maxX, pt.x);
+        maxY = Math.max(maxY, pt.y);
+      }
+    }
+
+    const srcW = Math.max(1e-3, maxX - minX);
+    const srcH = Math.max(1e-3, maxY - minY);
+    const targetW = options.targetWidth ?? 180;
+    const targetH = options.targetHeight ?? 180;
+    const cx = options.centerX ?? 0;
+    const cy = options.centerY ?? 0;
+
+    const scale = Math.min(targetW / srcW, targetH / srcH);
+    const srcMidX = (minX + maxX) / 2;
+    const srcMidY = (minY + maxY) / 2;
+
+    return {
+      polylines: polylines.map((poly) => ({
+        ...poly,
+        points: poly.points.map((pt) => ({
+          x: cx + (pt.x - srcMidX) * scale,
+          y: cy + (pt.y - srcMidY) * scale,
+        })),
+      })),
+      options,
+    };
+  });
+  const orderSketchStrokesNode = createAtomicNode<
+    SketchPostProcessInput,
+    SketchPostProcessInput
+  >('sketch.orderStrokes', ({ polylines, options }) => {
+    const strategy = options.orderStrategy ?? 'nearest-top-down';
+    if (polylines.length <= 1 || strategy === 'preserve') {
+      return { polylines, options };
+    }
+
+    if (strategy === 'longest-first') {
+      return {
+        polylines: [...polylines].sort(
+          (a, b) => sketchPolylineLen(b.points) - sketchPolylineLen(a.points)
+        ),
+        options,
+      };
+    }
+
+    const remaining = polylines.map((p) => ({
+      ...p,
+      points: [...p.points],
+    }));
+
+    let bestStartIdx = 0;
+    let bestScore = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const pts = remaining[i].points;
+      const head = pts[0];
+      const lenBonus = Math.min(60, sketchPolylineLen(pts) * 0.12);
+      const score = head.y * 1.15 + head.x * 0.7 - lenBonus;
+      if (score < bestScore) {
+        bestScore = score;
+        bestStartIdx = i;
+      }
+    }
+
+    const ordered: SketchRawPolyline[] = [];
+    let current = remaining.splice(bestStartIdx, 1)[0];
+    ordered.push(current);
+
+    while (remaining.length > 0) {
+      const penPos = current.points[current.points.length - 1];
+      let nearestIdx = 0;
+      let nearestDist = Infinity;
+      let shouldReverse = false;
+
+      for (let i = 0; i < remaining.length; i++) {
+        const cand = remaining[i];
+        const head = cand.points[0];
+        const tail = cand.points[cand.points.length - 1];
+        const dHead = Math.hypot(head.x - penPos.x, head.y - penPos.y);
+        const dTail = cand.closed
+          ? Infinity
+          : Math.hypot(tail.x - penPos.x, tail.y - penPos.y);
+
+        if (dHead < nearestDist) {
+          nearestDist = dHead;
+          nearestIdx = i;
+          shouldReverse = false;
+        }
+        if (dTail < nearestDist) {
+          nearestDist = dTail;
+          nearestIdx = i;
+          shouldReverse = true;
+        }
+      }
+
+      const nextPoly = remaining.splice(nearestIdx, 1)[0];
+      if (shouldReverse) nextPoly.points.reverse();
+      ordered.push(nextPoly);
+      current = nextPoly;
+    }
+
+    return { polylines: ordered, options };
+  });
+  function subdivideSketchPolyline(points: Point[], maxStep = 12): Point[] {
+    if (points.length < 2) return points;
+    const out: Point[] = [points[0]];
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const steps = Math.max(1, Math.ceil(len / maxStep));
+      for (let s = 1; s <= steps; s++) {
+        const t = s / steps;
+        out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      }
+    }
+    return out;
+  }
+  const wobbleSketchStrokesNode = createAtomicNode<
+    SketchPostProcessInput,
+    SketchPostProcessInput
+  >('sketch.wobble', ({ polylines, options }) => {
+    const wobbleAmp = options.wobbleAmp ?? 0.85;
+    const seedPrefix = options.seed ?? 'sketch';
+
+    const wobbled = polylines.map((poly, idx) => {
+      if (wobbleAmp <= 0.01) {
+        return {
+          ...poly,
+          points: subdivideSketchPolyline(poly.points, 12),
+        };
+      }
+
+      const pts = poly.points;
+      const rand = mulberry32(hashString(`${seedPrefix}:${poly.id}:${idx}`));
+      const arc = sketchPolylineLen(pts);
+      const localAmp = Math.min(wobbleAmp, Math.max(0.22, arc * 0.012));
+      const basePts = sketchPolyline(pts, `${seedPrefix}:${poly.id}:${idx}`, localAmp);
+
+      if (poly.closed && basePts.length >= 3) {
+        const first = basePts[0];
+        basePts[basePts.length - 1] = {
+          x: first.x + (rand() - 0.5) * 0.4,
+          y: first.y + (rand() - 0.5) * 0.4,
+        };
+      }
+
+      return {
+        ...poly,
+        points: basePts,
+      };
+    });
+
+    return { polylines: wobbled, options };
+  });
+  const sketchToStrokePathsNode = createAtomicNode<
+    SketchPostProcessInput,
+    StrokePath[]
+  >('sketch.toStrokePaths', ({ polylines, options }) => {
+    const defaultColor = options.defaultColor ?? 'white';
+    const strokeWidth = options.strokeWidth ?? 2.3;
+    const opacity = options.opacity ?? 0.94;
+    const fillClosed = options.fillClosedShapes ?? false;
+
+    return polylines.map((poly, idx) =>
+      buildStrokePath(`${options.seed ?? 'sketch'}-${poly.id}-${idx}`, poly.points, {
+        width: strokeWidth,
+        color: poly.colorHint ?? defaultColor,
+        opacity,
+        fillOpacity: fillClosed && poly.closed && poly.fill !== false ? 1 : undefined,
+        speedFactor: 1.25,
+      })
+    );
+  });
+  const polylinesToSketchWorkflow = compileWorkflowGraph<
+    SketchPostProcessInput,
+    StrokePath[]
+  >({
+    id: 'sketch.postProcess',
+    nodes: [
+      {
+        id: 'sketch.normalizeFit',
+        node: normalizeSketchFitNode,
+        from: [GRAPH_INPUT_ID],
+      },
+      {
+        id: 'sketch.orderStrokes',
+        node: orderSketchStrokesNode,
+        from: ['sketch.normalizeFit'],
+      },
+      {
+        id: 'sketch.wobble',
+        node: wobbleSketchStrokesNode,
+        from: ['sketch.orderStrokes'],
+      },
+      {
+        id: 'sketch.toStrokePaths',
+        node: sketchToStrokePathsNode,
+        from: ['sketch.wobble'],
+      },
+    ],
+    output: 'sketch.toStrokePaths',
+  });
+  const dispatchSketchIngestNode = createAtomicNode<
+    SketchPipelineRequest,
+    SketchPostProcessInput
+  >('sketch.ingest', (req: SketchPipelineRequest, ctx?: WorkflowContext) => {
+    const polylines =
+      req.asset.kind === 'svg'
+        ? svgToPolylinesWorkflow.run(req.asset.svgText, ctx)
+        : bitmapToPolylinesWorkflow.run(
+            { bitmap: req.asset.bitmap, threshold: req.asset.threshold },
+            ctx
+          );
+    return {
+      polylines,
+      options: req.options ?? {},
+    };
+  });
+  const sketchPipeline = compileWorkflowGraph<
+    SketchPipelineRequest,
+    StrokePath[]
+  >({
+    id: 'sketch.pipeline',
+    nodes: [
+      {
+        id: 'sketch.ingest',
+        node: dispatchSketchIngestNode,
+        from: [GRAPH_INPUT_ID],
+      },
+      {
+        id: 'sketch.postProcess',
+        node: polylinesToSketchWorkflow,
+        from: ['sketch.ingest'],
+      },
+    ],
+    output: 'sketch.postProcess',
+  });
+  const SKETCH_ICON_LIBRARY: Record<string, string> = {
+    browser: `<svg viewBox="0 0 120 120">
+      <rect x="14" y="22" width="92" height="76" rx="8"/>
+      <line x1="14" y1="42" x2="106" y2="42"/>
+      <circle cx="26" cy="32" r="2.6"/>
+      <circle cx="35" cy="32" r="2.6"/>
+      <circle cx="44" cy="32" r="2.6"/>
+      <path fill="none" d="M38 62 L28 70 L38 78"/>
+      <path fill="none" d="M82 62 L92 70 L82 78"/>
+      <line x1="65" y1="58" x2="55" y2="82"/>
+    </svg>`,
+    server: `<svg viewBox="0 0 120 120">
+      <rect x="20" y="18" width="80" height="24" rx="5"/>
+      <rect x="20" y="48" width="80" height="24" rx="5"/>
+      <rect x="20" y="78" width="80" height="24" rx="5"/>
+      <circle cx="34" cy="30" r="3"/>
+      <circle cx="34" cy="60" r="3"/>
+      <circle cx="34" cy="90" r="3"/>
+      <line x1="54" y1="30" x2="86" y2="30"/>
+      <line x1="54" y1="60" x2="86" y2="60"/>
+      <line x1="54" y1="90" x2="86" y2="90"/>
+    </svg>`,
+    database: `<svg viewBox="0 0 120 120">
+      <ellipse cx="60" cy="28" rx="34" ry="12"/>
+      <path fill="none" d="M26 28 L26 90 A34 12 0 0 0 94 90 L94 28"/>
+      <path fill="none" d="M26 50 A34 12 0 0 0 94 50"/>
+      <path fill="none" d="M26 70 A34 12 0 0 0 94 70"/>
+    </svg>`,
+    globe: `<svg viewBox="0 0 120 120">
+      <circle cx="60" cy="60" r="40"/>
+      <ellipse cx="60" cy="60" rx="18" ry="40"/>
+      <line x1="20" y1="60" x2="100" y2="60"/>
+      <path fill="none" d="M26 42 Q60 48 94 42"/>
+      <path fill="none" d="M26 78 Q60 72 94 78"/>
+    </svg>`,
+    lock: `<svg viewBox="0 0 120 120">
+      <rect x="28" y="52" width="64" height="48" rx="8"/>
+      <path fill="none" d="M40 52 L40 38 A20 20 0 0 1 80 38 L80 52"/>
+      <circle cx="60" cy="72" r="5.5"/>
+      <line x1="60" y1="78" x2="60" y2="88"/>
+    </svg>`,
+    handshake: `<svg viewBox="0 0 120 120">
+      <path fill="none" d="M16 56 L36 38 L58 50 L74 38 L104 54"/>
+      <path fill="none" d="M24 64 L48 86 L62 84 L88 64"/>
+      <path fill="none" d="M44 62 L58 72 M54 54 L70 66 M66 48 L80 60"/>
+      <circle cx="60" cy="30" r="8"/>
+    </svg>`,
+    cpu: `<svg viewBox="0 0 120 120">
+      <rect x="30" y="30" width="60" height="60" rx="6"/>
+      <rect x="44" y="44" width="32" height="32" rx="3"/>
+      <line x1="44" y1="16" x2="44" y2="30"/>
+      <line x1="60" y1="16" x2="60" y2="30"/>
+      <line x1="76" y1="16" x2="76" y2="30"/>
+      <line x1="44" y1="90" x2="44" y2="104"/>
+      <line x1="60" y1="90" x2="60" y2="104"/>
+      <line x1="76" y1="90" x2="76" y2="104"/>
+      <line x1="16" y1="44" x2="30" y2="44"/>
+      <line x1="16" y1="60" x2="30" y2="60"/>
+      <line x1="16" y1="76" x2="30" y2="76"/>
+      <line x1="90" y1="44" x2="104" y2="44"/>
+      <line x1="90" y1="60" x2="104" y2="60"/>
+      <line x1="90" y1="76" x2="104" y2="76"/>
+    </svg>`,
+    brain: `<svg viewBox="0 0 120 120">
+      <path d="M58 24 C42 18 24 28 24 44 C16 48 16 64 24 70 C22 86 38 96 54 90 C56 96 58 98 58 98"/>
+      <path d="M62 24 C78 18 96 28 96 44 C104 48 104 64 96 70 C98 86 82 96 66 90 C64 96 62 98 62 98"/>
+      <line x1="60" y1="24" x2="60" y2="98"/>
+      <path fill="none" d="M38 44 Q48 48 44 58"/>
+      <path fill="none" d="M82 44 Q72 48 76 58"/>
+      <path fill="none" d="M36 72 Q46 68 50 76"/>
+      <path fill="none" d="M84 72 Q74 68 70 76"/>
+    </svg>`,
+    spark: `<svg viewBox="0 0 120 120">
+      <path d="M60 14 Q64 52 104 60 Q64 68 60 106 Q56 68 16 60 Q56 52 60 14 Z"/>
+      <line x1="24" y1="24" x2="34" y2="34"/>
+      <line x1="96" y1="24" x2="86" y2="34"/>
+      <line x1="24" y1="96" x2="34" y2="86"/>
+    </svg>`,
+    code: `<svg viewBox="0 0 120 120">
+      <path fill="none" d="M40 34 L16 60 L40 86"/>
+      <path fill="none" d="M80 34 L104 60 L80 86"/>
+      <line x1="68" y1="26" x2="52" y2="94"/>
+    </svg>`,
+    puzzle: `<svg viewBox="0 0 120 120">
+      <path d="M26 36 L48 36 A10 10 0 1 1 68 36 L88 36 L88 58 A10 10 0 1 1 88 76 L88 94 L26 94 L26 76 A10 10 0 1 0 26 58 Z"/>
+    </svg>`,
+    user: `<svg viewBox="0 0 120 120">
+      <circle cx="60" cy="40" r="18"/>
+      <path fill="none" d="M24 98 C24 72 96 72 96 98"/>
+    </svg>`,
+    document: `<svg viewBox="0 0 120 120">
+      <path d="M28 18 L74 18 L92 36 L92 102 L28 102 Z"/>
+      <path fill="none" d="M74 18 L74 36 L92 36"/>
+      <line x1="42" y1="54" x2="78" y2="54"/>
+      <line x1="42" y1="70" x2="78" y2="70"/>
+      <line x1="42" y1="86" x2="64" y2="86"/>
+    </svg>`,
+    rocket: `<svg viewBox="0 0 120 120">
+      <path d="M60 12 C78 28 84 56 80 82 L40 82 C36 56 42 28 60 12 Z"/>
+      <circle cx="60" cy="48" r="10"/>
+      <path fill="none" d="M40 64 L22 82 L40 84"/>
+      <path fill="none" d="M80 64 L98 82 L80 84"/>
+      <path fill="none" d="M48 86 Q54 106 60 100 Q66 108 72 86"/>
+    </svg>`,
+    lightbulb: `<svg viewBox="0 0 120 120">
+      <path d="M44 76 C32 66 28 48 36 34 C44 20 76 20 84 34 C92 48 88 66 76 76 L74 88 L46 88 Z"/>
+      <line x1="48" y1="95" x2="72" y2="95"/>
+      <line x1="52" y1="102" x2="68" y2="102"/>
+      <path fill="none" d="M52 54 L58 64 L64 54"/>
+      <line x1="60" y1="10" x2="60" y2="18"/>
+      <line x1="20" y1="48" x2="28" y2="48"/>
+      <line x1="92" y1="48" x2="100" y2="48"/>
+    </svg>`,
+    cat: `<svg viewBox="0 0 120 120">
+      <path d="M28 52 L24 22 L46 36 Q60 32 74 36 L96 22 L92 52 C100 72 88 98 60 98 C32 98 20 72 28 52 Z"/>
+      <circle cx="46" cy="58" r="4.5"/>
+      <circle cx="74" cy="58" r="4.5"/>
+      <polygon points="56,68 64,68 60,74"/>
+      <path fill="none" d="M60 74 Q54 82 48 78"/>
+      <path fill="none" d="M60 74 Q66 82 72 78"/>
+      <line x1="16" y1="66" x2="36" y2="68"/>
+      <line x1="18" y1="76" x2="36" y2="74"/>
+      <line x1="104" y1="66" x2="84" y2="68"/>
+      <line x1="102" y1="76" x2="84" y2="74"/>
+    </svg>`,
+    chart: `<svg viewBox="0 0 120 120">
+      <path fill="none" d="M20 22 L20 96 L102 96"/>
+      <rect x="32" y="64" width="14" height="32" rx="2"/>
+      <rect x="54" y="44" width="14" height="52" rx="2"/>
+      <rect x="76" y="28" width="14" height="68" rx="2"/>
+    </svg>`,
+    gear: `<svg viewBox="0 0 120 120">
+      <circle cx="60" cy="60" r="24"/>
+      <circle cx="60" cy="60" r="10"/>
+      <line x1="60" y1="22" x2="60" y2="36"/>
+      <line x1="60" y1="84" x2="60" y2="98"/>
+      <line x1="22" y1="60" x2="36" y2="60"/>
+      <line x1="84" y1="60" x2="98" y2="60"/>
+      <line x1="33" y1="33" x2="43" y2="43"/>
+      <line x1="77" y1="77" x2="87" y2="87"/>
+      <line x1="87" y1="33" x2="77" y2="43"/>
+      <line x1="43" y1="77" x2="33" y2="87"/>
+    </svg>`,
+    check: `<svg viewBox="0 0 120 120">
+      <circle cx="60" cy="60" r="38"/>
+      <path fill="none" d="M40 62 L54 76 L82 44"/>
+    </svg>`,
+    layers: `<svg viewBox="0 0 120 120">
+      <polygon points="60,20 100,40 60,60 20,40"/>
+      <path fill="none" d="M20 60 L60 80 L100 60"/>
+      <path fill="none" d="M20 80 L60 100 L100 80"/>
+    </svg>`,
+  };
+  function registerSketchIcon(name: string, svgText: string): void {
+    const key = name.trim().toLowerCase();
+    if (key && svgText.trim()) {
+      SKETCH_ICON_LIBRARY[key] = svgText;
+    }
+  }
+  function getSketchIconSvg(name: string): string | undefined {
+    return SKETCH_ICON_LIBRARY[name.trim().toLowerCase()];
+  }
+  function listSketchIcons(): string[] {
+    return Object.keys(SKETCH_ICON_LIBRARY);
+  }
+  return { sketchPipeline, getSketchIconSvg };
+})();
+
 // --- Module: src/plugins/shapes/clipHelpers.ts ---
 const { clipRayToRect, clipRayToEllipse, clipRayToDiamond } = (() => {
   function clipRayToRect(
@@ -1852,6 +3425,589 @@ const { clipRayToRect, clipRayToEllipse, clipRayToDiamond } = (() => {
   return { clipRayToRect, clipRayToEllipse, clipRayToDiamond };
 })();
 
+// --- Module: src/plugins/nodes/sketchNodePlugin.ts ---
+const { iconNodePlugin, sketchNodePlugin } = (() => {
+  function wrapBareSvgSnippet(raw: string): string {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('<')) return trimmed;
+    return `<svg viewBox="0 0 120 120"><path d="${trimmed}"/></svg>`;
+  }
+  const iconNodePlugin: SceneNodePlugin = {
+    id: 'icon',
+    name: 'Sketch Icon',
+    measure(node) {
+      const rawSize = Number(node.props?.size);
+      const size = Number.isFinite(rawSize) && rawSize > 8 ? rawSize : 30;
+      return {
+        width: size,
+        height: size,
+      };
+    },
+    clipRay(positioned, toward, extraMargin) {
+      return clipRayToRect(
+        positioned.cx,
+        positioned.cy,
+        positioned.width,
+        positioned.height,
+        toward,
+        extraMargin
+      );
+    },
+    compile(positioned, helpers) {
+      const props = isCustomSceneNode(positioned.node)
+        ? positioned.node.props
+        : undefined;
+      const iconName =
+        typeof props?.icon === 'string' && props.icon.trim()
+          ? props.icon.trim()
+          : positioned.node.name;
+      const rawSvg =
+        typeof props?.svg === 'string' && props.svg.trim()
+          ? wrapBareSvgSnippet(props.svg)
+          : getSketchIconSvg(iconName) ?? getSketchIconSvg('spark')!;
+
+      const targetW = Math.max(16, positioned.width - 4);
+      const targetH = Math.max(16, positioned.height - 4);
+      const strokeW = Math.max(1.75, Math.min(2.5, positioned.width * 0.068));
+
+      const strokes = sketchPipeline.run({
+        asset: { kind: 'svg', svgText: rawSvg },
+        options: {
+          seed: positioned.id,
+          centerX: positioned.cx,
+          centerY: positioned.cy,
+          targetWidth: targetW,
+          targetHeight: targetH,
+          defaultColor: positioned.node.color,
+          strokeWidth: strokeW,
+          wobbleAmp: 0.45,
+          fillClosedShapes: false,
+        },
+      });
+
+      strokes.forEach((s, idx) => {
+        helpers.pushStroke(s, idx === strokes.length - 1 ? 38 : 16);
+      });
+    },
+  };
+  function readSketchCaption(
+    props?: Record<string, string | number | boolean | undefined>
+  ): string {
+    const raw = props?.title ?? props?.text ?? props?.caption;
+    return typeof raw === 'string' ? raw.trim() : '';
+  }
+  const sketchNodePlugin: SceneNodePlugin = {
+    id: 'sketch',
+    name: 'Hand-Drawn Sketch',
+    measure(node) {
+      const rawW = Number(node.props?.width ?? node.props?.w);
+      const rawH = Number(node.props?.height ?? node.props?.h);
+      const width = Number.isFinite(rawW) && rawW >= 40 ? rawW : 168;
+      const baseH = Number.isFinite(rawH) && rawH >= 40 ? rawH : 128;
+      const caption = readSketchCaption(node.props);
+      return {
+        width,
+        height: caption ? baseH + 26 : baseH,
+      };
+    },
+    clipRay(positioned, toward, extraMargin) {
+      return clipRayToRect(
+        positioned.cx,
+        positioned.cy,
+        positioned.width,
+        positioned.height,
+        toward,
+        extraMargin
+      );
+    },
+    compile(positioned, helpers) {
+      const props = isCustomSceneNode(positioned.node)
+        ? positioned.node.props
+        : undefined;
+      const caption = readSketchCaption(props);
+      const iconName =
+        typeof props?.icon === 'string' && props.icon.trim()
+          ? props.icon.trim()
+          : positioned.node.name;
+      const svgText =
+        typeof props?.svg === 'string' && props.svg.trim()
+          ? wrapBareSvgSnippet(props.svg)
+          : getSketchIconSvg(iconName) ?? getSketchIconSvg('lightbulb')!;
+
+      const areaH = caption ? positioned.height - 28 : positioned.height;
+      const strokes = sketchPipeline.run({
+        asset: { kind: 'svg', svgText },
+        options: {
+          seed: positioned.id,
+          centerX: positioned.cx,
+          centerY: positioned.cy - (caption ? 12 : 0),
+          targetWidth: Math.max(32, positioned.width - 16),
+          targetHeight: Math.max(32, areaH - 14),
+          defaultColor: positioned.node.color,
+          strokeWidth: 2.5,
+          wobbleAmp: 0.75,
+          fillClosedShapes: true,
+        },
+      });
+
+      strokes.forEach((s, idx) => {
+        helpers.pushStroke(s, idx === strokes.length - 1 ? 45 : 20);
+      });
+
+      if (caption) {
+        helpers.pushTextLine({
+          id: `${positioned.id}-caption`,
+          text: caption,
+          boxLeftX: positioned.cx - positioned.width / 2,
+          boxWidth: positioned.width,
+          centerY: positioned.cy + positioned.height / 2 - 12,
+          align: 'center',
+          fontSize: 15,
+          fontWeight: 700,
+          color: positioned.node.color,
+          msPerChar: 78,
+          gapAfterMs: 40,
+        });
+      }
+    },
+  };
+  return { iconNodePlugin, sketchNodePlugin };
+})();
+
+// --- Module: src/plugins/nodes/codeNodePlugin.ts ---
+const { codeNodePlugin } = (() => {
+  function parseCodeLines(node: CustomSceneNode): string[] {
+    const raw =
+      typeof node.props?.lines === 'string'
+        ? node.props.lines
+        : typeof node.props?.code === 'string'
+        ? node.props.code
+        : '';
+    if (!raw.trim()) {
+      return [node.name || 'script.penova.md'];
+    }
+    const normalized = raw.replace(/\\n/g, '\n');
+    const lines = normalized.includes('\n')
+      ? normalized.split(/\r?\n/)
+      : normalized.split(/\s*;\s*/);
+    const cleaned = lines.map((l) => l.trimEnd()).filter((l) => l.length > 0);
+    return cleaned.length > 0 ? cleaned : [node.name || 'script.penova.md'];
+  }
+  function buildTinyCirclePts(
+    cx: number,
+    cy: number,
+    r: number,
+    steps = 12
+  ): { x: number; y: number }[] {
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const a = (i / steps) * Math.PI * 2;
+      pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+    }
+    return pts;
+  }
+  const codeNodePlugin: SceneNodePlugin = {
+    id: 'code',
+    name: 'Code Window',
+    measure(node, ctx) {
+      const lines = parseCodeLines(node);
+      const title =
+        typeof node.props?.title === 'string' && node.props.title.trim()
+          ? node.props.title.trim()
+          : node.name || 'script.penova.md';
+      const font = `400 13.5px "JetBrains Mono", "SF Mono", "Consolas", monospace`;
+      let widest = ctx.measureText(title, `700 12.5px ${ctx.fontFamily}`) + 74;
+      for (const line of lines) {
+        widest = Math.max(widest, ctx.measureText(line, font) + 38);
+      }
+      const rawW = Number(node.props?.width ?? node.props?.w);
+      const width =
+        Number.isFinite(rawW) && rawW >= 180
+          ? rawW
+          : Math.max(230, Math.min(520, Math.ceil(widest)));
+      const height = Math.max(96, 48 + lines.length * 22 + 14);
+      return { width, height, payload: { title, lines } };
+    },
+    clipRay(positioned, toward, extraMargin) {
+      return clipRayToRect(
+        positioned.cx,
+        positioned.cy,
+        positioned.width,
+        positioned.height,
+        toward,
+        extraMargin
+      );
+    },
+    compile(positioned, helpers) {
+      if (!isCustomSceneNode(positioned.node)) {
+        return;
+      }
+      const node = positioned.node;
+      const lines = parseCodeLines(node);
+      const title =
+        typeof node.props?.title === 'string' && node.props.title.trim()
+          ? node.props.title.trim()
+          : node.name || 'script.penova.md';
+
+      const x = positioned.cx - positioned.width / 2;
+      const y = positioned.cy - positioned.height / 2;
+      const rand = mulberry32(hashString(`code:${positioned.id}`));
+
+      // 1. Hand-drawn outer window card
+      const boxPts = buildRoundedRectPoints(
+        x,
+        y,
+        positioned.width,
+        positioned.height,
+        12,
+        rand,
+        3
+      );
+      helpers.pushStroke(
+        buildStrokePath(`${positioned.id}-window`, boxPts, {
+          width: 2.5,
+          color: node.color,
+          opacity: 0.94,
+          fillOpacity: 1,
+          surfaceShadow: true,
+          speedFactor: 1.25,
+        }),
+        35
+      );
+
+      // 2. Window titlebar separator
+      const barY = y + 32;
+      helpers.pushStroke(
+        buildStrokePath(
+          `${positioned.id}-bar`,
+          sketchSegment(
+            { x: x + 6, y: barY },
+            { x: x + positioned.width - 6, y: barY },
+            rand,
+            0.9,
+            18
+          ),
+          {
+            width: 1.6,
+            color: node.color,
+            opacity: 0.52,
+            speedFactor: 1.5,
+          }
+        ),
+        20
+      );
+
+      // 3. Three window dots
+      const dotColors = ['pink', 'yellow', 'green'] as const;
+      dotColors.forEach((dc, idx) => {
+        helpers.pushStroke(
+          buildStrokePath(
+            `${positioned.id}-dot-${idx}`,
+            buildTinyCirclePts(x + 20 + idx * 14, y + 16, 3.6),
+            {
+              width: 1.9,
+              color: dc,
+              opacity: 0.9,
+              speedFactor: 1.8,
+            }
+          ),
+          10
+        );
+      });
+
+      // 4. Title filename
+      helpers.pushTextLine({
+        id: `${positioned.id}-title`,
+        text: title,
+        boxLeftX: x + 64,
+        boxWidth: Math.max(80, positioned.width - 78),
+        centerY: y + 16,
+        align: 'left',
+        fontSize: 12.5,
+        fontWeight: 700,
+        color: node.color,
+        msPerChar: 45,
+        gapAfterMs: 28,
+      });
+
+      // 5. Progressive code lines
+      const codeColor =
+        helpers.theme === 'whiteboard' || helpers.theme === 'letter-paper'
+          ? 'white'
+          : 'white';
+      lines.forEach((line, idx) => {
+        helpers.pushTextLine({
+          id: `${positioned.id}-code-${idx}`,
+          text: line,
+          boxLeftX: x + 18,
+          boxWidth: Math.max(120, positioned.width - 36),
+          centerY: y + 48 + idx * 22,
+          align: 'left',
+          fontSize: 13.5,
+          fontWeight: 400,
+          color: codeColor,
+          msPerChar: 28,
+          gapAfterMs: 24,
+        });
+      });
+    },
+  };
+  return { codeNodePlugin };
+})();
+
+// --- Module: src/plugins/nodes/chartNodePlugin.ts ---
+const { chartNodePlugin } = (() => {
+  function parseChartData(node: CustomSceneNode): {
+    title: string;
+    values: number[];
+    labels: string[];
+    highlightIdx: number;
+  } {
+    const title =
+      typeof node.props?.title === 'string' && node.props.title.trim()
+        ? node.props.title.trim()
+        : node.name || 'Metrics';
+
+    const rawValues =
+      typeof node.props?.values === 'string'
+        ? node.props.values
+            .split(',')
+            .map((v) => Number.parseFloat(v.trim()))
+            .filter((n) => Number.isFinite(n) && n >= 0)
+        : [];
+    const values = rawValues.length >= 2 ? rawValues.slice(0, 8) : [25, 48, 76, 100];
+
+    const rawLabels =
+      typeof node.props?.labels === 'string'
+        ? node.props.labels.split(',').map((s) => s.trim())
+        : [];
+    const labels = values.map((_, idx) => rawLabels[idx] || `#${idx + 1}`);
+
+    const hiRaw = Number(node.props?.highlight);
+    const highlightIdx =
+      Number.isFinite(hiRaw) && hiRaw >= 0 && hiRaw < values.length
+        ? Math.round(hiRaw)
+        : values.length - 1;
+
+    return { title, values, labels, highlightIdx };
+  }
+  const chartNodePlugin: SceneNodePlugin = {
+    id: 'chart',
+    name: 'Bar Chart',
+    measure(node) {
+      const rawW = Number(node.props?.width ?? node.props?.w);
+      const rawH = Number(node.props?.height ?? node.props?.h);
+      const width = Number.isFinite(rawW) && rawW >= 180 ? rawW : 296;
+      const height = Number.isFinite(rawH) && rawH >= 140 ? rawH : 196;
+      return { width, height };
+    },
+    clipRay(positioned, toward, extraMargin) {
+      return clipRayToRect(
+        positioned.cx,
+        positioned.cy,
+        positioned.width,
+        positioned.height,
+        toward,
+        extraMargin
+      );
+    },
+    compile(positioned, helpers) {
+      if (!isCustomSceneNode(positioned.node)) {
+        return;
+      }
+      const node = positioned.node;
+      const { title, values, labels, highlightIdx } = parseChartData(node);
+      const x = positioned.cx - positioned.width / 2;
+      const y = positioned.cy - positioned.height / 2;
+      const rand = mulberry32(hashString(`chart:${positioned.id}`));
+
+      // 1. Card backdrop
+      const framePts = buildRoundedRectPoints(
+        x,
+        y,
+        positioned.width,
+        positioned.height,
+        14,
+        rand,
+        3
+      );
+      helpers.pushStroke(
+        buildStrokePath(`${positioned.id}-card`, framePts, {
+          width: 2.4,
+          color: node.color,
+          opacity: 0.9,
+          fillOpacity: 1,
+          surfaceShadow: true,
+          speedFactor: 1.25,
+        }),
+        35
+      );
+
+      // 2. Title
+      helpers.pushTextLine({
+        id: `${positioned.id}-title`,
+        text: title,
+        boxLeftX: x + 16,
+        boxWidth: positioned.width - 32,
+        centerY: y + 22,
+        align: 'center',
+        fontSize: 15,
+        fontWeight: 700,
+        color: node.color,
+        msPerChar: 55,
+        gapAfterMs: 30,
+      });
+
+      // 3. Axes (L-shape inside card)
+      const plotLeft = x + 30;
+      const plotRight = x + positioned.width - 24;
+      const plotTop = y + 46;
+      const plotBottom = y + positioned.height - 34;
+      const plotW = Math.max(80, plotRight - plotLeft);
+      const plotH = Math.max(50, plotBottom - plotTop);
+
+      helpers.pushStroke(
+        buildStrokePath(
+          `${positioned.id}-y-axis`,
+          sketchSegment(
+            { x: plotLeft, y: plotBottom },
+            { x: plotLeft, y: plotTop },
+            rand,
+            0.9,
+            14
+          ),
+          {
+            width: 2.1,
+            color: 'white',
+            opacity: 0.8,
+            speedFactor: 1.4,
+          }
+        ),
+        18
+      );
+      helpers.pushStroke(
+        buildStrokePath(
+          `${positioned.id}-x-axis`,
+          sketchSegment(
+            { x: plotLeft, y: plotBottom },
+            { x: plotRight, y: plotBottom },
+            rand,
+            0.9,
+            14
+          ),
+          {
+            width: 2.1,
+            color: 'white',
+            opacity: 0.8,
+            speedFactor: 1.4,
+          }
+        ),
+        26
+      );
+
+      // 4. Bars + Excalidraw-style diagonal hachure on highlighted bar
+      const maxVal = Math.max(1e-3, ...values);
+      const slotW = plotW / values.length;
+      const barW = Math.min(44, Math.max(18, slotW * 0.58));
+      const barColors: ChalkColor[] = ['cyan', 'green', 'yellow', 'orange'];
+      const barTopPoints: Point[] = [];
+
+      values.forEach((val, idx) => {
+        const barH = Math.max(10, (val / maxVal) * (plotH - 14));
+        const bx = plotLeft + slotW * (idx + 0.5) - barW / 2;
+        const by = plotBottom - barH;
+        const isHi = idx === highlightIdx;
+        const barColor: ChalkColor = isHi
+          ? 'orange'
+          : barColors[idx % barColors.length];
+
+        const barPts = buildRoundedRectPoints(bx, by, barW, barH, 3, rand, 1.5);
+        helpers.pushStroke(
+          buildStrokePath(`${positioned.id}-bar-${idx}`, barPts, {
+            width: isHi ? 2.6 : 2.1,
+            color: barColor,
+            opacity: 0.94,
+            fillOpacity: 1,
+            speedFactor: 1.35,
+          }),
+          14
+        );
+
+        // Hand-drawn diagonal hachure stripes inside the highlighted bar
+        if (isHi && barH > 16) {
+          const pitch = 9;
+          let hatchIdx = 0;
+          for (let hy = by + 7; hy < plotBottom - 4; hy += pitch) {
+            const xStart = bx + 3;
+            const xEnd = bx + barW - 3;
+            const yEnd = Math.min(plotBottom - 3, hy + (xEnd - xStart) * 0.42);
+            helpers.pushStroke(
+              buildStrokePath(
+                `${positioned.id}-hatch-${hatchIdx++}`,
+                sketchSegment(
+                  { x: xStart, y: hy },
+                  { x: xEnd, y: yEnd },
+                  rand,
+                  0.55,
+                  14
+                ),
+                {
+                  width: 1.35,
+                  color: barColor,
+                  opacity: 0.65,
+                  speedFactor: 1.9,
+                }
+              ),
+              6
+            );
+          }
+        }
+
+        barTopPoints.push({ x: bx + barW / 2, y: Math.max(plotTop + 4, by - 7) });
+
+        helpers.pushTextLine({
+          id: `${positioned.id}-lbl-${idx}`,
+          text: labels[idx],
+          boxLeftX: plotLeft + slotW * idx,
+          boxWidth: slotW,
+          centerY: plotBottom + 16,
+          align: 'center',
+          fontSize: 12,
+          fontWeight: isHi ? 700 : 400,
+          color: isHi ? 'orange' : 'white',
+          msPerChar: 40,
+          gapAfterMs: 14,
+        });
+      });
+
+      // 5. Trend curve above bars
+      if (barTopPoints.length >= 2) {
+        const trendPts: Point[] = [];
+        for (let i = 1; i < barTopPoints.length; i++) {
+          const seg = sketchSegment(
+            barTopPoints[i - 1],
+            barTopPoints[i],
+            rand,
+            0.9,
+            14
+          );
+          trendPts.push(...(i === 1 ? seg : seg.slice(1)));
+        }
+        helpers.pushStroke(
+          buildStrokePath(`${positioned.id}-trend`, trendPts, {
+            width: 2.2,
+            color: 'yellow',
+            opacity: 0.9,
+            speedFactor: 1.4,
+          }),
+          24
+        );
+      }
+    },
+  };
+  return { chartNodePlugin };
+})();
+
 // --- Module: src/plugins/shapes/roundedShape.ts ---
 const { roundedShapePlugin } = (() => {
   const roundedShapePlugin: ShapePlugin = {
@@ -1882,6 +4038,8 @@ const { roundedShapePlugin } = (() => {
           width: baseWidth,
           color,
           opacity: 0.94,
+          fillOpacity: 1,
+          surfaceShadow: true,
           dashed,
           speedFactor: 1.12,
         })
@@ -1971,6 +4129,8 @@ const { circleShapePlugin } = (() => {
           width: baseWidth,
           color,
           opacity: 0.94,
+          fillOpacity: 1,
+          surfaceShadow: true,
           dashed,
           speedFactor: 1.1,
         })
@@ -2055,6 +4215,8 @@ const { cloudShapePlugin } = (() => {
           width: baseWidth,
           color,
           opacity: 0.92,
+          fillOpacity: 1,
+          surfaceShadow: true,
           dashed,
           speedFactor: 1.15,
         }),
@@ -2167,19 +4329,23 @@ const { diamondShapePlugin } = (() => {
         [left, top],
       ];
 
-      return edges.map(([a, b], idx) =>
-        buildStrokePath(
-          `${id}-diamond-${idx}`,
-          sketchSegment(a, b, rand, 1.5, 14),
-          {
-            width: baseWidth,
-            color,
-            opacity: 0.94,
-            dashed,
-            speedFactor: 1.15,
-          }
-        )
-      );
+      const pts: Point[] = [];
+      edges.forEach(([a, b], idx) => {
+        const seg = sketchSegment(a, b, rand, 1.5, 14);
+        pts.push(...(idx === 0 ? seg : seg.slice(1)));
+      });
+
+      return [
+        buildStrokePath(`${id}-diamond-1`, pts, {
+          width: baseWidth,
+          color,
+          opacity: 0.94,
+          fillOpacity: 1,
+          surfaceShadow: true,
+          dashed,
+          speedFactor: 1.15,
+        }),
+      ];
     },
   };
   return { diamondShapePlugin };
@@ -2376,6 +4542,7 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
     role?: CardRole;
     color: ChalkColor;
     shape?: NodeShape;
+    icon?: string;
     zone?: string;
     say?: string;
     pause?: number;
@@ -2384,6 +4551,7 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
   }): GroupSceneNode {
     const role: CardRole = opts.role ?? 'concept';
     const shape: NodeShape = opts.shape ?? 'rounded';
+    const cleanIcon = opts.icon?.trim() ? opts.icon.trim().toLowerCase() : undefined;
 
     const titleFontSize =
       role === 'root'
@@ -2405,6 +4573,20 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
         : 210;
 
     const emphasized = role === 'root' || role === 'highlight';
+
+    const iconNode: CustomSceneNode | null = cleanIcon
+      ? {
+          id: `${opts.id}-icon`,
+          type: 'custom:icon',
+          kind: 'icon',
+          name: cleanIcon,
+          color: opts.color,
+          props: {
+            icon: cleanIcon,
+            size: role === 'root' ? 32 : 26,
+          },
+        }
+      : null;
 
     const titleNode: TextSceneNode = {
       id: `${opts.id}-title`,
@@ -2445,13 +4627,19 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
             emphasized,
           };
 
+    const contentNodes: SceneNode[] = [
+      ...(iconNode ? [iconNode] : []),
+      titleNode,
+      ...(subtitleNode ? [subtitleNode] : []),
+    ];
+
     // Child order naturally determines draw order:
     // underline draws after text; enclosed frames draw before text; shape === 'none' omits frame.
     const children: SceneNode[] = !shapeNode
-      ? [titleNode, ...(subtitleNode ? [subtitleNode] : [])]
+      ? contentNodes
       : shape === 'underline'
-      ? [titleNode, ...(subtitleNode ? [subtitleNode] : []), shapeNode]
-      : [shapeNode, titleNode, ...(subtitleNode ? [subtitleNode] : [])];
+      ? [...contentNodes, shapeNode]
+      : [shapeNode, ...contentNodes];
 
     return {
       id: opts.id,
@@ -2465,6 +4653,7 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
         ...(opts.meta ?? {}),
         role,
         isCard: true,
+        ...(cleanIcon ? { icon: cleanIcon } : {}),
         zone: opts.zone,
         ...(opts.say !== undefined ? { say: opts.say } : {}),
         ...(opts.pause !== undefined ? { pause: opts.pause } : {}),
@@ -2478,16 +4667,19 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
     }
     let shapeCount = 0;
     let textCount = 0;
+    let iconCount = 0;
     for (const child of node.children) {
       if (child.type === 'shape') {
         shapeCount++;
       } else if (child.type === 'text') {
         textCount++;
+      } else if (isCustomSceneNode(child) && child.kind === 'icon') {
+        iconCount++;
       } else {
         return false;
       }
     }
-    return shapeCount <= 1 && textCount >= 1 && textCount <= 2;
+    return shapeCount <= 1 && iconCount <= 1 && textCount >= 1 && textCount <= 2;
   }
   function updateCardGroupNode(
     group: GroupSceneNode,
@@ -2500,6 +4692,8 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
     const nextRole: CardRole = patch.role ?? current.role;
     const nextColor: ChalkColor = patch.color ?? current.color;
     const nextShape: NodeShape = patch.shape ?? current.shape;
+    const nextIconRaw = patch.icon !== undefined ? patch.icon : current.icon;
+    const nextIcon = nextIconRaw?.trim() ? nextIconRaw.trim().toLowerCase() : undefined;
     const nextZone = patch.zone !== undefined ? patch.zone : current.zone;
     const nextSay = patch.say !== undefined ? patch.say : current.say;
     const nextPause = patch.pause !== undefined ? patch.pause : current.pause;
@@ -2528,11 +4722,29 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
     const existingShape = group.children.find(
       (c): c is ShapeSceneNode => c.type === 'shape'
     );
+    const existingIcon = group.children.find(
+      (c): c is CustomSceneNode => isCustomSceneNode(c) && c.kind === 'icon'
+    );
     const existingTexts = group.children.filter(
       (c): c is TextSceneNode => c.type === 'text'
     );
     const existingTitle = existingTexts[0];
     const existingSub = existingTexts[1];
+
+    const iconNode: CustomSceneNode | null = nextIcon
+      ? {
+          ...(existingIcon ?? {}),
+          id: existingIcon?.id ?? `${group.id}-icon`,
+          type: 'custom:icon',
+          kind: 'icon',
+          name: nextIcon,
+          color: nextColor,
+          props: {
+            icon: nextIcon,
+            size: nextRole === 'root' ? 32 : 26,
+          },
+        }
+      : null;
 
     const titleNode: TextSceneNode = {
       ...(existingTitle ?? {}),
@@ -2577,16 +4789,23 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
             emphasized,
           };
 
+    const contentNodes: SceneNode[] = [
+      ...(iconNode ? [iconNode] : []),
+      titleNode,
+      ...(subtitleNode ? [subtitleNode] : []),
+    ];
+
     const children: SceneNode[] = !shapeNode
-      ? [titleNode, ...(subtitleNode ? [subtitleNode] : [])]
+      ? contentNodes
       : nextShape === 'underline'
-      ? [titleNode, ...(subtitleNode ? [subtitleNode] : []), shapeNode]
-      : [shapeNode, titleNode, ...(subtitleNode ? [subtitleNode] : [])];
+      ? [...contentNodes, shapeNode]
+      : [shapeNode, ...contentNodes];
 
     const nextMeta: Record<string, string | number | boolean | undefined> = {
       ...(group.meta ?? {}),
       role: nextRole,
       isCard: true,
+      icon: nextIcon,
       zone: nextZone || undefined,
       say: nextSay || undefined,
       pause:
@@ -2620,6 +4839,10 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
       typeof node.meta?.zone === 'string' && node.meta.zone.trim()
         ? node.meta.zone
         : undefined;
+    const iconFromMeta =
+      typeof node.meta?.icon === 'string' && node.meta.icon.trim()
+        ? node.meta.icon.trim()
+        : undefined;
     const say =
       typeof node.meta?.say === 'string' && node.meta.say.trim()
         ? node.meta.say.trim()
@@ -2638,6 +4861,13 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
       const frame = node.children.find(
         (c): c is ShapeSceneNode => c.type === 'shape'
       );
+      const iconChild = node.children.find(
+        (c): c is CustomSceneNode => isCustomSceneNode(c) && c.kind === 'icon'
+      );
+      const icon =
+        (typeof iconChild?.props?.icon === 'string' && iconChild.props.icon.trim()
+          ? iconChild.props.icon.trim()
+          : undefined) ?? iconFromMeta;
       const titleText = texts[0]?.text ?? node.name;
       const subText = texts[1]?.text;
       return {
@@ -2646,6 +4876,7 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
         role,
         color: texts[0]?.color ?? node.color,
         shape: frame?.shape ?? 'none',
+        icon,
         zone,
         say,
         pause,
@@ -2839,6 +5070,47 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
   function escapeCardTitle(raw: string): string {
     return escapeInlineText(raw).replace(/\|/g, '\\|');
   }
+  function extractTrailingMetaBlock(
+    text: string
+  ): { body: string; metaRaw: string } | null {
+    const trimmed = text.trimEnd();
+    if (!trimmed.endsWith('}')) return null;
+
+    let quote: '"' | "'" | null = null;
+    let depth = 0;
+    let topStart = -1;
+
+    for (let i = 0; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (quote) {
+        if (ch === '\\') {
+          i++;
+        } else if (ch === quote) {
+          quote = null;
+        }
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        continue;
+      }
+      if (ch === '{') {
+        if (depth === 0) topStart = i;
+        depth++;
+      } else if (ch === '}') {
+        if (depth > 0) {
+          depth--;
+          if (depth === 0 && i === trimmed.length - 1 && topStart !== -1) {
+            return {
+              body: trimmed.slice(0, topStart).trimEnd(),
+              metaRaw: trimmed.slice(topStart + 1, i),
+            };
+          }
+        }
+      }
+    }
+    return null;
+  }
   function findUnescapedPipe(raw: string): number {
     for (let i = 0; i < raw.length; i++) {
       if (raw[i] === '|' && raw[i - 1] !== '\\') {
@@ -2957,6 +5229,9 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
         } else {
           warnings.push(`第 ${lineNum} 行未知形状 "${val}"`);
         }
+      } else if (key === 'icon' || key === '图标') {
+        const iconVal = unquoteMetaString(val).trim().toLowerCase();
+        if (iconVal) result.icon = iconVal;
       } else if (key === 'role' || key === '角色') {
         const lower = val.toLowerCase() as CardRole;
         if (VALID_ROLES.has(lower)) {
@@ -3212,6 +5487,7 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
             role: prev.summary.role,
             color: prev.summary.color,
             shape: prev.summary.shape,
+            icon: prev.summary.icon,
             zone: prev.summary.zone,
             say: prev.summary.say,
             pause: prev.summary.pause,
@@ -3264,10 +5540,11 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
         return;
       }
 
-      const lineWithoutMeta = line.replace(/\s*\{[^}]*\}\s*$/, '');
+      const outerMetaSplit = extractTrailingMetaBlock(line);
+      const lineWithoutMeta = outerMetaSplit ? outerMetaSplit.body : line;
       const hasCardPrefix =
         /^\[[a-zA-Z0-9_:-]+(?:#[a-zA-Z0-9_:-]+)?\]\s+/.test(line);
-      const hasMetaSuffix = /\{[^}]*\}\s*$/.test(line);
+      const hasMetaSuffix = outerMetaSplit !== null;
       const rawPipeIdx = findUnescapedPipe(lineWithoutMeta);
       const arrowIdx = lineWithoutMeta.search(/-\.->|->/);
       const hasPipeBeforeArrow =
@@ -3287,10 +5564,10 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
         let rhs = edgeMatch[3].trim();
 
         let edgeMeta: ParsedMetaBlock = {};
-        const edgeMetaMatch = rhs.match(/\{([^}]*)\}\s*$/);
-        if (edgeMetaMatch && edgeMetaMatch.index !== undefined) {
-          edgeMeta = parseMetaBlock(edgeMetaMatch[1], lineNum, warnings, false);
-          rhs = rhs.slice(0, edgeMetaMatch.index).trim();
+        const edgeMetaSplit = extractTrailingMetaBlock(rhs);
+        if (edgeMetaSplit) {
+          edgeMeta = parseMetaBlock(edgeMetaSplit.metaRaw, lineNum, warnings, false);
+          rhs = edgeMetaSplit.body.trim();
         }
 
         let toLabel = rhs;
@@ -3418,15 +5695,15 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
       }
 
       let meta: ParsedMetaBlock = {};
-      const metaMatch = body.match(/\{([^}]*)\}\s*$/);
-      if (metaMatch) {
+      const nodeMetaSplit = extractTrailingMetaBlock(body);
+      if (nodeMetaSplit) {
         meta = parseMetaBlock(
-          metaMatch[1],
+          nodeMetaSplit.metaRaw,
           lineNum,
           warnings,
           draftType === 'custom'
         );
-        body = body.slice(0, metaMatch.index).trim();
+        body = nodeMetaSplit.body.trim();
       }
 
       let label = body;
@@ -3481,6 +5758,7 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
           explicitRole: meta.role,
           color: meta.color ?? 'white',
           shape: explicitShape ?? meta.shape ?? 'rounded',
+          icon: meta.icon,
           zone: meta.zone,
           say: meta.say,
           pause: meta.pause,
@@ -3539,6 +5817,7 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
         existing?.shape ??
         prev?.summary.shape ??
         'rounded';
+      const resolvedIcon = meta.icon ?? existing?.icon ?? prev?.summary.icon;
       const resolvedZone = meta.zone ?? existing?.zone ?? prev?.summary.zone;
       const resolvedSay = meta.say ?? existing?.say ?? prev?.summary.say;
       const resolvedPause = meta.pause ?? existing?.pause ?? prev?.summary.pause;
@@ -3557,6 +5836,7 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
         if (meta.role) existing.explicitRole = meta.role;
         existing.color = resolvedColor;
         existing.shape = resolvedShape;
+        if (resolvedIcon !== undefined) existing.icon = resolvedIcon;
         if (subtitle !== undefined) existing.subtitle = subtitle;
         if (resolvedZone !== undefined) existing.zone = resolvedZone;
         if (resolvedSay !== undefined) existing.say = resolvedSay;
@@ -3598,6 +5878,7 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
           explicitRole: meta.role,
           color: resolvedColor,
           shape: resolvedShape,
+          icon: resolvedIcon,
           zone: resolvedZone,
           say: resolvedSay,
           pause: resolvedPause,
@@ -3721,18 +6002,25 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
 
     const shapes: ShapeSceneNode[] = [];
     const texts: TextSceneNode[] = [];
+    let iconCount = 0;
     for (const child of node.children) {
       if (child.visible === false) return false;
       if (child.type === 'shape') {
         shapes.push(child);
       } else if (child.type === 'text') {
         texts.push(child);
+      } else if (
+        isCustomSceneNode(child) &&
+        resolveCustomNodeKind(child) === 'icon' &&
+        child.color === node.color
+      ) {
+        iconCount++;
       } else {
         return false;
       }
     }
 
-    if (shapes.length > 1 || texts.length < 1 || texts.length > 2) {
+    if (shapes.length > 1 || iconCount > 1 || texts.length < 1 || texts.length > 2) {
       return false;
     }
 
@@ -3937,6 +6225,9 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
       if (summary.shape !== 'rounded') {
         metaParts.push(`shape: ${summary.shape}`);
       }
+      if (summary.icon) {
+        metaParts.push(`icon: ${summary.icon}`);
+      }
       if (summary.zone) {
         metaParts.push(`group: ${formatMetaString(summary.zone)}`);
       }
@@ -4112,7 +6403,7 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
 })();
 
 // --- Module: src/plugins/layouts/shared.ts ---
-const { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicBezier, createPositionedConnectorFromPoints, buildConnectorNode, computeConnectorBowMap, indexNodesRecursively, finalizeLayout } = (() => {
+const { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicBezier, createPositionedConnectorFromPoints, buildConnectorNode, computeConnectorBowMap, indexNodesRecursively, finalizeLayout, pointHitsAnyObstacle, countPolylineCollisions, collectObstaclesForConnector, routeObstacleAwareConnector } = (() => {
   function splitSceneNodes(nodes: SceneNode[]): SplitSceneNodes {
     const vertices = nodes.filter((n) => n.type !== 'connector');
     const ownerVertexIdMap = new Map<string, string>();
@@ -4531,7 +6822,599 @@ const { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicB
       bounds: computeBounds(nodes, zones),
     };
   }
-  return { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicBezier, createPositionedConnectorFromPoints, buildConnectorNode, computeConnectorBowMap, indexNodesRecursively, finalizeLayout };
+  function segmentIntersectsBox(
+    a: Point,
+    b: Point,
+    minX: number,
+    minY: number,
+    maxX: number,
+    maxY: number
+  ): boolean {
+    let t0 = 0;
+    let t1 = 1;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const p = [-dx, dx, -dy, dy];
+    const q = [a.x - minX, maxX - a.x, a.y - minY, maxY - a.y];
+    for (let i = 0; i < 4; i++) {
+      if (Math.abs(p[i]) < 1e-8) {
+        if (q[i] < 0) return false;
+      } else {
+        const t = q[i] / p[i];
+        if (p[i] < 0) {
+          if (t > t1) return false;
+          if (t > t0) t0 = t;
+        } else {
+          if (t < t0) return false;
+          if (t < t1) t1 = t;
+        }
+      }
+    }
+    return t0 <= t1;
+  }
+  function polylineLength(points: Point[]): number {
+    let total = 0;
+    for (let i = 1; i < points.length; i++) {
+      total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    }
+    return total;
+  }
+  function pointInsideObstacle(
+    pt: Point,
+    obs: PositionedSceneNode,
+    padX: number,
+    padY = padX
+  ): boolean {
+    return (
+      pt.x > obs.cx - obs.width / 2 - padX &&
+      pt.x < obs.cx + obs.width / 2 + padX &&
+      pt.y > obs.cy - obs.height / 2 - padY &&
+      pt.y < obs.cy + obs.height / 2 + padY
+    );
+  }
+  function pointHitsAnyObstacle(
+    pt: Point,
+    obstacles: PositionedSceneNode[],
+    padX: number,
+    padY = padX
+  ): boolean {
+    return obstacles.some((obs) => pointInsideObstacle(pt, obs, padX, padY));
+  }
+  function segmentHitsAnyObstacle(
+    a: Point,
+    b: Point,
+    obstacles: PositionedSceneNode[],
+    pad: number
+  ): boolean {
+    for (const obs of obstacles) {
+      if (
+        segmentIntersectsBox(
+          a,
+          b,
+          obs.cx - obs.width / 2 - pad,
+          obs.cy - obs.height / 2 - pad,
+          obs.cx + obs.width / 2 + pad,
+          obs.cy + obs.height / 2 + pad
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function countPolylineCollisions(
+    points: Point[],
+    obstacles: PositionedSceneNode[],
+    pad: number
+  ): number {
+    let count = 0;
+    for (const obs of obstacles) {
+      const minX = obs.cx - obs.width / 2 - pad;
+      const maxX = obs.cx + obs.width / 2 + pad;
+      const minY = obs.cy - obs.height / 2 - pad;
+      const maxY = obs.cy + obs.height / 2 + pad;
+      for (let i = 1; i < points.length; i++) {
+        if (segmentIntersectsBox(points[i - 1], points[i], minX, minY, maxX, maxY)) {
+          count++;
+          break;
+        }
+      }
+    }
+    return count;
+  }
+  function collectObstaclesForConnector(
+    conn: ConnectorSceneNode,
+    allVertices: PositionedSceneNode[],
+    ownerVertexIdMap: Map<string, string>
+  ): PositionedSceneNode[] {
+    const fromOwner = conn.fromId
+      ? ownerVertexIdMap.get(conn.fromId) ?? conn.fromId
+      : undefined;
+    const toOwner = conn.toId
+      ? ownerVertexIdMap.get(conn.toId) ?? conn.toId
+      : undefined;
+    return allVertices.filter(
+      (v) =>
+        v.id !== conn.fromId &&
+        v.id !== conn.toId &&
+        v.id !== fromOwner &&
+        v.id !== toOwner
+    );
+  }
+  function findBlockingObstacles(
+    points: Point[],
+    obstacles: PositionedSceneNode[],
+    pad: number
+  ): PositionedSceneNode[] {
+    const hit: PositionedSceneNode[] = [];
+    for (const obs of obstacles) {
+      const minX = obs.cx - obs.width / 2 - pad;
+      const maxX = obs.cx + obs.width / 2 + pad;
+      const minY = obs.cy - obs.height / 2 - pad;
+      const maxY = obs.cy + obs.height / 2 + pad;
+      for (let i = 1; i < points.length; i++) {
+        if (segmentIntersectsBox(points[i - 1], points[i], minX, minY, maxX, maxY)) {
+          hit.push(obs);
+          break;
+        }
+      }
+    }
+    return hit;
+  }
+  function buildEnvelopeArchPoints(
+    fromNode: PositionedSceneNode,
+    toNode: PositionedSceneNode,
+    obstacles: PositionedSceneNode[],
+    initialBlockers: PositionedSceneNode[],
+    side: -1 | 1,
+    extraClearance: number
+  ): Point[] {
+    const dx = toNode.cx - fromNode.cx;
+    const dy = toNode.cy - fromNode.cy;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const nx = -uy;
+    const ny = ux;
+
+    const blockers = new Set<PositionedSceneNode>(initialBlockers);
+    let points: Point[] = [];
+
+    for (let iter = 0; iter < 5; iter++) {
+      let extremeN = side === -1 ? Infinity : -Infinity;
+      const envelopeNodes =
+        blockers.size > 0 ? [...blockers, fromNode, toNode] : [fromNode, toNode];
+
+      for (const node of envelopeNodes) {
+        const hw = node.width / 2;
+        const hh = node.height / 2;
+        const corners = [
+          { x: node.cx - hw, y: node.cy - hh },
+          { x: node.cx + hw, y: node.cy - hh },
+          { x: node.cx + hw, y: node.cy + hh },
+          { x: node.cx - hw, y: node.cy + hh },
+        ];
+        for (const c of corners) {
+          const projN = (c.x - fromNode.cx) * nx + (c.y - fromNode.cy) * ny;
+          extremeN =
+            side === -1 ? Math.min(extremeN, projN) : Math.max(extremeN, projN);
+        }
+      }
+
+      const targetN = extremeN + side * extraClearance;
+      const inset = Math.min(84, Math.max(22, dist * 0.14));
+
+      const aim1 = {
+        x: fromNode.cx + ux * inset + nx * targetN,
+        y: fromNode.cy + uy * inset + ny * targetN,
+      };
+      const aim2 = {
+        x: toNode.cx - ux * inset + nx * targetN,
+        y: toNode.cy - uy * inset + ny * targetN,
+      };
+      const start = clipPointToNodeBorder(fromNode, aim1, 5);
+      const end = clipPointToNodeBorder(toNode, aim2, 6);
+
+      const startN = (start.x - fromNode.cx) * nx + (start.y - fromNode.cy) * ny;
+      const endN = (end.x - fromNode.cx) * nx + (end.y - fromNode.cy) * ny;
+      const avgEndN = (startN + endN) / 2;
+      const rawCtrlN = (targetN - 0.25 * avgEndN) / 0.75;
+      const ctrlN =
+        side === -1 ? Math.min(targetN, rawCtrlN) : Math.max(targetN, rawCtrlN);
+
+      const c1 = {
+        x: fromNode.cx + ux * inset + nx * ctrlN,
+        y: fromNode.cy + uy * inset + ny * ctrlN,
+      };
+      const c2 = {
+        x: toNode.cx - ux * inset + nx * ctrlN,
+        y: toNode.cy - uy * inset + ny * ctrlN,
+      };
+      points = sampleCubicBezier(start, c1, c2, end, 28);
+
+      const newHits = findBlockingObstacles(points, obstacles, 12);
+      let added = false;
+      for (const h of newHits) {
+        if (!blockers.has(h)) {
+          blockers.add(h);
+          added = true;
+        }
+      }
+      if (!added) break;
+    }
+
+    return points;
+  }
+  function sampleSubdividedLine(a: Point, b: Point, steps = 6): Point[] {
+    const out: Point[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      out.push({
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+      });
+    }
+    return out;
+  }
+  function smoothFilletPolyline(pts: Point[], maxRadius = 34): Point[] {
+    if (pts.length <= 2) {
+      return pts.length === 2
+        ? sampleQuadraticBezier(
+            pts[0],
+            { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 },
+            pts[1],
+            14
+          )
+        : pts;
+    }
+    const out: Point[] = [pts[0]];
+    let cursor = pts[0];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const prev = pts[i - 1];
+      const curr = pts[i];
+      const next = pts[i + 1];
+      const lenIn = Math.hypot(curr.x - prev.x, curr.y - prev.y);
+      const lenOut = Math.hypot(next.x - curr.x, next.y - curr.y);
+      const r = Math.min(maxRadius, lenIn * 0.35, lenOut * 0.35);
+      if (r < 2 || lenIn < 1e-3 || lenOut < 1e-3) {
+        out.push(...sampleSubdividedLine(cursor, curr, 6).slice(1));
+        cursor = curr;
+        continue;
+      }
+      const enterPt = {
+        x: curr.x - ((curr.x - prev.x) / lenIn) * r,
+        y: curr.y - ((curr.y - prev.y) / lenIn) * r,
+      };
+      const exitPt = {
+        x: curr.x + ((next.x - curr.x) / lenOut) * r,
+        y: curr.y + ((next.y - curr.y) / lenOut) * r,
+      };
+      if (Math.hypot(enterPt.x - cursor.x, enterPt.y - cursor.y) > 0.5) {
+        out.push(...sampleSubdividedLine(cursor, enterPt, 6).slice(1));
+      }
+      out.push(...sampleQuadraticBezier(enterPt, curr, exitPt, 10).slice(1));
+      cursor = exitPt;
+    }
+    out.push(...sampleSubdividedLine(cursor, pts[pts.length - 1], 6).slice(1));
+    return out;
+  }
+  function buildVisibilityDetourPoints(
+    fromNode: PositionedSceneNode,
+    toNode: PositionedSceneNode,
+    obstacles: PositionedSceneNode[]
+  ): Point[] | null {
+    if (obstacles.length === 0) return null;
+
+    const minX = Math.min(fromNode.cx - fromNode.width / 2, toNode.cx - toNode.width / 2) - 240;
+    const maxX = Math.max(fromNode.cx + fromNode.width / 2, toNode.cx + toNode.width / 2) + 240;
+    const minY = Math.min(fromNode.cy - fromNode.height / 2, toNode.cy - toNode.height / 2) - 240;
+    const maxY = Math.max(fromNode.cy + fromNode.height / 2, toNode.cy + toNode.height / 2) + 240;
+
+    const midX = (fromNode.cx + toNode.cx) / 2;
+    const midY = (fromNode.cy + toNode.cy) / 2;
+    const localObstacles = obstacles
+      .filter(
+        (o) =>
+          o.cx + o.width / 2 >= minX &&
+          o.cx - o.width / 2 <= maxX &&
+          o.cy + o.height / 2 >= minY &&
+          o.cy - o.height / 2 <= maxY
+      )
+      .sort(
+        (a, b) =>
+          Math.hypot(a.cx - midX, a.cy - midY) - Math.hypot(b.cx - midX, b.cy - midY)
+      )
+      .slice(0, 24);
+
+    const waypoints: Point[] = [];
+    const startPortIndices: number[] = [];
+    const endPortIndices: number[] = [];
+
+    const cardinalPorts = (node: PositionedSceneNode, pad = 16): Point[] => [
+      { x: node.cx, y: node.cy - node.height / 2 - pad },
+      { x: node.cx + node.width / 2 + pad, y: node.cy },
+      { x: node.cx, y: node.cy + node.height / 2 + pad },
+      { x: node.cx - node.width / 2 - pad, y: node.cy },
+    ];
+
+    for (const pt of cardinalPorts(fromNode)) {
+      const borderPt = clipPointToNodeBorder(fromNode, pt, 5);
+      if (
+        !pointHitsAnyObstacle(pt, obstacles, 10) &&
+        !segmentHitsAnyObstacle(borderPt, pt, obstacles, 4)
+      ) {
+        startPortIndices.push(waypoints.length);
+        waypoints.push(pt);
+      }
+    }
+    for (const pt of cardinalPorts(toNode)) {
+      const borderPt = clipPointToNodeBorder(toNode, pt, 6);
+      if (
+        !pointHitsAnyObstacle(pt, obstacles, 10) &&
+        !segmentHitsAnyObstacle(pt, borderPt, obstacles, 4)
+      ) {
+        endPortIndices.push(waypoints.length);
+        waypoints.push(pt);
+      }
+    }
+
+    if (startPortIndices.length === 0 || endPortIndices.length === 0) {
+      return null;
+    }
+
+    const cornerPad = 24;
+    for (const obs of localObstacles) {
+      const hw = obs.width / 2 + cornerPad;
+      const hh = obs.height / 2 + cornerPad;
+      const corners = [
+        { x: obs.cx - hw, y: obs.cy - hh },
+        { x: obs.cx + hw, y: obs.cy - hh },
+        { x: obs.cx + hw, y: obs.cy + hh },
+        { x: obs.cx - hw, y: obs.cy + hh },
+      ];
+      for (const c of corners) {
+        if (
+          !pointHitsAnyObstacle(c, obstacles, 10) &&
+          !pointInsideObstacle(c, fromNode, 4) &&
+          !pointInsideObstacle(c, toNode, 4)
+        ) {
+          waypoints.push(c);
+        }
+      }
+    }
+
+    const n = waypoints.length;
+    const edges: Array<Array<{ to: number; cost: number }>> = Array.from(
+      { length: n },
+      () => []
+    );
+    const blockedEndpoints = [fromNode, toNode, ...obstacles];
+
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = waypoints[i];
+        const b = waypoints[j];
+        // Do not slice across source/target bodies or any padded obstacle
+        if (
+          segmentHitsAnyObstacle(a, b, obstacles, 10) ||
+          segmentHitsAnyObstacle(a, b, blockedEndpoints.slice(0, 2), -2)
+        ) {
+          continue;
+        }
+        const d = Math.hypot(b.x - a.x, b.y - a.y) + 22;
+        edges[i].push({ to: j, cost: d });
+        edges[j].push({ to: i, cost: d });
+      }
+    }
+
+    // Multi-source Dijkstra from start ports to end ports
+    const distArr = new Array<number>(n).fill(Infinity);
+    const prevArr = new Array<number>(n).fill(-1);
+    const used = new Array<boolean>(n).fill(false);
+    const endSet = new Set<number>(endPortIndices);
+
+    for (const sIdx of startPortIndices) {
+      distArr[sIdx] = 0;
+    }
+
+    let reachedEnd = -1;
+    for (let step = 0; step < n; step++) {
+      let u = -1;
+      let bestD = Infinity;
+      for (let i = 0; i < n; i++) {
+        if (!used[i] && distArr[i] < bestD) {
+          bestD = distArr[i];
+          u = i;
+        }
+      }
+      if (u === -1 || !Number.isFinite(bestD)) break;
+      used[u] = true;
+      if (endSet.has(u)) {
+        reachedEnd = u;
+        break;
+      }
+      for (const e of edges[u]) {
+        const alt = bestD + e.cost;
+        if (alt < distArr[e.to]) {
+          distArr[e.to] = alt;
+          prevArr[e.to] = u;
+        }
+      }
+    }
+
+    if (reachedEnd === -1) return null;
+
+    const rawPath: Point[] = [];
+    let cur = reachedEnd;
+    while (cur !== -1) {
+      rawPath.push(waypoints[cur]);
+      cur = prevArr[cur];
+    }
+    rawPath.reverse();
+    if (rawPath.length < 2) return null;
+
+    // Greedy string-pulling to remove collinear / unnecessary turns
+    const pulled: Point[] = [rawPath[0]];
+    let idx = 0;
+    while (idx < rawPath.length - 1) {
+      let farthest = idx + 1;
+      for (let cand = rawPath.length - 1; cand > idx + 1; cand--) {
+        if (
+          !segmentHitsAnyObstacle(rawPath[idx], rawPath[cand], obstacles, 14) &&
+          !segmentHitsAnyObstacle(rawPath[idx], rawPath[cand], [fromNode, toNode], -2)
+        ) {
+          farthest = cand;
+          break;
+        }
+      }
+      pulled.push(rawPath[farthest]);
+      idx = farthest;
+    }
+
+    const fullWaypoints: Point[] = [];
+    const startPort = pulled[0];
+    const endPort = pulled[pulled.length - 1];
+    const startClip = clipPointToNodeBorder(fromNode, startPort, 5);
+    const endClip = clipPointToNodeBorder(toNode, endPort, 6);
+
+    fullWaypoints.push(startClip);
+    // Keep startPort unless skipping directly to pulled[1] stays completely clear of obstacles & endpoints
+    const canSkipStartPort =
+      pulled.length >= 2 &&
+      !segmentHitsAnyObstacle(startClip, pulled[1], obstacles, 10) &&
+      !segmentHitsAnyObstacle(startClip, pulled[1], [fromNode], -2);
+    if (!canSkipStartPort && Math.hypot(startPort.x - startClip.x, startPort.y - startClip.y) > 2) {
+      fullWaypoints.push(startPort);
+    }
+
+    for (let k = 1; k < pulled.length - 1; k++) {
+      fullWaypoints.push(pulled[k]);
+    }
+
+    const prevBeforeEnd = fullWaypoints[fullWaypoints.length - 1];
+    const canSkipEndPort =
+      pulled.length >= 2 &&
+      !segmentHitsAnyObstacle(prevBeforeEnd, endClip, obstacles, 10) &&
+      !segmentHitsAnyObstacle(prevBeforeEnd, endClip, [toNode], -2);
+    if (!canSkipEndPort && Math.hypot(endClip.x - endPort.x, endClip.y - endPort.y) > 2) {
+      fullWaypoints.push(endPort);
+    }
+    fullWaypoints.push(endClip);
+
+    for (const r of [28, 14, 6]) {
+      const smooth = smoothFilletPolyline(fullWaypoints, r);
+      if (countPolylineCollisions(smooth, obstacles, 6) === 0) {
+        return smooth;
+      }
+    }
+    return smoothFilletPolyline(fullWaypoints, 4);
+  }
+  /**
+   * General obstacle-aware connector router across all graph layouts:
+   * 1. Keeps crisp direct / bowed Bezier curves when collision-free.
+   * 2. On collision, compares dual-side smooth envelope arches against a 2D visibility-graph fillet spline.
+   */
+  function routeObstacleAwareConnector(
+    conn: ConnectorSceneNode,
+    vertexMap: Map<string, PositionedSceneNode>,
+    allVertices: PositionedSceneNode[],
+    ownerVertexIdMap: Map<string, string>,
+    options: ObstacleAwareRouteOptions = {}
+  ): PositionedSceneNode {
+    const fromNode = conn.fromId ? vertexMap.get(conn.fromId) : undefined;
+    const toNode = conn.toId ? vertexMap.get(conn.toId) : undefined;
+    if (!fromNode || !toNode) {
+      return buildConnectorNode(conn, vertexMap, options.preferredBow ?? 0);
+    }
+
+    const obstacles = collectObstaclesForConnector(conn, allVertices, ownerVertexIdMap);
+    const directNode = buildConnectorNode(conn, vertexMap, options.preferredBow ?? 0);
+    const directPts = directNode.routedPoints ?? [];
+    const directHits = countPolylineCollisions(directPts, obstacles, 10);
+    const directLabelHit =
+      directNode.labelPoint && pointHitsAnyObstacle(directNode.labelPoint, obstacles, 24, 12);
+
+    if (obstacles.length === 0 || (directHits === 0 && !directLabelHit)) {
+      return directNode;
+    }
+
+    const initialBlockers = findBlockingObstacles(directPts, obstacles, 10);
+    const baseClearance = 40 + (conn.label ? 18 : 0);
+    const routedMidpoints = options.routedMidpoints ?? [];
+    const candidates: Array<{ node: PositionedSceneNode; side?: -1 | 1 }> = [];
+
+    for (const side of [-1, 1] as const) {
+      const pts0 = buildEnvelopeArchPoints(
+        fromNode,
+        toNode,
+        obstacles,
+        initialBlockers,
+        side,
+        baseClearance
+      );
+      const node0 = createPositionedConnectorFromPoints(conn, pts0);
+      candidates.push({ node: node0, side });
+
+      // If midpoint crowds an existing detoured curve, evaluate an extra lane offset
+      const mid0 = node0.labelPoint ?? midpointOnPolyline(pts0);
+      if (
+        mid0 &&
+        routedMidpoints.some((m) => Math.hypot(m.x - mid0.x, m.y - mid0.y) < 38)
+      ) {
+        const pts1 = buildEnvelopeArchPoints(
+          fromNode,
+          toNode,
+          obstacles,
+          initialBlockers,
+          side,
+          baseClearance + 46
+        );
+        candidates.push({
+          node: createPositionedConnectorFromPoints(conn, pts1),
+          side,
+        });
+      }
+    }
+
+    const visPts = buildVisibilityDetourPoints(fromNode, toNode, obstacles);
+    if (visPts && visPts.length >= 2) {
+      candidates.push({ node: createPositionedConnectorFromPoints(conn, visPts) });
+    }
+
+    let bestNode = directNode;
+    let bestScore = Infinity;
+
+    for (const cand of candidates) {
+      const pts = cand.node.routedPoints ?? [];
+      if (pts.length < 2) continue;
+      const segHits = countPolylineCollisions(pts, obstacles, 6);
+      const labelHit =
+        cand.node.labelPoint && pointHitsAnyObstacle(cand.node.labelPoint, obstacles, 16, 8)
+          ? 1
+          : 0;
+      const arcLen = polylineLength(pts);
+      const mid = cand.node.labelPoint ?? midpointOnPolyline(pts);
+      const crowded =
+        mid && routedMidpoints.some((m) => Math.hypot(m.x - mid.x, m.y - mid.y) < 34)
+          ? 140
+          : 0;
+      const sideBias =
+        options.preferredSide && cand.side && cand.side !== options.preferredSide ? 28 : 0;
+
+      const score = arcLen + segHits * 10000 + labelHit * 4000 + crowded + sideBias;
+      if (score < bestScore) {
+        bestScore = score;
+        bestNode = cand.node;
+      }
+    }
+
+    const bestMid = bestNode.labelPoint ?? midpointOnPolyline(bestNode.routedPoints ?? []);
+    if (bestMid && options.routedMidpoints) {
+      options.routedMidpoints.push(bestMid);
+    }
+    return bestNode;
+  }
+  return { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicBezier, createPositionedConnectorFromPoints, buildConnectorNode, computeConnectorBowMap, indexNodesRecursively, finalizeLayout, pointHitsAnyObstacle, countPolylineCollisions, collectObstaclesForConnector, routeObstacleAwareConnector };
 })();
 
 // --- Module: src/plugins/layouts/dagreFlow.ts ---
@@ -4738,27 +7621,43 @@ const { computeDagreFlowLayout } = (() => {
 
     const positionedNodes: PositionedSceneNode[] = [];
     const vertexMap = new Map<string, PositionedSceneNode>();
+    const positionedVertices: PositionedSceneNode[] = [];
 
     for (const node of vertices) {
       const m = measuredMap.get(node.id)!;
       const pt = positions.get(node.id) ?? { x: 0, y: 0 };
       const pNode = makePositionedNode(node, pt.x, pt.y, m, helpers);
       positionedNodes.push(pNode);
+      positionedVertices.push(pNode);
       indexNodesRecursively([pNode], vertexMap);
     }
 
     const bowMap = computeConnectorBowMap(boundConnectors);
+    const routedMidpoints: Point[] = [];
     for (const conn of boundConnectors) {
       const topFrom = ownerVertexIdMap.get(conn.fromId!);
       const topTo = ownerVertexIdMap.get(conn.toId!);
       const rankFrom = topFrom ? ranks.get(topFrom) ?? 0 : 0;
       const rankTo = topTo ? ranks.get(topTo) ?? 0 : 0;
 
-      let bow = bowMap.get(conn.id) ?? 0;
-      if (bow === 0 && (Math.abs(rankTo - rankFrom) > 1 || rankTo < rankFrom)) {
-        bow = rankTo < rankFrom ? -48 : 44;
+      let preferredBow = bowMap.get(conn.id) ?? 0;
+      if (preferredBow === 0 && rankTo < rankFrom) {
+        preferredBow = -48;
       }
-      positionedNodes.push(buildConnectorNode(conn, vertexMap, bow));
+
+      positionedNodes.push(
+        routeObstacleAwareConnector(
+          conn,
+          vertexMap,
+          positionedVertices,
+          ownerVertexIdMap,
+          {
+            preferredBow,
+            preferredSide: rankTo > rankFrom ? -1 : 1,
+            routedMidpoints,
+          }
+        )
+      );
     }
 
     for (const conn of unboundConnectors) {
@@ -5015,6 +7914,7 @@ const { mindmapPlugin } = (() => {
 
       const positionedNodes: PositionedSceneNode[] = [];
       const vertexMap = new Map<string, PositionedSceneNode>();
+      const positionedVertices: PositionedSceneNode[] = [];
       for (const n of vertices) {
         const pt = baseCenters.get(n.id)!;
         const pNode = makePositionedNode(
@@ -5025,14 +7925,21 @@ const { mindmapPlugin } = (() => {
           helpers
         );
         positionedNodes.push(pNode);
+        positionedVertices.push(pNode);
         indexNodesRecursively([pNode], vertexMap);
       }
 
       const bowMap = computeConnectorBowMap(boundConnectors);
+      const routedMidpoints: Point[] = [];
 
       for (const conn of boundConnectors) {
         const fromNode = vertexMap.get(conn.fromId!)!;
         const toNode = vertexMap.get(conn.toId!)!;
+        const obstacles = collectObstaclesForConnector(
+          conn,
+          positionedVertices,
+          ownerVertexIdMap
+        );
 
         if (treeEdgeSet.has(`${conn.fromId}->${conn.toId}`)) {
           const dir: 1 | -1 =
@@ -5051,11 +7958,39 @@ const { mindmapPlugin } = (() => {
           const c1 = { x: start.x + dir * spanX, y: start.y };
           const c2 = { x: end.x - dir * spanX, y: end.y };
           const pts = sampleCubicBezier(start, c1, c2, end, 20);
+          const treeEdge = createPositionedConnectorFromPoints(conn, pts);
 
-          positionedNodes.push(createPositionedConnectorFromPoints(conn, pts));
+          const hitsObstacle =
+            countPolylineCollisions(pts, obstacles, 6) > 0 ||
+            (treeEdge.labelPoint &&
+              pointHitsAnyObstacle(treeEdge.labelPoint, obstacles, 20, 10));
+
+          positionedNodes.push(
+            hitsObstacle
+              ? routeObstacleAwareConnector(
+                  conn,
+                  vertexMap,
+                  positionedVertices,
+                  ownerVertexIdMap,
+                  {
+                    preferredBow: bowMap.get(conn.id) ?? 0,
+                    routedMidpoints,
+                  }
+                )
+              : treeEdge
+          );
         } else {
           positionedNodes.push(
-            buildConnectorNode(conn, vertexMap, bowMap.get(conn.id) || 44)
+            routeObstacleAwareConnector(
+              conn,
+              vertexMap,
+              positionedVertices,
+              ownerVertexIdMap,
+              {
+                preferredBow: bowMap.get(conn.id) || 44,
+                routedMidpoints,
+              }
+            )
           );
         }
       }
@@ -5083,9 +8018,8 @@ const { conceptGraphPlugin } = (() => {
     textCodec: graphScriptCodec,
     deriveSteps: deriveTeachingSteps,
     compute(scene, helpers) {
-      const { vertices, boundConnectors, unboundConnectors } = splitSceneNodes(
-        scene.nodes
-      );
+      const { vertices, ownerVertexIdMap, boundConnectors, unboundConnectors } =
+        splitSceneNodes(scene.nodes);
 
       if (vertices.length === 0) {
         const emptyMap = new Map<string, PositionedSceneNode>();
@@ -5224,6 +8158,7 @@ const { conceptGraphPlugin } = (() => {
 
       const positionedNodes: PositionedSceneNode[] = [];
       const vertexMap = new Map<string, PositionedSceneNode>();
+      const positionedVertices: PositionedSceneNode[] = [];
       const zones: GroupBox[] = [];
 
       packedGroups.forEach((pg, idx) => {
@@ -5248,6 +8183,7 @@ const { conceptGraphPlugin } = (() => {
             helpers
           );
           positionedNodes.push(pNode);
+          positionedVertices.push(pNode);
           indexNodesRecursively([pNode], vertexMap);
 
           minX = Math.min(minX, pNode.cx - pNode.width / 2);
@@ -5268,6 +8204,7 @@ const { conceptGraphPlugin } = (() => {
       });
 
       const bowMap = computeConnectorBowMap(boundConnectors);
+      const routedMidpoints: Point[] = [];
       for (const conn of boundConnectors) {
         const fromNode = vertexMap.get(conn.fromId!)!;
         const toNode = vertexMap.get(conn.toId!)!;
@@ -5279,7 +8216,18 @@ const { conceptGraphPlugin } = (() => {
         if (bow === 0 && dist > 320) {
           bow = 28;
         }
-        positionedNodes.push(buildConnectorNode(conn, vertexMap, bow));
+        positionedNodes.push(
+          routeObstacleAwareConnector(
+            conn,
+            vertexMap,
+            positionedVertices,
+            ownerVertexIdMap,
+            {
+              preferredBow: bow,
+              routedMidpoints,
+            }
+          )
+        );
       }
 
       for (const conn of unboundConnectors) {
@@ -6259,11 +9207,11 @@ const { freeformLayoutPlugin } = (() => {
     textCodec: graphScriptCodec,
     deriveSteps: deriveTeachingSteps,
     compute(scene, helpers) {
-      const { vertices, boundConnectors, unboundConnectors } = splitSceneNodes(
-        scene.nodes
-      );
+      const { vertices, ownerVertexIdMap, boundConnectors, unboundConnectors } =
+        splitSceneNodes(scene.nodes);
 
       const positionedNodes: PositionedSceneNode[] = [];
+      const positionedVertices: PositionedSceneNode[] = [];
       const nodeMap = new Map<string, PositionedSceneNode>();
 
       if (vertices.length > 0) {
@@ -6318,14 +9266,25 @@ const { freeformLayoutPlugin } = (() => {
             helpers
           );
           positionedNodes.push(pNode);
+          positionedVertices.push(pNode);
           indexNodesRecursively([pNode], nodeMap);
         });
       }
 
       const bowMap = computeConnectorBowMap(boundConnectors);
+      const routedMidpoints: Point[] = [];
       for (const conn of boundConnectors) {
         positionedNodes.push(
-          buildConnectorNode(conn, nodeMap, bowMap.get(conn.id) ?? 0)
+          routeObstacleAwareConnector(
+            conn,
+            nodeMap,
+            positionedVertices,
+            ownerVertexIdMap,
+            {
+              preferredBow: bowMap.get(conn.id) ?? 0,
+              routedMidpoints,
+            }
+          )
         );
       }
       for (const conn of unboundConnectors) {
@@ -6600,19 +9559,29 @@ const { chalkboardPlugin } = (() => {
   const palette: ThemePalette = {
     id: 'chalkboard',
     label: 'Chalkboard',
-    bgPrimary: '#192e25',
-    bgSecondary: '#0f1d17',
-    vignetteColor: 'rgba(5, 11, 8, 0.52)',
-    subtitleColor: '#cdd9cf',
-    labelPillBg: 'rgba(17, 33, 26, 0.88)',
-    labelPillBorder: 'rgba(242, 244, 238, 0.16)',
+    bgPrimary: '#1e2c26',
+    bgSecondary: '#131d19',
+    vignetteColor: 'rgba(6, 11, 9, 0.56)',
+    subtitleColor: '#d2ddd6',
+    labelPillBg: 'rgba(20, 32, 27, 0.92)',
+    labelPillBorder: 'rgba(244, 241, 234, 0.18)',
+    cardFillOpacity: 0.13,
+    zoneFillOpacity: 0.06,
+    cardShadow: {
+      dx: 3,
+      dy: 4,
+      color: 'rgba(0, 0, 0, 0.24)',
+    },
+    subtitleBg: 'rgba(13, 21, 18, 0.80)',
+    subtitleBorder: 'rgba(244, 241, 234, 0.16)',
+    subtitleTextColor: '#f4f1ea',
     colors: {
-      white: '#f2f4ee',
-      yellow: '#fde06b',
-      cyan: '#7dd8f7',
-      pink: '#ff9bb3',
-      green: '#8be8a8',
-      orange: '#ffb870',
+      white: '#f4f1ea',
+      yellow: '#f3cf7a',
+      cyan: '#89c9dc',
+      pink: '#e89ca3',
+      green: '#98cf9e',
+      orange: '#ebaa76',
     },
   };
   const GRAIN_TILE_SIZE = 128;
@@ -6712,14 +9681,23 @@ const { chalkboardPlugin } = (() => {
 
         const ledgeH = Math.max(8, Math.round(h * 0.012));
         const ledgeGrad = c.createLinearGradient(0, h - ledgeH, 0, h);
-        ledgeGrad.addColorStop(0, '#4f3723');
-        ledgeGrad.addColorStop(0.5, '#3b2819');
-        ledgeGrad.addColorStop(1, '#26190f');
+        ledgeGrad.addColorStop(0, '#5c4028');
+        ledgeGrad.addColorStop(0.5, '#3e2a19');
+        ledgeGrad.addColorStop(1, '#24170d');
         c.fillStyle = ledgeGrad;
         c.fillRect(0, h - ledgeH, w, ledgeH);
 
-        c.fillStyle = 'rgba(255, 232, 198, 0.14)';
+        c.fillStyle = 'rgba(255, 238, 210, 0.16)';
         c.fillRect(0, h - ledgeH, w, 1);
+
+        c.strokeStyle = 'rgba(244, 241, 234, 0.05)';
+        c.lineWidth = 1;
+        c.beginPath();
+        c.moveTo(0.5, h - ledgeH);
+        c.lineTo(0.5, 0.5);
+        c.lineTo(w - 0.5, 0.5);
+        c.lineTo(w - 0.5, h - ledgeH);
+        c.stroke();
       });
     },
     drawStroke(ctx, stroke, progress) {
@@ -6761,19 +9739,38 @@ const { whiteboardPlugin } = (() => {
   const palette: ThemePalette = {
     id: 'whiteboard',
     label: 'Whiteboard',
-    bgPrimary: '#fbfcfe',
-    bgSecondary: '#eef2f6',
-    vignetteColor: 'rgba(148, 163, 184, 0.14)',
-    subtitleColor: '#475569',
-    labelPillBg: 'rgba(255, 255, 255, 0.92)',
-    labelPillBorder: 'rgba(30, 41, 59, 0.15)',
+    bgPrimary: '#faf9f5',
+    bgSecondary: '#f2efe9',
+    vignetteColor: 'rgba(120, 113, 108, 0.10)',
+    subtitleColor: '#4b5563',
+    labelPillBg: 'rgba(250, 249, 245, 0.96)',
+    labelPillBorder: 'rgba(35, 38, 41, 0.14)',
+    cardFillOpacity: 0.92,
+    zoneFillOpacity: 0.055,
+    cardFillColors: {
+      white: '#ffffff',
+      yellow: '#fef3c7',
+      cyan: '#e0f2fe',
+      pink: '#ffe4e6',
+      green: '#dcfce7',
+      orange: '#ffedd5',
+    },
+    cardShadow: {
+      dx: 4,
+      dy: 5,
+      color: 'rgba(35, 38, 41, 0.08)',
+    },
+    preferNeutralCardTitle: true,
+    subtitleBg: 'rgba(255, 254, 250, 0.93)',
+    subtitleBorder: 'rgba(35, 38, 41, 0.15)',
+    subtitleTextColor: '#1f2421',
     colors: {
-      white: '#1e293b',
-      yellow: '#ca8a04',
-      cyan: '#0284c7',
-      pink: '#db2777',
-      green: '#16a34a',
-      orange: '#ea580c',
+      white: '#232629',
+      yellow: '#b7791f',
+      cyan: '#1d6fa5',
+      pink: '#be3a68',
+      green: '#2b7a57',
+      orange: '#c85a28',
     },
   };
   const whiteboardPlugin: PresentationPlugin = {
@@ -6791,11 +9788,11 @@ const { whiteboardPlugin } = (() => {
       drawCachedSurface(ctx, 'whiteboard', width, height, (c, w, h) => {
         paintRadialBackdrop(c, w, h, palette);
 
-        c.fillStyle = 'rgba(148, 163, 184, 0.22)';
-        const pitch = 28;
+        c.fillStyle = 'rgba(120, 113, 108, 0.18)';
+        const pitch = 24;
         for (let y = pitch; y < h; y += pitch) {
           for (let x = pitch; x < w; x += pitch) {
-            c.fillRect(x, y, 1.3, 1.3);
+            c.fillRect(x, y, 1.4, 1.4);
           }
         }
 
@@ -6850,23 +9847,28 @@ const { whiteboardPlugin } = (() => {
 // --- Module: src/plugins/presentations/blueprintPlugin.ts ---
 const { blueprintPlugin } = (() => {
   const BLUEPRINT_FONT =
-    "'Segoe Print', 'KaiTi', 'STKaiti', 'LXGW WenKai', 'Microsoft YaHei', cursive";
+    "'JetBrains Mono', 'SF Mono', 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif";
   const palette: ThemePalette = {
     id: 'blueprint',
     label: 'Blueprint',
-    bgPrimary: '#102644',
-    bgSecondary: '#09172b',
-    vignetteColor: 'rgba(4, 10, 22, 0.55)',
-    subtitleColor: '#a6c6eb',
-    labelPillBg: 'rgba(10, 25, 48, 0.9)',
-    labelPillBorder: 'rgba(103, 232, 249, 0.24)',
+    bgPrimary: '#132f53',
+    bgSecondary: '#0a1c35',
+    vignetteColor: 'rgba(4, 11, 24, 0.54)',
+    subtitleColor: '#b7dcf2',
+    labelPillBg: 'rgba(11, 28, 52, 0.92)',
+    labelPillBorder: 'rgba(116, 212, 247, 0.24)',
+    cardFillOpacity: 0.16,
+    zoneFillOpacity: 0.07,
+    subtitleBg: 'rgba(9, 22, 42, 0.82)',
+    subtitleBorder: 'rgba(116, 212, 247, 0.24)',
+    subtitleTextColor: '#f2f7fc',
     colors: {
-      white: '#f0f7ff',
-      yellow: '#ffd86b',
-      cyan: '#67e8f9',
-      pink: '#fda4af',
-      green: '#86efac',
-      orange: '#fdba74',
+      white: '#f2f7fc',
+      yellow: '#f4ca64',
+      cyan: '#74d4f7',
+      pink: '#f39aa7',
+      green: '#7fd8a8',
+      orange: '#f3a668',
     },
   };
   const blueprintPlugin: PresentationPlugin = {
@@ -6888,7 +9890,7 @@ const { blueprintPlugin } = (() => {
         const major = 120;
         c.lineWidth = 1;
 
-        c.strokeStyle = 'rgba(103, 232, 249, 0.07)';
+        c.strokeStyle = 'rgba(116, 212, 247, 0.07)';
         c.beginPath();
         for (let x = 0; x <= w; x += minor) {
           c.moveTo(x + 0.5, 0);
@@ -6900,7 +9902,7 @@ const { blueprintPlugin } = (() => {
         }
         c.stroke();
 
-        c.strokeStyle = 'rgba(103, 232, 249, 0.16)';
+        c.strokeStyle = 'rgba(116, 212, 247, 0.16)';
         c.beginPath();
         for (let x = 0; x <= w; x += major) {
           c.moveTo(x + 0.5, 0);
@@ -6913,8 +9915,47 @@ const { blueprintPlugin } = (() => {
         c.stroke();
 
         const margin = Math.max(12, Math.round(Math.min(w, h) * 0.018));
-        c.strokeStyle = 'rgba(186, 230, 253, 0.22)';
-        c.strokeRect(margin, margin, w - margin * 2, h - margin * 2);
+        c.strokeStyle = 'rgba(186, 230, 253, 0.24)';
+        c.strokeRect(margin + 0.5, margin + 0.5, w - margin * 2 - 1, h - margin * 2 - 1);
+        c.strokeStyle = 'rgba(116, 212, 247, 0.12)';
+        c.strokeRect(
+          margin + 4.5,
+          margin + 4.5,
+          w - (margin + 4) * 2 - 1,
+          h - (margin + 4) * 2 - 1
+        );
+
+        // Corner crosshair registration marks
+        const tickArm = 8;
+        const tickOffset = margin + 14;
+        const corners = [
+          [tickOffset, tickOffset],
+          [w - tickOffset, tickOffset],
+          [tickOffset, h - tickOffset],
+          [w - tickOffset, h - tickOffset],
+        ];
+        c.strokeStyle = 'rgba(186, 230, 253, 0.28)';
+        c.beginPath();
+        for (const [cx, cy] of corners) {
+          c.moveTo(cx - tickArm, cy + 0.5);
+          c.lineTo(cx + tickArm, cy + 0.5);
+          c.moveTo(cx + 0.5, cy - tickArm);
+          c.lineTo(cx + 0.5, cy + tickArm);
+        }
+        c.stroke();
+
+        const vig = c.createRadialGradient(
+          w * 0.5,
+          h * 0.5,
+          Math.min(w, h) * 0.36,
+          w * 0.5,
+          h * 0.5,
+          Math.max(w, h) * 0.74
+        );
+        vig.addColorStop(0, 'rgba(0,0,0,0)');
+        vig.addColorStop(1, palette.vignetteColor);
+        c.fillStyle = vig;
+        c.fillRect(0, 0, w, h);
       });
     },
     drawStroke(ctx, stroke, progress) {
@@ -6957,19 +9998,38 @@ const { letterPaperPlugin } = (() => {
   const palette: ThemePalette = {
     id: 'letter-paper',
     label: 'Letter Paper',
-    bgPrimary: '#fcf6e8',
-    bgSecondary: '#efe2c6',
-    vignetteColor: 'rgba(138, 108, 68, 0.2)',
-    subtitleColor: '#6b5742',
-    labelPillBg: 'rgba(255, 250, 238, 0.94)',
-    labelPillBorder: 'rgba(139, 107, 74, 0.28)',
+    bgPrimary: '#fdf8ee',
+    bgSecondary: '#f3e8d2',
+    vignetteColor: 'rgba(128, 98, 62, 0.16)',
+    subtitleColor: '#5c4d3c',
+    labelPillBg: 'rgba(253, 248, 238, 0.96)',
+    labelPillBorder: 'rgba(128, 98, 62, 0.24)',
+    cardFillOpacity: 0.76,
+    zoneFillOpacity: 0.05,
+    cardFillColors: {
+      white: '#fffdf7',
+      yellow: '#fbf0d1',
+      cyan: '#e4edf7',
+      pink: '#f8e2e4',
+      green: '#e3f0e8',
+      orange: '#fae7d7',
+    },
+    cardShadow: {
+      dx: 3,
+      dy: 4,
+      color: 'rgba(108, 82, 52, 0.09)',
+    },
+    preferNeutralCardTitle: true,
+    subtitleBg: 'rgba(253, 248, 238, 0.94)',
+    subtitleBorder: 'rgba(128, 98, 62, 0.26)',
+    subtitleTextColor: '#1f2733',
     colors: {
-      white: '#162033',
-      yellow: '#8a5a00',
-      cyan: '#1d409c',
-      pink: '#a61b1b',
-      green: '#145a2f',
-      orange: '#9c3f08',
+      white: '#1f2733',
+      yellow: '#916216',
+      cyan: '#264c7d',
+      pink: '#9e3039',
+      green: '#255941',
+      orange: '#a64d24',
     },
   };
   const PAPER_GRAIN_TILE_SIZE = 128;
@@ -7035,7 +10095,7 @@ const { letterPaperPlugin } = (() => {
         // Subtle ruled stationery horizontal lines (scales evenly across preview & 1080p export)
         const linePitch = Math.max(26, Math.round(Math.min(w, h) * 0.068));
         const firstRuleY = Math.round(h * 0.115);
-        c.strokeStyle = 'rgba(155, 130, 96, 0.2)';
+        c.strokeStyle = 'rgba(150, 126, 94, 0.18)';
         c.lineWidth = Math.max(1, h / 650);
         c.beginPath();
         for (let y = firstRuleY; y < h - linePitch * 0.7; y += linePitch) {
@@ -7045,9 +10105,17 @@ const { letterPaperPlugin } = (() => {
         }
         c.stroke();
 
+        // Delicate double top header rule
+        const headerY = Math.round(firstRuleY - 4) + 0.5;
+        c.strokeStyle = 'rgba(150, 126, 94, 0.15)';
+        c.beginPath();
+        c.moveTo(0, headerY);
+        c.lineTo(w, headerY);
+        c.stroke();
+
         // Classic double terracotta left margin lines
         const marginX = Math.max(34, Math.round(w * 0.082));
-        c.strokeStyle = 'rgba(196, 104, 94, 0.26)';
+        c.strokeStyle = 'rgba(194, 96, 84, 0.24)';
         c.lineWidth = Math.max(1, h / 650);
         c.beginPath();
         c.moveTo(marginX + 0.5, 0);
@@ -9140,10 +12208,11 @@ const { pngSequenceTarExporterPlugin } = (() => {
       const height = source.height || (source.aspectRatio === '9:16' ? 1920 : 1080);
       const { canvas, ctx } = createOffscreenCanvas(width, height);
 
-      const frameIntervalMs = 1000 / TAR_EXPORT_FPS;
+      const exportFps = Math.max(1, Math.round(source.fps || TAR_EXPORT_FPS));
+      const frameIntervalMs = 1000 / exportFps;
       const totalFrames = Math.max(
         1,
-        Math.ceil((source.totalDurationMs / 1000) * TAR_EXPORT_FPS)
+        Math.ceil((source.totalDurationMs / 1000) * exportFps)
       );
 
       const entries: TarEntry[] = [];
@@ -9179,10 +12248,10 @@ const { pngSequenceTarExporterPlugin } = (() => {
         aspectRatio: source.aspectRatio,
         width,
         height,
-        fps: TAR_EXPORT_FPS,
+        fps: exportFps,
         frameCount,
         totalDurationMs: source.totalDurationMs,
-        ffmpegCommand: `ffmpeg -framerate ${TAR_EXPORT_FPS} -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4`,
+        ffmpegCommand: `ffmpeg -framerate ${exportFps} -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4`,
       };
       entries.push({
         name: 'manifest.json',
@@ -9193,13 +12262,13 @@ const { pngSequenceTarExporterPlugin } = (() => {
         data: encoder.encode(
           [
             `Penova Offline Lossless Frame Bundle · ${source.title}`,
-            `Resolution: ${width}x${height}, FPS: ${TAR_EXPORT_FPS} fps, Frames: ${frameCount}`,
+            `Resolution: ${width}x${height}, FPS: ${exportFps} fps, Frames: ${frameCount}`,
             '',
             'Extract this archive and run the following command in the extracted folder to build MP4:',
             manifest.ffmpegCommand,
             '',
             'To mux a local voiceover or background audio track (e.g. audio.mp3):',
-            `ffmpeg -framerate ${TAR_EXPORT_FPS} -i frames/frame_%05d.png -i audio.mp3 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest output_with_audio.mp4`,
+            `ffmpeg -framerate ${exportFps} -i frames/frame_%05d.png -i audio.mp3 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest output_with_audio.mp4`,
           ].join('\n')
         ),
       });
@@ -9213,7 +12282,7 @@ const { pngSequenceTarExporterPlugin } = (() => {
         }),
         filename: safeFilename(source.title, 'tar'),
         mimeType: 'application/x-tar',
-        summary: `${frameCount} frames @ ${TAR_EXPORT_FPS}fps`,
+        summary: `${frameCount} frames @ ${exportFps}fps`,
       };
     },
   };
@@ -9280,10 +12349,11 @@ const { svgSequenceTarExporterPlugin } = (() => {
 
       const width = source.width;
       const height = source.height;
-      const frameIntervalMs = 1000 / SVG_TAR_EXPORT_FPS;
+      const exportFps = Math.max(1, Math.round(source.fps || SVG_TAR_EXPORT_FPS));
+      const frameIntervalMs = 1000 / exportFps;
       const totalFrames = Math.max(
         1,
-        Math.ceil((source.totalDurationMs / 1000) * SVG_TAR_EXPORT_FPS)
+        Math.ceil((source.totalDurationMs / 1000) * exportFps)
       );
 
       const entries: TarEntry[] = [];
@@ -9314,11 +12384,11 @@ const { svgSequenceTarExporterPlugin } = (() => {
         aspectRatio: source.aspectRatio,
         width,
         height,
-        fps: SVG_TAR_EXPORT_FPS,
+        fps: exportFps,
         frameFormat: 'svg',
         frameCount,
         totalDurationMs: source.totalDurationMs,
-        ffmpegCommand: `for f in frames/*.svg; do rsvg-convert "$f" -o "\${f%.svg}.png"; done && ffmpeg -framerate ${SVG_TAR_EXPORT_FPS} -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4`,
+        ffmpegCommand: `for f in frames/*.svg; do rsvg-convert "$f" -o "\${f%.svg}.png"; done && ffmpeg -framerate ${exportFps} -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4`,
       };
       entries.push({
         name: 'manifest.json',
@@ -9329,7 +12399,7 @@ const { svgSequenceTarExporterPlugin } = (() => {
         data: encoder.encode(
           [
             `Penova Platform-Agnostic Vector Frame Bundle · ${source.title}`,
-            `Resolution: ${width}x${height}, FPS: ${SVG_TAR_EXPORT_FPS} fps, Frames: ${frameCount}`,
+            `Resolution: ${width}x${height}, FPS: ${exportFps} fps, Frames: ${frameCount}`,
             '',
             'Rasterize SVG frames (e.g. via rsvg-convert / resvg / Inkscape) and encode MP4 with FFmpeg:',
             manifest.ffmpegCommand,
@@ -9344,7 +12414,7 @@ const { svgSequenceTarExporterPlugin } = (() => {
         blob: new Blob([tarBytes.slice()], { type: 'application/x-tar' }),
         filename: safeFilename(source.title, 'tar'),
         mimeType: 'application/x-tar',
-        summary: `${frameCount} SVG frames @ ${SVG_TAR_EXPORT_FPS}fps`,
+        summary: `${frameCount} SVG frames @ ${exportFps}fps`,
       };
     },
   };
@@ -9502,6 +12572,12 @@ const { svgSequenceTarExporterPlugin } = (() => {
     shapeRegistry.register(diamondShapePlugin, { override: true });
     shapeRegistry.register(dividerShapePlugin, { override: true });
 
+    // Register custom SceneNode visual widgets
+    sceneNodeRegistry.register(iconNodePlugin, { override: true });
+    sceneNodeRegistry.register(sketchNodePlugin, { override: true });
+    sceneNodeRegistry.register(codeNodePlugin, { override: true });
+    sceneNodeRegistry.register(chartNodePlugin, { override: true });
+
     // Register layouts
     layoutRegistry.register(flowHorizontalPlugin, { override: true });
     layoutRegistry.register(flowVerticalPlugin, { override: true });
@@ -9635,7 +12711,7 @@ const { createProjectFromScene, cloneProject } = (() => {
 })();
 
 // --- Module: src/engine/layout/textMeasure.ts ---
-const { wrapText, measureSceneNode, positionGroupChildren } = (() => {
+const { estimateCharAdvanceWidth, wrapText, measureSceneNode, positionGroupChildren } = (() => {
   const BOARD_FONT_FAMILY =
     "'Segoe Print', 'KaiTi', 'STKaiti', 'LXGW WenKai', 'Microsoft YaHei', cursive";
   let cachedMeasureCtx: CanvasRenderingContext2D | null = null;
@@ -9660,6 +12736,46 @@ const { wrapText, measureSceneNode, positionGroupChildren } = (() => {
       (code >= 0x3000 && code <= 0x303f)
     );
   }
+  const NARROW_ASCII = new Set([
+    'i', 'l', 'I', '!', '|', '.', ',', ':', ';', "'", '`', '1',
+  ]);
+  const SEMI_NARROW_ASCII = new Set([
+    'j', 't', 'f', 'r', '(', ')', '[', ']', '{', '}', '/', '\\', '-', '"', '*',
+  ]);
+  const WIDE_LOWER_ASCII = new Set(['m', 'w']);
+  const WIDE_UPPER_ASCII = new Set(['M', 'W', '@', '%', '&']);
+  /**
+   * 估算单字符在无浏览器 Canvas 上下文时的排版前进宽度，用于修复等宽近似导致的 ASCII 间距失真。
+   */
+  function estimateCharAdvanceWidth(
+    ch: string,
+    fontSize: number,
+    boldBoost = 1.0,
+  ): number {
+    if (ch === ' ') {
+      return fontSize * 0.33;
+    }
+    if (isWideChar(ch)) {
+      return fontSize * 1.02 * boldBoost;
+    }
+    if (NARROW_ASCII.has(ch)) {
+      return fontSize * 0.3 * boldBoost;
+    }
+    if (SEMI_NARROW_ASCII.has(ch)) {
+      return fontSize * 0.4 * boldBoost;
+    }
+    if (WIDE_LOWER_ASCII.has(ch)) {
+      return fontSize * 0.82 * boldBoost;
+    }
+    if (WIDE_UPPER_ASCII.has(ch)) {
+      return fontSize * 0.88 * boldBoost;
+    }
+    const code = ch.codePointAt(0) ?? 0;
+    if ((code >= 65 && code <= 90) || (code >= 48 && code <= 57)) {
+      return fontSize * 0.64 * boldBoost;
+    }
+    return fontSize * 0.55 * boldBoost;
+  }
   function defaultMeasureText(text: string, font: string): number {
     const ctx = getBrowserMeasureCtx();
     if (ctx) {
@@ -9672,13 +12788,7 @@ const { wrapText, measureSceneNode, positionGroupChildren } = (() => {
       font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
     let total = 0;
     for (const ch of text) {
-      if (ch === ' ') {
-        total += fontSize * 0.34;
-      } else if (isWideChar(ch)) {
-        total += fontSize * 1.02 * boldBoost;
-      } else {
-        total += fontSize * 0.58 * boldBoost;
-      }
+      total += estimateCharAdvanceWidth(ch, fontSize, boldBoost);
     }
     return total;
   }
@@ -9907,7 +13017,7 @@ const { wrapText, measureSceneNode, positionGroupChildren } = (() => {
         contentH += (measuredContentCount - 1) * gap;
       }
 
-      if (autoShape && shapePlugin) {
+      if (autoShape && autoShape.type === 'shape' && shapePlugin) {
         const box = shapePlugin.measureBox(contentW, contentH);
         const shapedM: MeasuredShapeNode = {
           type: 'shape',
@@ -10152,7 +13262,7 @@ const { wrapText, measureSceneNode, positionGroupChildren } = (() => {
     }
     return undefined;
   }
-  return { wrapText, measureSceneNode, positionGroupChildren };
+  return { estimateCharAdvanceWidth, wrapText, measureSceneNode, positionGroupChildren };
 })();
 
 // --- Module: src/engine/layout/diagramLayout.ts ---
@@ -10204,6 +13314,7 @@ const { generateShapeStrokes, generateGroupFrameStrokes, generateConnectorStroke
         width: 2.1,
         color: zone.color,
         opacity: 0.52,
+        fillOpacity: 1,
         dashed: true,
         speedFactor: 1.45,
       }),
@@ -10448,12 +13559,7 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
     if (!mCtx || typeof document === 'undefined') {
       const boldBoost =
         font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
-      const advanceWidth =
-        char === ' '
-          ? fontSize * 0.34
-          : isWide(char)
-          ? fontSize * 1.02 * boldBoost
-          : fontSize * 0.58 * boldBoost;
+      const advanceWidth = estimateCharAdvanceWidth(char, fontSize, boldBoost);
       const padX = Math.ceil(fontSize * 0.24);
       const width = Math.max(8, advanceWidth + padX * 2);
       const height = Math.max(12, fontSize * 1.48);
@@ -11019,7 +14125,7 @@ const { compileTimeline } = (() => {
         }
       }
 
-      const compilePositionedNode = (curr: PositionedSceneNode) => {
+      const compilePositionedNode = (curr: PositionedSceneNode, insideCard = false) => {
         if (curr.node.visible === false) return;
 
         if (curr.node.type === 'shape') {
@@ -11068,6 +14174,10 @@ const { compileTimeline } = (() => {
           const lineFont = `${weight} ${m.fontSize}px ${boardFontFamily}`;
           const boxLeftX = curr.cx - curr.width / 2;
           const msPerChar = m.fontSize >= 20 ? 122 : 88;
+          const textColor: ChalkColor =
+            insideCard && presentation.palette.preferNeutralCardTitle
+              ? 'white'
+              : curr.node.color;
           let yCursor = curr.cy - m.height / 2;
 
           m.lines.forEach((line, lineIdx) => {
@@ -11083,7 +14193,7 @@ const { compileTimeline } = (() => {
               lineIndent,
               lineFont,
               m.fontSize,
-              curr.node.color,
+              textColor,
               scene.theme,
               itemCursor,
               msPerChar
@@ -11097,8 +14207,9 @@ const { compileTimeline } = (() => {
         }
 
         if (curr.node.type === 'group') {
+          const nextInsideCard = insideCard || curr.node.meta?.isCard === true;
           for (const child of curr.children ?? []) {
-            compilePositionedNode(child);
+            compilePositionedNode(child, nextInsideCard);
           }
           return;
         }
@@ -11770,11 +14881,12 @@ const { getActiveSubtitleAt, generateAutoSubtitles, serializeSubtitlesToSrt, dra
     width: number,
     height: number,
     text: string,
-    _theme?: ThemeId
+    theme?: ThemeId
   ): void {
     const trimmed = text.trim();
     if (!trimmed) return;
 
+    const palette = presentationRegistry.getOrDefault(theme ?? 'chalkboard').palette;
     const fontSize = Math.max(13, Math.round(height * 0.032));
     const lineHeight = Math.round(fontSize * 1.32);
     const maxTextW = Math.max(180, width * 0.78);
@@ -11805,15 +14917,15 @@ const { getActiveSubtitleAt, generateAutoSubtitles, serializeSubtitlesToSrt, dra
     const x = (width - boxW) / 2;
     const y = centerY - boxH / 2;
 
-    ctx.fillStyle = 'rgba(11, 15, 22, 0.78)';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillStyle = palette.subtitleBg ?? 'rgba(11, 15, 22, 0.78)';
+    ctx.strokeStyle = palette.subtitleBorder ?? 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(x, y, boxW, boxH, 9);
+    ctx.roundRect(x, y, boxW, boxH, 10);
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = '#f8fafc';
+    ctx.fillStyle = palette.subtitleTextColor ?? '#f8fafc';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     lines.forEach((line, idx) => {
@@ -12492,6 +15604,53 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
       activePen
     );
   }
+  function drawStrokeInteriorFill(
+    ctx: CanvasRenderingContext2D,
+    stroke: StrokePath,
+    colorHex: string,
+    progress: number,
+    baseFillOpacity: number,
+    palette: ThemePalette,
+    allowShadow: boolean
+  ): void {
+    if (!stroke.fillOpacity || stroke.fillOpacity <= 0 || stroke.points.length < 3) {
+      return;
+    }
+    const fillReveal = Math.max(0, Math.min(1, (progress - 0.55) / 0.45));
+    const alpha = baseFillOpacity * stroke.fillOpacity * fillReveal;
+    if (alpha <= 0.005) return;
+
+    const tracePath = () => {
+      ctx.beginPath();
+      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+      for (let i = 1; i < stroke.points.length; i++) {
+        ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+      }
+      ctx.closePath();
+    };
+
+    if (allowShadow && stroke.surfaceShadow && palette.cardShadow) {
+      ctx.save();
+      ctx.translate(palette.cardShadow.dx, palette.cardShadow.dy);
+      ctx.globalAlpha = fillReveal;
+      ctx.fillStyle = palette.cardShadow.color;
+      tracePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    const fillStyle =
+      allowShadow && palette.cardFillColors?.[stroke.color]
+        ? palette.cardFillColors[stroke.color]!
+        : colorHex;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = fillStyle;
+    tracePath();
+    ctx.fill();
+    ctx.restore();
+  }
   function renderSceneFrame(
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -12527,12 +15686,24 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
     ctx.translate(-cam.cx, -cam.cy);
 
     const scratch = getScratchCanvas();
+    const zoneFillOpacity = palette.zoneFillOpacity ?? 0.05;
+    const cardFillOpacity = palette.cardFillOpacity ?? 0.085;
 
     // Pass A: Group frames first so node content sits cleanly above them
     for (const item of timeline.allItems) {
       if (item.kind !== 'group-frame') continue;
       const p = evalState.itemProgress.get(item.id) ?? 0;
       if (p <= 0) continue;
+      const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
+      drawStrokeInteriorFill(
+        ctx,
+        item.stroke,
+        fillHex,
+        p,
+        zoneFillOpacity,
+        palette,
+        false
+      );
       presentation.drawStroke(ctx, item.stroke, p);
     }
 
@@ -12541,6 +15712,16 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
       if (item.kind !== 'stroke') continue;
       const p = evalState.itemProgress.get(item.id) ?? 0;
       if (p <= 0) continue;
+      const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
+      drawStrokeInteriorFill(
+        ctx,
+        item.stroke,
+        fillHex,
+        p,
+        cardFillOpacity,
+        palette,
+        true
+      );
       presentation.drawStroke(ctx, item.stroke, p);
     }
 
@@ -12740,10 +15921,49 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
     }
     return parts.join(' ');
   }
+  function renderStrokeFillSvg(
+    stroke: StrokePath,
+    colorHex: string,
+    progress: number,
+    baseFillOpacity: number,
+    palette: ThemePalette,
+    allowShadow: boolean
+  ): string {
+    if (!stroke.fillOpacity || stroke.fillOpacity <= 0 || stroke.points.length < 3) {
+      return '';
+    }
+    const fillReveal = Math.max(0, Math.min(1, (progress - 0.55) / 0.45));
+    const alpha = baseFillOpacity * stroke.fillOpacity * fillReveal;
+    if (alpha <= 0.005) return '';
+
+    const d = `${pointsToSvgPath(stroke.points)} Z`;
+    let shadowSvg = '';
+    if (allowShadow && stroke.surfaceShadow && palette.cardShadow) {
+      const sh = palette.cardShadow;
+      shadowSvg = `<path d="${d}" transform="translate(${sh.dx.toFixed(1)},${sh.dy.toFixed(
+        1
+      )})" fill="${escapeXml(sh.color)}" fill-opacity="${fillReveal.toFixed(
+        3
+      )}" stroke="none"/>`;
+    }
+
+    const fillColor =
+      allowShadow && palette.cardFillColors?.[stroke.color]
+        ? palette.cardFillColors[stroke.color]!
+        : colorHex;
+
+    return (
+      shadowSvg +
+      `<path d="${d}" fill="${escapeXml(fillColor)}" fill-opacity="${alpha.toFixed(
+        3
+      )}" stroke="none"/>`
+    );
+  }
   function renderStrokeSvg(
     stroke: StrokePath,
     colorHex: string,
-    progress: number
+    progress: number,
+    theme: ThemeId
   ): string {
     const pts = slicePolylinePoints(
       stroke.points,
@@ -12753,10 +15973,36 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
     );
     if (pts.length < 2) return '';
     const d = pointsToSvgPath(pts);
+    const escColor = escapeXml(colorHex);
     const dashAttr = stroke.dashed ? ' stroke-dasharray="12 9"' : '';
-    return `<path d="${d}" fill="none" stroke="${escapeXml(
-      colorHex
-    )}" stroke-width="${stroke.width.toFixed(2)}" stroke-opacity="${stroke.opacity.toFixed(
+
+    if (theme === 'chalkboard') {
+      const haloW = (stroke.width * 1.48).toFixed(2);
+      const haloOp = (stroke.opacity * 0.22).toFixed(3);
+      const coreW = stroke.width.toFixed(2);
+      const coreOp = (stroke.opacity * 0.86).toFixed(3);
+      const ridgeW = Math.max(0.9, stroke.width * 0.44).toFixed(2);
+      const ridgeOp = (stroke.opacity * 0.42).toFixed(3);
+      const ridgeDash = stroke.dashed ? ' stroke-dasharray="12 9"' : ' stroke-dasharray="4 1.6 7 1.3"';
+      return (
+        `<path d="${d}" fill="none" stroke="${escColor}" stroke-width="${haloW}" stroke-opacity="${haloOp}" stroke-linecap="round" stroke-linejoin="round"${dashAttr}/>` +
+        `<path d="${d}" fill="none" stroke="${escColor}" stroke-width="${coreW}" stroke-opacity="${coreOp}" stroke-linecap="round" stroke-linejoin="round"${dashAttr}/>` +
+        `<path d="${d}" transform="translate(-0.35,-0.35)" fill="none" stroke="${escColor}" stroke-width="${ridgeW}" stroke-opacity="${ridgeOp}" stroke-linecap="round" stroke-linejoin="round"${ridgeDash}/>`
+      );
+    }
+
+    if (theme === 'blueprint') {
+      const glowW = (stroke.width * 2.15).toFixed(2);
+      const glowOp = (stroke.opacity * 0.22).toFixed(3);
+      return (
+        `<path d="${d}" fill="none" stroke="${escColor}" stroke-width="${glowW}" stroke-opacity="${glowOp}" stroke-linecap="round" stroke-linejoin="round"${dashAttr}/>` +
+        `<path d="${d}" fill="none" stroke="${escColor}" stroke-width="${stroke.width.toFixed(2)}" stroke-opacity="${stroke.opacity.toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"${dashAttr}/>`
+      );
+    }
+
+    return `<path d="${d}" fill="none" stroke="${escColor}" stroke-width="${stroke.width.toFixed(
+      2
+    )}" stroke-opacity="${stroke.opacity.toFixed(
       3
     )}" stroke-linecap="round" stroke-linejoin="round"${dashAttr}/>`;
   }
@@ -12991,26 +16237,100 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
       )}"/><stop offset="100%" stop-color="${escapeXml(
         palette.bgSecondary
       )}"/></radialGradient>`,
+      `<radialGradient id="${gradId}-vig" cx="50%" cy="50%" r="74%"><stop offset="52%" stop-color="rgba(0,0,0,0)"/><stop offset="100%" stop-color="${escapeXml(
+        palette.vignetteColor
+      )}"/></radialGradient>`,
     ];
 
     if (theme === 'blueprint') {
       defs.push(
-        `<pattern id="${gradId}-grid-minor" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M 24 0 L 0 0 0 24" fill="none" stroke="rgba(103, 232, 249, 0.08)" stroke-width="1"/></pattern>`,
-        `<pattern id="${gradId}-grid-major" width="120" height="120" patternUnits="userSpaceOnUse"><path d="M 120 0 L 0 0 0 120" fill="none" stroke="rgba(103, 232, 249, 0.18)" stroke-width="1"/></pattern>`
+        `<pattern id="${gradId}-grid-minor" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M 24 0 L 0 0 0 24" fill="none" stroke="rgba(116, 212, 247, 0.07)" stroke-width="1"/></pattern>`,
+        `<pattern id="${gradId}-grid-major" width="120" height="120" patternUnits="userSpaceOnUse"><path d="M 120 0 L 0 0 0 120" fill="none" stroke="rgba(116, 212, 247, 0.16)" stroke-width="1"/></pattern>`
+      );
+    } else if (theme === 'whiteboard') {
+      defs.push(
+        `<pattern id="${gradId}-dot" width="24" height="24" patternUnits="userSpaceOnUse"><rect x="0" y="0" width="1.4" height="1.4" fill="rgba(120, 113, 108, 0.18)"/></pattern>`
+      );
+    } else if (theme === 'chalkboard') {
+      defs.push(
+        `<radialGradient id="${gradId}-smudge" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="rgba(235, 242, 232, 0.036)"/><stop offset="100%" stop-color="rgba(235, 242, 232, 0)"/></radialGradient>`,
+        `<linearGradient id="${gradId}-ledge" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#5c4028"/><stop offset="50%" stop-color="#3e2a19"/><stop offset="100%" stop-color="#24170d"/></linearGradient>`
       );
     }
 
     parts.push(`<defs>${defs.join('')}</defs>`);
     parts.push(`<rect width="${width}" height="${height}" fill="url(#${gradId})"/>`);
 
-    if (theme === 'blueprint') {
+    if (theme === 'chalkboard') {
+      const rand = mulberry32(9973 * 99 + width * 31 + height);
+      for (let i = 0; i < 16; i++) {
+        const cx = rand() * width;
+        const cy = rand() * height;
+        const rx = 80 + rand() * 210;
+        const ry = 40 + rand() * 110;
+        const deg = ((rand() - 0.5) * 0.6 * 180) / Math.PI;
+        parts.push(
+          `<g transform="translate(${cx.toFixed(1)},${cy.toFixed(1)}) rotate(${deg.toFixed(
+            2
+          )}) scale(1,${(ry / rx).toFixed(3)})"><circle cx="0" cy="0" r="${rx.toFixed(
+            1
+          )}" fill="url(#${gradId}-smudge)"/></g>`
+        );
+      }
+      parts.push(`<rect width="${width}" height="${height}" fill="url(#${gradId}-vig)"/>`);
+      const ledgeH = Math.max(8, Math.round(height * 0.012));
+      const ledgeY = height - ledgeH;
+      parts.push(
+        `<rect x="0" y="${ledgeY}" width="${width}" height="${ledgeH}" fill="url(#${gradId}-ledge)"/>`,
+        `<rect x="0" y="${ledgeY}" width="${width}" height="1" fill="rgba(255, 238, 210, 0.16)"/>`,
+        `<path d="M0.5,${ledgeY} L0.5,0.5 L${(width - 0.5).toFixed(
+          1
+        )},0.5 L${(width - 0.5).toFixed(
+          1
+        )},${ledgeY}" fill="none" stroke="rgba(244, 241, 234, 0.05)" stroke-width="1"/>`
+      );
+    } else if (theme === 'whiteboard') {
+      parts.push(
+        `<rect width="${width}" height="${height}" fill="url(#${gradId}-dot)"/>`,
+        `<rect width="${width}" height="${height}" fill="url(#${gradId}-vig)"/>`
+      );
+    } else if (theme === 'blueprint') {
       const margin = Math.max(12, Math.round(Math.min(width, height) * 0.018));
+      const tickArm = 8;
+      const tickOffset = margin + 14;
+      const corners = [
+        [tickOffset, tickOffset],
+        [width - tickOffset, tickOffset],
+        [tickOffset, height - tickOffset],
+        [width - tickOffset, height - tickOffset],
+      ];
+      const crossPath = corners
+        .map(
+          ([cx, cy]) =>
+            `M${(cx - tickArm).toFixed(1)},${(cy + 0.5).toFixed(1)} L${(
+              cx + tickArm
+            ).toFixed(1)},${(cy + 0.5).toFixed(1)} M${(cx + 0.5).toFixed(
+              1
+            )},${(cy - tickArm).toFixed(1)} L${(cx + 0.5).toFixed(1)},${(
+              cy + tickArm
+            ).toFixed(1)}`
+        )
+        .join(' ');
       parts.push(
         `<rect width="${width}" height="${height}" fill="url(#${gradId}-grid-minor)"/>`,
         `<rect width="${width}" height="${height}" fill="url(#${gradId}-grid-major)"/>`,
-        `<rect x="${margin}" y="${margin}" width="${width - margin * 2}" height="${
-          height - margin * 2
-        }" fill="none" stroke="rgba(186, 230, 253, 0.22)" stroke-width="1"/>`
+        `<rect x="${(margin + 0.5).toFixed(1)}" y="${(margin + 0.5).toFixed(
+          1
+        )}" width="${width - margin * 2 - 1}" height="${
+          height - margin * 2 - 1
+        }" fill="none" stroke="rgba(186, 230, 253, 0.24)" stroke-width="1"/>`,
+        `<rect x="${(margin + 4.5).toFixed(1)}" y="${(margin + 4.5).toFixed(
+          1
+        )}" width="${width - (margin + 4) * 2 - 1}" height="${
+          height - (margin + 4) * 2 - 1
+        }" fill="none" stroke="rgba(116, 212, 247, 0.12)" stroke-width="1"/>`,
+        `<path d="${crossPath}" fill="none" stroke="rgba(186, 230, 253, 0.28)" stroke-width="1"/>`,
+        `<rect width="${width}" height="${height}" fill="url(#${gradId}-vig)"/>`
       );
     } else if (theme === 'letter-paper') {
       const linePitch = Math.max(26, Math.round(Math.min(width, height) * 0.068));
@@ -13023,33 +16343,188 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
       }
       if (rulePaths.length > 0) {
         parts.push(
-          `<path d="${rulePaths.join(' ')}" fill="none" stroke="rgba(155, 130, 96, 0.2)" stroke-width="${strokeW}"/>`
+          `<path d="${rulePaths.join(' ')}" fill="none" stroke="rgba(150, 126, 94, 0.18)" stroke-width="${strokeW}"/>`
         );
       }
+      const headerY = (Math.round(firstRuleY - 4) + 0.5).toFixed(1);
       const marginX = Math.max(34, Math.round(width * 0.082));
       parts.push(
+        `<path d="M0,${headerY} L${width},${headerY}" fill="none" stroke="rgba(150, 126, 94, 0.15)" stroke-width="${strokeW}"/>`,
         `<path d="M${(marginX + 0.5).toFixed(1)},0 L${(marginX + 0.5).toFixed(
           1
         )},${height} M${(marginX + 4.5).toFixed(1)},0 L${(marginX + 4.5).toFixed(
           1
-        )},${height}" fill="none" stroke="rgba(196, 104, 94, 0.26)" stroke-width="${strokeW}"/>`
+        )},${height}" fill="none" stroke="rgba(194, 96, 84, 0.24)" stroke-width="${strokeW}"/>`,
+        `<rect width="${width}" height="${height}" fill="url(#${gradId}-vig)"/>`
       );
-    } else if (theme === 'chalkboard') {
-      const ledgeH = Math.max(8, Math.round(height * 0.012));
-      const ledgeY = height - ledgeH;
+    } else {
+      parts.push(`<rect width="${width}" height="${height}" fill="url(#${gradId}-vig)"/>`);
+    }
+
+    return parts.join('');
+  }
+  function isCoalescibleAsciiSpan(span: EvaluatedGlyphSnapshot): boolean {
+    if (span.progress < 0.999) return false;
+    const code = span.char.codePointAt(0) ?? 0;
+    return code >= 0x21 && code <= 0x7e;
+  }
+  function renderInstrumentSvg(theme: ThemeId, colorHex: string): string {
+    const c = escapeXml(colorHex);
+    if (theme === 'chalkboard') {
+      return (
+        `<path d="M0,-1.6 L14,-4.5 L74,-5 A5,5 0 0,1 74,5 L14,4.5 L0,1.6 Z" fill="${c}"/>` +
+        `<rect x="16" y="1" width="56" height="3.2" fill="rgba(0,0,0,0.12)"/>` +
+        `<rect x="28" y="-5.1" width="24" height="10.2" fill="rgba(255,255,255,0.88)" stroke="rgba(0,0,0,0.16)" stroke-width="0.8"/>`
+      );
+    }
+    if (theme === 'whiteboard') {
+      return (
+        `<path d="M0,-1.5 L9,-3.5 L14,-3.5 L14,3.5 L9,3.5 L0,1.5 Z" fill="${c}"/>` +
+        `<rect x="14" y="-5.4" width="10" height="10.8" fill="${c}"/>` +
+        `<rect x="24" y="-6.2" width="64" height="12.4" rx="3" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>` +
+        `<rect x="78" y="-6.2" width="10" height="12.4" fill="${c}"/>`
+      );
+    }
+    if (theme === 'blueprint') {
+      return (
+        `<path d="M0,0 L18,-5 L18,5 Z" fill="#e5c49f"/>` +
+        `<path d="M0,0 L6,-1.7 L6,1.7 Z" fill="${c}"/>` +
+        `<rect x="18" y="-5" width="68" height="10" fill="#f59e0b"/>` +
+        `<rect x="18" y="-5" width="68" height="3" fill="rgba(255,255,255,0.22)"/>` +
+        `<rect x="18" y="2" width="68" height="3" fill="rgba(0,0,0,0.18)"/>`
+      );
+    }
+    // letter-paper fountain pen
+    return (
+      `<path d="M0,0 L7,-3.2 L17,-4.6 L19,0 L17,4.6 L7,3.2 Z" fill="#d7ad53" stroke="#8b651e" stroke-width="0.8"/>` +
+      `<line x1="0.8" y1="0" x2="11" y2="0" stroke="#2d2112" stroke-width="0.85"/>` +
+      `<circle cx="11.5" cy="0" r="1.3" fill="${c}"/>` +
+      `<rect x="17" y="-4.7" width="9" height="9.4" fill="#252b3b"/>` +
+      `<rect x="26" y="-5.4" width="3.2" height="10.8" fill="#d7ad53"/>` +
+      `<rect x="29" y="-5.8" width="62" height="11.6" rx="3.5" fill="#1d283f"/>` +
+      `<rect x="42" y="-5.8" width="4.5" height="11.6" fill="${c}"/>` +
+      `<rect x="32" y="-4.1" width="54" height="2.1" fill="rgba(255,255,255,0.18)"/>` +
+      `<rect x="86" y="-5.2" width="5" height="10.4" fill="#d7ad53"/>`
+    );
+  }
+  function renderFallingDustSvg(
+    tipX: number,
+    tipY: number,
+    colorHex: string,
+    tMs: number,
+    seed: number
+  ): string {
+    const escColor = escapeXml(colorHex);
+    const phase = (tMs % 320) / 320;
+    const parts: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const h = ((seed + i * 7919) * 2654435761) >>> 0;
+      const life = (phase + (h & 255) / 255) % 1;
+      const vx = (((h >> 8) & 255) / 255 - 0.5) * 18;
+      const vy = 8 + (((h >> 16) & 255) / 255) * 24;
+      const px = tipX + vx * life;
+      const py = tipY + vy * life + life * life * 12;
+      const r = 0.8 + (1 - life) * 1.1;
+      const op = (1 - life) * 0.42;
       parts.push(
-        `<rect x="0" y="${ledgeY}" width="${width}" height="${ledgeH}" fill="#3b2819"/>`,
-        `<rect x="0" y="${ledgeY}" width="${width}" height="1" fill="rgba(255, 232, 198, 0.14)"/>`
+        `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${r.toFixed(
+          2
+        )}" fill="${escColor}" opacity="${op.toFixed(3)}"/>`
+      );
+    }
+    return parts.join('');
+  }
+  function renderHandAndInstrumentSvg(
+    snap: EvaluatedSceneSnapshot,
+    uid: string
+  ): string {
+    if (
+      !snap.pen.visible ||
+      snap.handStyle === 'hidden' ||
+      snap.pen.alpha <= 0.02
+    ) {
+      return '';
+    }
+
+    const parts: string[] = [];
+    if (snap.theme === 'chalkboard' && snap.pen.penDown) {
+      parts.push(
+        renderFallingDustSvg(
+          snap.pen.screenX,
+          snap.pen.screenY,
+          snap.pen.colorHex,
+          snap.localTMs,
+          hashString(snap.sceneId)
+        )
       );
     }
 
+    const lift = snap.pen.lift;
+    const px = snap.pen.screenX.toFixed(2);
+    const py = (snap.pen.screenY - lift * 0.85).toFixed(2);
+    const scale = (snap.pen.penDown ? 1 : 1 + lift * 0.008).toFixed(3);
+    const microSway = snap.pen.penDown
+      ? Math.sin(snap.localTMs * 0.012) * 0.025 +
+        Math.min(0.06, snap.pen.velocity * 0.00018)
+      : -0.04;
+    const deg = (((Math.PI * 0.22 + microSway) * 180) / Math.PI).toFixed(2);
+    const instrument = renderInstrumentSvg(snap.theme, snap.pen.colorHex);
+
+    if (snap.handStyle === 'tip-only') {
+      parts.push(
+        `<g transform="translate(${px},${py}) scale(${scale}) rotate(${deg})" opacity="${snap.pen.alpha.toFixed(
+          3
+        )}">${instrument}</g>`
+      );
+      return parts.join('');
+    }
+
+    if (snap.handStyle === 'hand-minimal') {
+      const shX = (34 + lift * 0.5).toFixed(1);
+      const shY = (2 + lift * 0.9).toFixed(1);
+      parts.push(
+        `<g transform="translate(${px},${py}) scale(${scale}) rotate(${deg})" opacity="${snap.pen.alpha.toFixed(
+          3
+        )}">` +
+          `<g transform="translate(${shX},${shY}) rotate(-11.5)"><ellipse cx="0" cy="0" rx="40" ry="14" fill="rgba(0,0,0,0.12)"/></g>` +
+          instrument +
+          `<g fill="rgba(248,250,252,0.22)" stroke="rgba(248,250,252,0.68)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">` +
+          `<path d="M10,3 C24,-9 56,-13 84,3 L92,34 C64,42 30,36 12,18 Z"/>` +
+          `<path d="M4,-1 C14,-10 34,-12 46,-7 C50,-5 48,1 42,2 C30,4 16,5 6,3 Z"/>` +
+          `<path d="M12,2 C20,8 34,11 46,9 C51,8 52,1 46,-1 C35,-2 22,-3 12,-1 Z"/>` +
+          `</g></g>`
+      );
+      return parts.join('');
+    }
+
+    // Illustrated warm hand (hand-chalk) matching illustratedHandPlugin.ts
+    const cuffGradId = `${uid}-cuff`;
+    const shX = (38 + lift * 0.6).toFixed(1);
+    const shY = (2 + lift * 1.1).toFixed(1);
+    parts.push(
+      `<defs><linearGradient id="${cuffGradId}" x1="70" y1="0" x2="108" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#334155"/><stop offset="100%" stop-color="#1e293b"/></linearGradient></defs>` +
+        `<g transform="translate(${px},${py}) scale(${scale}) rotate(${deg})" opacity="${snap.pen.alpha.toFixed(
+          3
+        )}">` +
+        `<g transform="translate(${shX},${shY}) rotate(-11.5)"><ellipse cx="0" cy="0" rx="46" ry="18" fill="rgba(0,0,0,0.18)"/></g>` +
+        `<rect x="26" y="4" width="24" height="16" rx="8" fill="#d9a482" stroke="#996444" stroke-width="1.1"/>` +
+        `<rect x="38" y="11" width="22" height="14" rx="7" fill="#d9a482" stroke="#996444" stroke-width="1.1"/>` +
+        `<path d="M12,3 C24,-10 56,-14 82,2 L92,38 C64,46 32,38 14,18 Z" fill="#f0c4a6" stroke="#9d6b4d" stroke-width="1.2"/>` +
+        instrument +
+        `<path d="M6,-2 C15,-12 36,-14 48,-8 C52,-6 50,1 44,2 C30,4 16,4 6,2 Z" fill="#f3ccb1" stroke="#9d6b4d" stroke-width="1.2"/>` +
+        `<ellipse cx="14" cy="-7.2" rx="4.2" ry="2.2" fill="#fce4d6" opacity="0.65"/>` +
+        `<path d="M14,2 C22,8 36,11 48,8 C53,7 54,0 47,-2 C36,-4 22,-4 14,-1 Z" fill="#eab897" stroke="#9d6b4d" stroke-width="1.1"/>` +
+        `<path d="M74,-4 L112,26 L94,52 L68,28 Z" fill="url(#${cuffGradId})"/>` +
+        `<path d="M68,-2 L82,36 L88,34 L74,-4 Z" fill="rgba(248,250,252,0.85)"/>` +
+        `</g>`
+    );
     return parts.join('');
   }
   function renderSceneLayerSvg(
     snap: EvaluatedSceneSnapshot,
     gradId: string
   ): string {
-    const { width, height, palette, camera } = snap;
+    const { width, height, palette, camera, theme } = snap;
     const parts: string[] = [];
 
     parts.push(renderSurfaceBackgroundSvg(snap, gradId));
@@ -13062,22 +16537,46 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
       )},${(-camera.cy).toFixed(2)})">`
     );
 
+    const zoneFillOpacity = palette.zoneFillOpacity ?? 0.05;
     for (const gf of snap.groupFrames) {
-      const svg = renderStrokeSvg(gf.stroke, gf.colorHex, gf.progress);
+      const fillSvg = renderStrokeFillSvg(
+        gf.stroke,
+        gf.colorHex,
+        gf.progress,
+        zoneFillOpacity,
+        palette,
+        false
+      );
+      if (fillSvg) parts.push(fillSvg);
+      const svg = renderStrokeSvg(gf.stroke, gf.colorHex, gf.progress, theme);
       if (svg) parts.push(svg);
     }
 
+    const cardFillOpacity = palette.cardFillOpacity ?? 0.085;
     for (const st of snap.strokes) {
-      const svg = renderStrokeSvg(st.stroke, st.colorHex, st.progress);
+      const fillSvg = renderStrokeFillSvg(
+        st.stroke,
+        st.colorHex,
+        st.progress,
+        cardFillOpacity,
+        palette,
+        true
+      );
+      if (fillSvg) parts.push(fillSvg);
+      const svg = renderStrokeSvg(st.stroke, st.colorHex, st.progress, theme);
       if (svg) parts.push(svg);
     }
+
+    const maskDefs: string[] = [];
+    const textEls: string[] = [];
+    let maskSeq = 0;
 
     for (const line of snap.textLines) {
       if (line.isEdgeLabel || line.isGroupTitle) {
         const pillAlpha = Math.min(1, line.progress * 3.5).toFixed(3);
         const rx = (line.centerX - line.bgWidth / 2).toFixed(2);
         const ry = (line.centerY - line.bgHeight / 2).toFixed(2);
-        parts.push(
+        textEls.push(
           `<rect x="${rx}" y="${ry}" width="${line.bgWidth.toFixed(
             2
           )}" height="${line.bgHeight.toFixed(
@@ -13094,25 +16593,72 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
         line.font.trim().startsWith('700') || line.font.includes('bold')
           ? '700'
           : '400';
+      const escColor = escapeXml(line.colorHex);
+      const escFont = escapeXml(snap.fontFamily);
 
-      for (const span of line.spans) {
-        if (span.progress >= 0.999 || span.segments.length === 0) {
-          const tx = (span.boxX + span.padX).toFixed(2);
-          const ty = (span.boxY + span.height * 0.52).toFixed(2);
-          parts.push(
-            `<text x="${tx}" y="${ty}" fill="${escapeXml(
-              line.colorHex
-            )}" font-family="${escapeXml(
-              snap.fontFamily
-            )}" font-size="${span.fontSize.toFixed(
+      let i = 0;
+      while (i < line.spans.length) {
+        const span = line.spans[i];
+
+        if (isCoalescibleAsciiSpan(span)) {
+          let j = i;
+          while (j + 1 < line.spans.length) {
+            const prev = line.spans[j];
+            const next = line.spans[j + 1];
+            if (!isCoalescibleAsciiSpan(next)) break;
+            if (Math.abs(next.boxY - prev.boxY) > 1.5) break;
+            const prevRight = prev.boxX + prev.width - prev.padX;
+            const nextLeft = next.boxX + next.padX;
+            const gap = nextLeft - prevRight;
+            if (gap < -2 || gap > prev.fontSize * 0.16) break;
+            j++;
+          }
+
+          if (j > i) {
+            const first = line.spans[i];
+            const last = line.spans[j];
+            const runText = line.spans
+              .slice(i, j + 1)
+              .map((s) => s.char)
+              .join('');
+            const runLeft = first.boxX + first.padX;
+            const runRight = last.boxX + last.width - last.padX;
+            const midX = ((runLeft + runRight) / 2).toFixed(2);
+            const ty = (first.boxY + first.height * 0.52).toFixed(2);
+            textEls.push(
+              `<text x="${midX}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${first.fontSize.toFixed(
+                1
+              )}" font-weight="${boldWeight}" text-anchor="middle" dominant-baseline="central">${escapeXml(
+                runText
+              )}</text>`
+            );
+            i = j + 1;
+            continue;
+          }
+        }
+
+        const tx = (span.boxX + span.padX).toFixed(2);
+        const ty = (span.boxY + span.height * 0.52).toFixed(2);
+        if (span.progress >= 0.999) {
+          textEls.push(
+            `<text x="${tx}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${span.fontSize.toFixed(
               1
             )}" font-weight="${boldWeight}" dominant-baseline="central">${escapeXml(
               span.char
             )}</text>`
           );
+        } else if (span.segments.length === 0 || span.totalLength <= 0) {
+          textEls.push(
+            `<text x="${tx}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${span.fontSize.toFixed(
+              1
+            )}" font-weight="${boldWeight}" opacity="${span.progress.toFixed(
+              3
+            )}" dominant-baseline="central">${escapeXml(span.char)}</text>`
+          );
         } else {
           let remaining = span.progress * span.totalLength;
-          const strokeWidth = Math.max(1.6, span.fontSize * 0.1).toFixed(2);
+          const maskStrokeW = Math.max(4.5, span.fontSize * 0.34).toFixed(2);
+          const revealPaths: string[] = [];
           for (const seg of span.segments) {
             if (remaining <= 0) break;
             const pts = slicePolylinePoints(
@@ -13126,44 +16672,43 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
                 x: pt.x + span.boxX,
                 y: pt.y + span.boxY,
               }));
-              parts.push(
-                `<path d="${pointsToSvgPath(shifted)}" fill="none" stroke="${escapeXml(
-                  line.colorHex
-                )}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`
-              );
+              revealPaths.push(pointsToSvgPath(shifted));
             }
             remaining -= seg.length;
           }
+          if (revealPaths.length > 0) {
+            const mId = `${gradId}-tm-${maskSeq++}`;
+            const mPad = span.fontSize * 0.35;
+            const mx = (span.boxX - mPad).toFixed(1);
+            const my = (span.boxY - mPad).toFixed(1);
+            const mw = (span.width + mPad * 2).toFixed(1);
+            const mh = (span.height + mPad * 2).toFixed(1);
+            maskDefs.push(
+              `<mask id="${mId}" maskUnits="userSpaceOnUse" x="${mx}" y="${my}" width="${mw}" height="${mh}">` +
+                `<rect x="${mx}" y="${my}" width="${mw}" height="${mh}" fill="black"/>` +
+                `<path d="${revealPaths.join(' ')}" fill="none" stroke="white" stroke-width="${maskStrokeW}" stroke-linecap="round" stroke-linejoin="round"/>` +
+                `</mask>`
+            );
+            textEls.push(
+              `<g mask="url(#${mId})"><text x="${tx}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${span.fontSize.toFixed(
+                1
+              )}" font-weight="${boldWeight}" dominant-baseline="central">${escapeXml(
+                span.char
+              )}</text></g>`
+            );
+          }
         }
+        i++;
       }
     }
 
+    if (maskDefs.length > 0) {
+      parts.push(`<defs>${maskDefs.join('')}</defs>`);
+    }
+    parts.push(...textEls);
     parts.push('</g>');
 
-    if (
-      snap.pen.visible &&
-      snap.handStyle !== 'hidden' &&
-      snap.pen.alpha > 0.02
-    ) {
-      const px = snap.pen.screenX.toFixed(2);
-      const py = (snap.pen.screenY - snap.pen.lift * 0.8).toFixed(2);
-      const bodyHeight = snap.handStyle === 'tip-only' ? 18 : 30;
-      const handSilhouette =
-        snap.handStyle === 'hand-chalk'
-          ? '<path d="M2,12 C12,6 22,12 24,26 L6,34 Z" fill="rgba(226,184,150,0.85)" stroke="rgba(90,58,36,0.65)" stroke-width="0.9"/>'
-          : snap.handStyle === 'hand-minimal'
-          ? '<path d="M2,12 C10,7 19,12 21,24" fill="none" stroke="rgba(226,232,240,0.6)" stroke-width="1.4" stroke-linecap="round"/>'
-          : '';
-      parts.push(
-        `<g transform="translate(${px},${py}) rotate(35)" opacity="${snap.pen.alpha.toFixed(
-          3
-        )}">${handSilhouette}<rect x="-3" y="0" width="6" height="${bodyHeight}" rx="2" fill="${escapeXml(
-          snap.pen.colorHex
-        )}" stroke="#111827" stroke-width="0.9"/><circle cx="0" cy="0" r="2.2" fill="${escapeXml(
-          snap.pen.colorHex
-        )}"/></g>`
-      );
-    }
+    parts.push(renderHandAndInstrumentSvg(snap, gradId));
 
     return parts.join('');
   }
@@ -13194,7 +16739,8 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
   function renderSubtitleSvg(
     width: number,
     height: number,
-    text?: string
+    text?: string,
+    palette?: ThemePalette
   ): string {
     const trimmed = text?.trim();
     if (!trimmed) return '';
@@ -13226,12 +16772,18 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
     const x = (width - boxW) / 2;
     const y = Math.min(height - boxH - 14, height * 0.89 - boxH / 2);
 
+    const fillBg = escapeXml(palette?.subtitleBg ?? 'rgba(11, 15, 22, 0.80)');
+    const strokeBorder = escapeXml(
+      palette?.subtitleBorder ?? 'rgba(255, 255, 255, 0.2)'
+    );
+    const textFill = escapeXml(palette?.subtitleTextColor ?? '#f8fafc');
+
     const textEls = lines
       .map((line, i) => {
         const cy = y + padY + lineHeight * (i + 0.5);
         return `<text x="${(width / 2).toFixed(1)}" y="${cy.toFixed(
           1
-        )}" fill="#f8fafc" font-family="sans-serif" font-size="${fontSize}" font-weight="600" text-anchor="middle" dominant-baseline="central">${escapeXml(
+        )}" fill="${textFill}" font-family="sans-serif" font-size="${fontSize}" font-weight="600" text-anchor="middle" dominant-baseline="central">${escapeXml(
           line
         )}</text>`;
       })
@@ -13239,25 +16791,104 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
 
     return `<g><rect x="${x.toFixed(1)}" y="${y.toFixed(
       1
-    )}" width="${boxW}" height="${boxH}" rx="9" ry="9" fill="rgba(11,15,22,0.82)" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>${textEls}</g>`;
+    )}" width="${boxW}" height="${boxH}" rx="10" ry="10" fill="${fillBg}" stroke="${strokeBorder}" stroke-width="1"/>${textEls}</g>`;
+  }
+  function buildEraserSweepWaypoints(width: number, height: number): Point[] {
+    const padX = Math.max(70, width * 0.11);
+    return [
+      { x: -padX, y: height * 0.13 },
+      { x: width + padX, y: height * 0.21 },
+      { x: -padX, y: height * 0.46 },
+      { x: width + padX, y: height * 0.56 },
+      { x: -padX, y: height * 0.81 },
+      { x: width + padX, y: height * 0.91 },
+    ];
+  }
+  function sampleEraserSweepPrefix(
+    waypoints: Point[],
+    fraction: number
+  ): { points: Point[]; tip: Point; angleRad: number } {
+    const segLengths: number[] = [];
+    let total = 0;
+    for (let i = 1; i < waypoints.length; i++) {
+      const len = Math.hypot(
+        waypoints[i].x - waypoints[i - 1].x,
+        waypoints[i].y - waypoints[i - 1].y
+      );
+      segLengths.push(len);
+      total += len;
+    }
+
+    const targetLen = Math.max(0, Math.min(1, fraction)) * total;
+    const points: Point[] = [waypoints[0]];
+    let acc = 0;
+
+    for (let i = 0; i < segLengths.length; i++) {
+      const segLen = segLengths[i];
+      const a = waypoints[i];
+      const b = waypoints[i + 1];
+      if (acc + segLen >= targetLen || i === segLengths.length - 1) {
+        const clamped =
+          segLen > 1e-4
+            ? Math.max(0, Math.min(1, (targetLen - acc) / segLen))
+            : 1;
+        const tip = {
+          x: a.x + (b.x - a.x) * clamped,
+          y: a.y + (b.y - a.y) * clamped,
+        };
+        points.push(tip);
+        return { points, tip, angleRad: Math.atan2(b.y - a.y, b.x - a.x) };
+      }
+      points.push(b);
+      acc += segLen;
+    }
+
+    const last = waypoints[waypoints.length - 1];
+    return { points, tip: last, angleRad: 0 };
   }
   function renderChalkboardEraserSvg(
-    width: number,
+    tip: Point,
+    angleRad: number,
     height: number,
-    p: number
+    p: number,
+    uid: string
   ): string {
-    const sweepU = Math.min(1, p / 0.88);
-    const wipeX = sweepU * width;
-    const eraserY = height * 0.5 + Math.sin(p * Math.PI * 5) * height * 0.24;
     const alpha = p <= 0.85 ? 1 : Math.max(0, 1 - (p - 0.85) / 0.15);
     if (alpha <= 0.01) return '';
     const scale = Math.max(0.85, Math.min(1.45, height / 560));
+    const tiltDeg = (((Math.sin(angleRad) * 0.16 - 0.14) * 180) / Math.PI).toFixed(2);
 
-    return `<g transform="translate(${wipeX.toFixed(1)},${eraserY.toFixed(
-      1
-    )}) scale(${scale.toFixed(2)})" opacity="${alpha.toFixed(
-      3
-    )}"><circle cx="-28" cy="-8" r="24" fill="#e8ece6" opacity="0.22"/><circle cx="-48" cy="10" r="18" fill="#e8ece6" opacity="0.16"/><rect x="-48" y="-19" width="100" height="48" rx="8" fill="rgba(0,0,0,0.34)"/><rect x="-50" y="-8" width="100" height="31" rx="6" fill="#2c3138"/><rect x="-48" y="-25" width="96" height="21" rx="5" fill="#9b6336" stroke="#5a3417" stroke-width="1.2"/></g>`;
+    const puffs: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const offset = (i + 1) * 18 * scale;
+      const puffX = tip.x - Math.cos(angleRad) * offset;
+      const puffY = tip.y - Math.sin(angleRad) * offset + i * 5 * scale;
+      const puffR = (22 + i * 7) * scale;
+      puffs.push(
+        `<circle cx="${puffX.toFixed(1)}" cy="${puffY.toFixed(1)}" r="${puffR.toFixed(
+          1
+        )}" fill="#e8ece6" opacity="${(alpha * 0.24).toFixed(3)}"/>`
+      );
+    }
+
+    const woodId = `${uid}-ewood`;
+    const dustId = `${uid}-edust`;
+    return (
+      puffs.join('') +
+      `<defs>` +
+      `<linearGradient id="${dustId}" x1="0" y1="8" x2="0" y2="23" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="rgba(226,232,224,0.08)"/><stop offset="100%" stop-color="rgba(226,232,224,0.42)"/></linearGradient>` +
+      `<linearGradient id="${woodId}" x1="0" y1="-25" x2="0" y2="-2" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#c08552"/><stop offset="55%" stop-color="#9b6336"/><stop offset="100%" stop-color="#784823"/></linearGradient>` +
+      `</defs>` +
+      `<g transform="translate(${tip.x.toFixed(1)},${tip.y.toFixed(1)}) rotate(${tiltDeg}) scale(${scale.toFixed(
+        2
+      )})" opacity="${alpha.toFixed(3)}">` +
+      `<rect x="-48" y="-19" width="100" height="48" rx="8" fill="rgba(0,0,0,0.34)"/>` +
+      `<rect x="-50" y="-8" width="100" height="31" rx="6" fill="#2c3138"/>` +
+      `<rect x="-46" y="10" width="92" height="12" fill="url(#${dustId})"/>` +
+      `<rect x="-48" y="-25" width="96" height="21" rx="5" fill="url(#${woodId})" stroke="#5a3417" stroke-width="1.2"/>` +
+      `<rect x="-42" y="-21" width="84" height="3" fill="rgba(255,235,205,0.22)"/>` +
+      `</g>`
+    );
   }
   function renderSnapshotToSvg(snapshot: EvaluatedFrameSnapshot): string {
     const { width, height } = snapshot;
@@ -13265,34 +16896,66 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
 
     if (snapshot.kind === 'scene') {
       const body = renderSceneLayerSvg(snapshot, `${uid}-bg-scene`);
-      const sub = renderSubtitleSvg(width, height, snapshot.subtitleText);
+      const sub = renderSubtitleSvg(
+        width,
+        height,
+        snapshot.subtitleText,
+        snapshot.palette
+      );
       return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}${sub}</svg>`;
     }
 
     const p = Math.max(0, Math.min(1, snapshot.progress));
-    const sub = renderSubtitleSvg(width, height, snapshot.subtitleText);
 
     if (snapshot.transitionId === 'cut') {
       const chosen = p >= 0.5 ? snapshot.toScene : snapshot.fromScene;
+      const sub = renderSubtitleSvg(
+        width,
+        height,
+        snapshot.subtitleText,
+        chosen.palette
+      );
       return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${renderSceneLayerSvg(
         chosen,
         `${uid}-bg-cut`
       )}${sub}</svg>`;
     }
 
+    const subPalette =
+      p < 0.5 ? snapshot.fromScene.palette : snapshot.toScene.palette;
+    const sub = renderSubtitleSvg(
+      width,
+      height,
+      snapshot.subtitleText,
+      subPalette
+    );
+
     const toLayer = renderSceneLayerSvg(snapshot.toScene, `${uid}-bg-to`);
     const fromLayer = renderSceneLayerSvg(snapshot.fromScene, `${uid}-bg-from`);
 
     if (snapshot.transitionId === 'chalkboard-eraser') {
       const sweepU = Math.min(1, p / 0.88);
-      const wipeX = Math.max(0, Math.min(width, sweepU * width));
-      const remW = Math.max(0, width - wipeX);
-      const clipId = `${uid}-eraser-wipe-clip`;
-      const clipDef = `<defs><clipPath id="${clipId}"><rect x="${wipeX.toFixed(
-        1
-      )}" y="0" width="${remW.toFixed(1)}" height="${height}"/></clipPath></defs>`;
-      const eraser = renderChalkboardEraserSvg(width, height, p);
-      return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${clipDef}${toLayer}<g clip-path="url(#${clipId})">${fromLayer}</g>${eraser}${sub}</svg>`;
+      const waypoints = buildEraserSweepWaypoints(width, height);
+      const { points, tip, angleRad } = sampleEraserSweepPrefix(waypoints, sweepU);
+      const brushWidth = Math.max(height * 0.44, 165);
+      const sweepD = points.length >= 2 && sweepU > 0.001 ? pointsToSvgPath(points) : '';
+      const maskId = `${uid}-eraser-wipe-mask`;
+      const maskDef =
+        `<defs><mask id="${maskId}" maskUnits="userSpaceOnUse" x="0" y="0" width="${width}" height="${height}">` +
+        `<rect width="${width}" height="${height}" fill="white"/>` +
+        (sweepD
+          ? `<path d="${sweepD}" fill="none" stroke="black" stroke-width="${(
+              brushWidth * 1.16
+            ).toFixed(
+              1
+            )}" stroke-opacity="0.42" stroke-linecap="round" stroke-linejoin="round"/>` +
+            `<path d="${sweepD}" fill="none" stroke="black" stroke-width="${brushWidth.toFixed(
+              1
+            )}" stroke-linecap="round" stroke-linejoin="round"/>`
+          : '') +
+        `</mask></defs>`;
+      const eraser = renderChalkboardEraserSvg(tip, angleRad, height, p, uid);
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${maskDef}${toLayer}<g mask="url(#${maskId})">${fromLayer}</g>${eraser}${sub}</svg>`;
     }
 
     if (snapshot.transitionId === 'page-turn') {

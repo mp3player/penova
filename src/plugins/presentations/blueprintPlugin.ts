@@ -6,24 +6,29 @@ import {
 import { PresentationPlugin, ThemePalette } from '../contracts';
 
 const BLUEPRINT_FONT =
-  "'Segoe Print', 'KaiTi', 'STKaiti', 'LXGW WenKai', 'Microsoft YaHei', cursive";
+  "'JetBrains Mono', 'SF Mono', 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif";
 
 const palette: ThemePalette = {
   id: 'blueprint',
   label: 'Blueprint',
-  bgPrimary: '#102644',
-  bgSecondary: '#09172b',
-  vignetteColor: 'rgba(4, 10, 22, 0.55)',
-  subtitleColor: '#a6c6eb',
-  labelPillBg: 'rgba(10, 25, 48, 0.9)',
-  labelPillBorder: 'rgba(103, 232, 249, 0.24)',
+  bgPrimary: '#132f53',
+  bgSecondary: '#0a1c35',
+  vignetteColor: 'rgba(4, 11, 24, 0.54)',
+  subtitleColor: '#b7dcf2',
+  labelPillBg: 'rgba(11, 28, 52, 0.92)',
+  labelPillBorder: 'rgba(116, 212, 247, 0.24)',
+  cardFillOpacity: 0.16,
+  zoneFillOpacity: 0.07,
+  subtitleBg: 'rgba(9, 22, 42, 0.82)',
+  subtitleBorder: 'rgba(116, 212, 247, 0.24)',
+  subtitleTextColor: '#f2f7fc',
   colors: {
-    white: '#f0f7ff',
-    yellow: '#ffd86b',
-    cyan: '#67e8f9',
-    pink: '#fda4af',
-    green: '#86efac',
-    orange: '#fdba74',
+    white: '#f2f7fc',
+    yellow: '#f4ca64',
+    cyan: '#74d4f7',
+    pink: '#f39aa7',
+    green: '#7fd8a8',
+    orange: '#f3a668',
   },
 };
 
@@ -46,7 +51,7 @@ export const blueprintPlugin: PresentationPlugin = {
       const major = 120;
       c.lineWidth = 1;
 
-      c.strokeStyle = 'rgba(103, 232, 249, 0.07)';
+      c.strokeStyle = 'rgba(116, 212, 247, 0.07)';
       c.beginPath();
       for (let x = 0; x <= w; x += minor) {
         c.moveTo(x + 0.5, 0);
@@ -58,7 +63,7 @@ export const blueprintPlugin: PresentationPlugin = {
       }
       c.stroke();
 
-      c.strokeStyle = 'rgba(103, 232, 249, 0.16)';
+      c.strokeStyle = 'rgba(116, 212, 247, 0.16)';
       c.beginPath();
       for (let x = 0; x <= w; x += major) {
         c.moveTo(x + 0.5, 0);
@@ -71,8 +76,47 @@ export const blueprintPlugin: PresentationPlugin = {
       c.stroke();
 
       const margin = Math.max(12, Math.round(Math.min(w, h) * 0.018));
-      c.strokeStyle = 'rgba(186, 230, 253, 0.22)';
-      c.strokeRect(margin, margin, w - margin * 2, h - margin * 2);
+      c.strokeStyle = 'rgba(186, 230, 253, 0.24)';
+      c.strokeRect(margin + 0.5, margin + 0.5, w - margin * 2 - 1, h - margin * 2 - 1);
+      c.strokeStyle = 'rgba(116, 212, 247, 0.12)';
+      c.strokeRect(
+        margin + 4.5,
+        margin + 4.5,
+        w - (margin + 4) * 2 - 1,
+        h - (margin + 4) * 2 - 1
+      );
+
+      // Corner crosshair registration marks
+      const tickArm = 8;
+      const tickOffset = margin + 14;
+      const corners = [
+        [tickOffset, tickOffset],
+        [w - tickOffset, tickOffset],
+        [tickOffset, h - tickOffset],
+        [w - tickOffset, h - tickOffset],
+      ];
+      c.strokeStyle = 'rgba(186, 230, 253, 0.28)';
+      c.beginPath();
+      for (const [cx, cy] of corners) {
+        c.moveTo(cx - tickArm, cy + 0.5);
+        c.lineTo(cx + tickArm, cy + 0.5);
+        c.moveTo(cx + 0.5, cy - tickArm);
+        c.lineTo(cx + 0.5, cy + tickArm);
+      }
+      c.stroke();
+
+      const vig = c.createRadialGradient(
+        w * 0.5,
+        h * 0.5,
+        Math.min(w, h) * 0.36,
+        w * 0.5,
+        h * 0.5,
+        Math.max(w, h) * 0.74
+      );
+      vig.addColorStop(0, 'rgba(0,0,0,0)');
+      vig.addColorStop(1, palette.vignetteColor);
+      c.fillStyle = vig;
+      c.fillRect(0, 0, w, h);
     });
   },
   drawStroke(ctx, stroke, progress) {

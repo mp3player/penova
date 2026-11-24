@@ -29,6 +29,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'root',
         color: 'yellow',
         shape: 'rounded',
+        icon: 'browser',
         zone: '客户端发起',
       }),
       createCardNode({
@@ -38,6 +39,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'step',
         color: 'cyan',
         shape: 'rounded',
+        icon: 'globe',
         zone: '寻址与连接',
       }),
       createCardNode({
@@ -47,6 +49,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'step',
         color: 'green',
         shape: 'rounded',
+        icon: 'handshake',
         zone: '寻址与连接',
       }),
       createCardNode({
@@ -56,6 +59,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'highlight',
         color: 'orange',
         shape: 'rounded',
+        icon: 'document',
         zone: '请求与响应',
       }),
       createCardNode({
@@ -65,6 +69,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'step',
         color: 'pink',
         shape: 'cloud',
+        icon: 'server',
         zone: '请求与响应',
       }),
       createCardNode({
@@ -74,6 +79,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'highlight',
         color: 'white',
         shape: 'underline',
+        icon: 'spark',
         zone: '客户端呈像',
       }),
       createConnectorNode({
@@ -285,6 +291,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'root',
         color: 'yellow',
         shape: 'rounded',
+        icon: 'document',
         zone: '数据与表示',
       }),
       createCardNode({
@@ -294,6 +301,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'concept',
         color: 'cyan',
         shape: 'rounded',
+        icon: 'layers',
         zone: '数据与表示',
       }),
       createCardNode({
@@ -303,6 +311,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'highlight',
         color: 'orange',
         shape: 'diamond',
+        icon: 'spark',
         zone: '核心架构',
       }),
       createCardNode({
@@ -312,6 +321,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'highlight',
         color: 'cyan',
         shape: 'rounded',
+        icon: 'cpu',
         zone: '核心架构',
       }),
       createCardNode({
@@ -321,6 +331,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'step',
         color: 'green',
         shape: 'rounded',
+        icon: 'database',
         zone: '训练与对齐',
       }),
       createCardNode({
@@ -330,6 +341,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'step',
         color: 'pink',
         shape: 'rounded',
+        icon: 'gear',
         zone: '训练与对齐',
       }),
       createCardNode({
@@ -339,6 +351,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'concept',
         color: 'pink',
         shape: 'cloud',
+        icon: 'check',
         zone: '训练与对齐',
       }),
       createCardNode({
@@ -348,6 +361,7 @@ export const PRESET_SCENES: LessonScene[] = [
         role: 'highlight',
         color: 'white',
         shape: 'underline',
+        icon: 'rocket',
         zone: '应用阶段',
       }),
       createConnectorNode({
