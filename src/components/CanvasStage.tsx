@@ -1,36 +1,52 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Camera,
+  Copy,
   FileText,
   GitFork,
   Hand,
+  Maximize2,
   Move,
   Network,
   RotateCcw,
+  Trash2,
   Volume2,
   VolumeX,
   Workflow,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import {
   CameraMode,
   findNodeById,
   HandStyle,
   hasAnyOffset,
+  isCustomSceneNode,
   LayoutMode,
   LessonScene,
   Point,
+  resolveCustomNodeKind,
 } from '../model/scene';
+import { getCardSummary } from '../model/builders';
+import { readPropBySchema } from '../sdk/propSchema';
+import { studioNodeUiRegistry } from '../studio/uiRegistry';
 import {
   cameraRegistry,
   handRegistry,
   LayoutIconKind,
   layoutRegistry,
   PositionedSceneNode,
+  sceneNodeRegistry,
   useRegistryList,
 } from '../plugins';
 import { CameraState } from '../engine/camera/cameraDirector';
 import { renderProjectFrame } from '../engine/render/projectRenderer';
-import { getActiveCamera, screenToWorld } from '../engine/render/sceneRenderer';
+import {
+  getActiveCamera,
+  screenToWorld,
+  worldToScreen,
+} from '../engine/render/sceneRenderer';
 import {
   CompiledProjectTimeline,
   evaluateProjectAt,
@@ -44,7 +60,14 @@ interface CanvasStageProps {
   isPlaying: boolean;
   selectedNodeId: string | null;
   soundEnabled: boolean;
-  onSelectNode: (nodeId: string | null) => void;
+  restoredFromDraft: boolean;
+  onSelectNode: (nodeId: string | null, opts?: { reveal?: boolean }) => void;
+  onPausePlayback: () => void;
+  onInlineEditNode: (nodeId: string, nextText: string) => void;
+  onDuplicateNode: (nodeId: string) => void;
+  onDeleteNode: (nodeId: string) => void;
+  onResetToDefaultPreset?: () => void;
+  onDismissDraftBanner: () => void;
   onChangeLayoutMode: (mode: LayoutMode) => void;
   onChangeCameraMode: (mode: CameraMode) => void;
   onChangeHandStyle: (style: HandStyle) => void;
@@ -70,6 +93,35 @@ function renderLayoutIcon(icon: LayoutIconKind): React.ReactNode {
   }
 }
 
+function readInlineEditableText(
+  scene: LessonScene,
+  nodeId: string
+): string | null {
+  const node = findNodeById(scene.nodes, nodeId);
+  if (!node) return null;
+  if (node.type === 'group') {
+    return getCardSummary(node).label;
+  }
+  if (node.type === 'text') {
+    return node.text;
+  }
+  if (node.type === 'connector') {
+    return node.label ?? '';
+  }
+  if (isCustomSceneNode(node)) {
+    const kind = resolveCustomNodeKind(node);
+    const propKey = studioNodeUiRegistry.get(kind)?.inlineEditPropKey;
+    if (propKey) {
+      const fields = sceneNodeRegistry.get(kind)?.propFields ?? [];
+      const val = readPropBySchema(fields, node.props, propKey);
+      if (typeof val === 'string' && val.trim()) {
+        return val;
+      }
+    }
+  }
+  return node.name;
+}
+
 export const CanvasStage: React.FC<CanvasStageProps> = ({
   scene,
   compiledProject,
@@ -77,7 +129,14 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   isPlaying,
   selectedNodeId,
   soundEnabled,
+  restoredFromDraft,
   onSelectNode,
+  onPausePlayback,
+  onInlineEditNode,
+  onDuplicateNode,
+  onDeleteNode,
+  onResetToDefaultPreset,
+  onDismissDraftBanner,
   onChangeLayoutMode,
   onChangeCameraMode,
   onChangeHandStyle,
@@ -92,6 +151,13 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   const [viewportSize, setViewportSize] = useState({ width: 960, height: 540 });
   const [manualCamera, setManualCamera] = useState<CameraState | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [inlineEdit, setInlineEdit] = useState<{
+    nodeId: string;
+    value: string;
+    screenX: number;
+    screenY: number;
+    width: number;
+  } | null>(null);
 
   const layouts = useRegistryList(layoutRegistry);
   const cameras = useRegistryList(cameraRegistry);
@@ -109,15 +175,17 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     zoom: number;
   } | null>(null);
 
-  // Reset manual pan/zoom when starting playback or changing preset/scene/ratio
+  // Reset manual pan/zoom and inline editor when starting playback or changing preset/scene/ratio
   useEffect(() => {
     if (isPlaying) {
       setManualCamera(null);
+      setInlineEdit(null);
     }
   }, [isPlaying]);
 
   useEffect(() => {
     setManualCamera(null);
+    setInlineEdit(null);
   }, [compiledProject.project.id, scene.id, scene.aspectRatio, scene.layoutMode]);
 
   // Fit 16:9 or 9:16 stage responsively inside the board slot below the toolbar
@@ -256,10 +324,8 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
-  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (isPlaying || evalState.kind !== 'scene') return;
-    const pt = getLocalCoords(e);
-    const cam = getActiveCamera(
+  const getCurrentCam = () =>
+    getActiveCamera(
       scene,
       activeTimeline,
       activeLocalTMs,
@@ -267,6 +333,14 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
       viewportSize.height,
       manualCamera
     );
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (evalState.kind !== 'scene') return;
+    if (isPlaying) {
+      onPausePlayback();
+    }
+    const pt = getLocalCoords(e);
+    const cam = getCurrentCam();
     const hitId = hitTestNode(pt.x, pt.y);
 
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -345,14 +419,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
 
-    const currentCam = getActiveCamera(
-      scene,
-      activeTimeline,
-      activeLocalTMs,
-      viewportSize.width,
-      viewportSize.height,
-      manualCamera
-    );
+    const currentCam = getCurrentCam();
     const worldBefore = screenToWorld(
       sx,
       sy,
@@ -372,10 +439,67 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
     setManualCamera({ cx: nextCx, cy: nextCy, zoom: nextZoom });
   };
 
-  const handleDoubleClick = () => {
-    setManualCamera(null);
+  const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (evalState.kind !== 'scene') {
+      setManualCamera(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const hitId = hitTestNode(pt.x, pt.y);
+    if (!hitId) {
+      setManualCamera(null);
+      return;
+    }
+
+    const pNode = activeTimeline.layout.nodeMap.get(hitId);
+    const initialVal = readInlineEditableText(scene, hitId);
+    if (!pNode || initialVal === null) return;
+
+    if (isPlaying) {
+      onPausePlayback();
+    }
+    onSelectNode(hitId);
+    const cam = getCurrentCam();
+    const screenCenter = worldToScreen(
+      pNode.cx,
+      pNode.cy,
+      viewportSize.width,
+      viewportSize.height,
+      cam
+    );
+    const estW = Math.max(150, Math.min(320, Math.round(pNode.width * cam.zoom)));
+    setInlineEdit({
+      nodeId: hitId,
+      value: initialVal,
+      screenX: screenCenter.x,
+      screenY: screenCenter.y,
+      width: estW,
+    });
   };
 
+  const commitInlineEdit = () => {
+    if (!inlineEdit) return;
+    const { nodeId, value } = inlineEdit;
+    setInlineEdit(null);
+    if (value.trim()) {
+      onInlineEditNode(nodeId, value);
+    }
+  };
+
+  const adjustZoomBy = (factor: number) => {
+    if (evalState.kind !== 'scene') return;
+    if (isPlaying) {
+      onPausePlayback();
+    }
+    const currentCam = getCurrentCam();
+    const nextZoom = Math.max(0.22, Math.min(2.6, currentCam.zoom * factor));
+    setManualCamera({ cx: currentCam.cx, cy: currentCam.cy, zoom: nextZoom });
+  };
+
+  const currentCamZoom =
+    evalState.kind === 'scene' ? getCurrentCam().zoom : 1;
+  const zoomPct = Math.round(currentCamZoom * 100);
   const hasNodeOffsets = hasAnyOffset(scene.nodes);
   const showReset = hasNodeOffsets || manualCamera !== null;
 
@@ -391,10 +515,10 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
         minWidth: 0,
       }}
     >
-      {/* Top Canvas Toolbar (non-overlapping flex row) */}
+      {/* Compact 1-row Canvas Toolbar */}
       <div
         style={{
-          padding: '10px 14px 4px',
+          padding: '8px 14px 4px',
           display: 'flex',
           alignItems: 'center',
           flexWrap: 'wrap',
@@ -420,57 +544,65 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           ))}
         </div>
 
-        <div className="studio-pill-group" title={t('canvas.cameraGroupTitle')}>
-          <span
+        <div
+          className="studio-pill-group"
+          title={t('canvas.cameraGroupTitle')}
+          style={{ padding: '2px 6px', gap: 5 }}
+        >
+          <Camera size={13} color="var(--text-muted)" />
+          <select
+            className="studio-select"
+            aria-label={t('canvas.cameraGroupTitle')}
+            value={scene.cameraMode}
+            onChange={(e) => {
+              setManualCamera(null);
+              onChangeCameraMode(e.target.value as CameraMode);
+            }}
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              padding: '0 5px',
-              color: 'var(--text-muted)',
+              width: 'auto',
+              height: 26,
+              padding: '0 4px',
+              border: 'none',
+              background: 'transparent',
+              fontSize: 12,
+              boxShadow: 'none',
             }}
           >
-            <Camera size={13} />
-          </span>
-          {cameras.map((camPlugin) => (
-            <button
-              key={camPlugin.id}
-              type="button"
-              className={`studio-pill-item ${
-                scene.cameraMode === camPlugin.id ? 'active' : ''
-              }`}
-              onClick={() => {
-                setManualCamera(null);
-                onChangeCameraMode(camPlugin.id);
-              }}
-            >
-              {pluginName(camPlugin.id, camPlugin.name)}
-            </button>
-          ))}
+            {cameras.map((camPlugin) => (
+              <option key={camPlugin.id} value={camPlugin.id} style={{ background: '#161b22' }}>
+                {t('canvas.cameraLabel')}: {pluginName(camPlugin.id, camPlugin.name)}
+              </option>
+            ))}
+          </select>
         </div>
 
-        <div className="studio-pill-group" title={t('canvas.handGroupTitle')}>
-          <span
+        <div
+          className="studio-pill-group"
+          title={t('canvas.handGroupTitle')}
+          style={{ padding: '2px 6px', gap: 5 }}
+        >
+          <Hand size={13} color="var(--text-muted)" />
+          <select
+            className="studio-select"
+            aria-label={t('canvas.handGroupTitle')}
+            value={scene.handStyle}
+            onChange={(e) => onChangeHandStyle(e.target.value as HandStyle)}
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              padding: '0 5px',
-              color: 'var(--text-muted)',
+              width: 'auto',
+              height: 26,
+              padding: '0 4px',
+              border: 'none',
+              background: 'transparent',
+              fontSize: 12,
+              boxShadow: 'none',
             }}
           >
-            <Hand size={13} />
-          </span>
-          {hands.map((hand) => (
-            <button
-              key={hand.id}
-              type="button"
-              className={`studio-pill-item ${
-                scene.handStyle === hand.id ? 'active' : ''
-              }`}
-              onClick={() => onChangeHandStyle(hand.id)}
-            >
-              {pluginName(hand.id, hand.name)}
-            </button>
-          ))}
+            {hands.map((hand) => (
+              <option key={hand.id} value={hand.id} style={{ background: '#161b22' }}>
+                {t('canvas.handLabel')}: {pluginName(hand.id, hand.name)}
+              </option>
+            ))}
+          </select>
         </div>
 
         <button
@@ -480,6 +612,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           title={
             soundEnabled ? t('canvas.soundOnTitle') : t('canvas.soundOffTitle')
           }
+          style={{ padding: '0 9px' }}
         >
           {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
           <span>{t('canvas.soundBtn')}</span>
@@ -513,6 +646,60 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
           position: 'relative',
         }}
       >
+        {/* Dismissible Local Draft Notice Pill */}
+        {restoredFromDraft && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 10,
+              right: 16,
+              zIndex: 18,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '5px 10px',
+              borderRadius: 99,
+              background: 'rgba(22, 27, 34, 0.9)',
+              border: '1px solid rgba(243, 201, 105, 0.38)',
+              fontSize: 11.5,
+              color: 'var(--text-secondary)',
+              boxShadow: '0 6px 18px rgba(0, 0, 0, 0.38)',
+            }}
+          >
+            <span>{t('canvas.draftRestoredBanner')}</span>
+            {onResetToDefaultPreset && (
+              <button
+                type="button"
+                onClick={onResetToDefaultPreset}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  padding: 0,
+                  color: 'var(--accent)',
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                }}
+              >
+                {t('canvas.draftResetAction')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onDismissDraftBanner}
+              aria-label={t('canvas.draftDismissAria')}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                padding: 0,
+                display: 'inline-flex',
+                color: 'var(--text-muted)',
+              }}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
         <div
           style={{
             borderRadius: 12,
@@ -537,7 +724,7 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
               height: viewportSize.height,
               borderRadius: 8,
               cursor: isPlaying
-                ? 'default'
+                ? 'pointer'
                 : hoveredNodeId
                 ? 'grab'
                 : manualCamera
@@ -545,6 +732,143 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
                 : 'default',
             }}
           />
+
+          {/* Floating Inline Quick-Text Editor (double-click node) */}
+          {inlineEdit && (
+            <div
+              style={{
+                position: 'absolute',
+                left: Math.max(
+                  12,
+                  Math.min(
+                    viewportSize.width - inlineEdit.width - 12,
+                    inlineEdit.screenX - inlineEdit.width / 2 + 4
+                  )
+                ),
+                top: Math.max(
+                  12,
+                  Math.min(
+                    viewportSize.height - 46,
+                    inlineEdit.screenY - 18
+                  )
+                ),
+                width: inlineEdit.width,
+                zIndex: 25,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 3,
+              }}
+            >
+              <input
+                autoFocus
+                className="studio-input"
+                value={inlineEdit.value}
+                onChange={(e) =>
+                  setInlineEdit((prev) =>
+                    prev ? { ...prev, value: e.target.value } : null
+                  )
+                }
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitInlineEdit();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setInlineEdit(null);
+                  }
+                }}
+                onBlur={commitInlineEdit}
+                style={{
+                  background: 'rgba(16, 20, 25, 0.96)',
+                  border: '1.5px solid var(--accent)',
+                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  textAlign: 'center',
+                }}
+              />
+              <span
+                style={{
+                  alignSelf: 'center',
+                  fontSize: 10,
+                  color: 'var(--text-secondary)',
+                  background: 'rgba(16, 20, 25, 0.85)',
+                  padding: '1px 6px',
+                  borderRadius: 4,
+                }}
+              >
+                {t('canvas.inlineEditHint')}
+              </span>
+            </div>
+          )}
+
+          {/* Bottom-Right Floating Zoom & Node Action HUD */}
+          <div className="studio-canvas-hud">
+            {!isPlaying && selectedNodeId && (
+              <>
+                <button
+                  type="button"
+                  className="studio-pill-item"
+                  onClick={() => onDuplicateNode(selectedNodeId)}
+                  title={t('canvas.duplicateNodeTitle')}
+                  style={{ height: 24, padding: '0 6px' }}
+                >
+                  <Copy size={12} />
+                </button>
+                <button
+                  type="button"
+                  className="studio-pill-item"
+                  onClick={() => onDeleteNode(selectedNodeId)}
+                  title={t('canvas.deleteNodeTitle')}
+                  style={{ height: 24, padding: '0 6px', color: '#fca5a5' }}
+                >
+                  <Trash2 size={12} />
+                </button>
+                <div
+                  style={{
+                    width: 1,
+                    height: 14,
+                    background: 'var(--border-subtle)',
+                    margin: '0 2px',
+                  }}
+                />
+              </>
+            )}
+            <button
+              type="button"
+              className="studio-pill-item"
+              onClick={() => adjustZoomBy(0.88)}
+              title={t('canvas.zoomOutTitle')}
+              style={{ height: 24, padding: '0 6px' }}
+            >
+              <ZoomOut size={12} />
+            </button>
+            <button
+              type="button"
+              className="studio-pill-item"
+              onClick={() => setManualCamera(null)}
+              title={t('canvas.zoomFitTitle')}
+              style={{
+                height: 24,
+                padding: '0 6px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11,
+                minWidth: 44,
+                justifyContent: 'center',
+              }}
+            >
+              {manualCamera ? `${zoomPct}%` : <Maximize2 size={11} />}
+            </button>
+            <button
+              type="button"
+              className="studio-pill-item"
+              onClick={() => adjustZoomBy(1.14)}
+              title={t('canvas.zoomInTitle')}
+              style={{ height: 24, padding: '0 6px' }}
+            >
+              <ZoomIn size={12} />
+            </button>
+          </div>
         </div>
       </div>
 

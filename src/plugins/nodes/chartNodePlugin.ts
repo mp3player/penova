@@ -4,6 +4,7 @@ import {
   isCustomSceneNode,
   Point,
 } from '../../model/scene';
+import { defineProps, prop } from '../../sdk/propSchema';
 import { hashString, mulberry32 } from '../../sdk/random';
 import {
   buildRoundedRectPoints,
@@ -13,15 +14,26 @@ import {
 import { SceneNodePlugin } from '../contracts';
 import { clipRayToRect } from '../shapes/clipHelpers';
 
-function readChartPropText(
-  props: Record<string, string | number | boolean | undefined> | undefined,
-  key: string
-): string {
-  const val = props?.[key];
-  if (typeof val === 'string') return val;
-  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
-  return '';
-}
+const chartProps = defineProps({
+  title: prop.string({ default: 'Growth', description: 'Chart title' }),
+  values: prop.string({
+    default: '22,48,76,100',
+    description: 'Comma-separated bar values',
+  }),
+  labels: prop.string({
+    default: 'Q1,Q2,Q3,Q4',
+    description: 'Comma-separated bar labels',
+  }),
+  highlight: prop.number({
+    default: 3,
+    min: 0,
+    max: 7,
+    step: 1,
+    description: '0-based highlighted bar index',
+  }),
+  width: prop.number({ min: 180, step: 10, aliases: ['w'] }),
+  height: prop.number({ min: 140, step: 10, aliases: ['h'] }),
+});
 
 function parseChartData(node: CustomSceneNode): {
   title: string;
@@ -29,10 +41,12 @@ function parseChartData(node: CustomSceneNode): {
   labels: string[];
   highlightIdx: number;
 } {
-  const rawTitle = readChartPropText(node.props, 'title').trim();
-  const title = rawTitle || node.name || 'Metrics';
+  const title =
+    (chartProps.readField(node.props, 'title') ?? '').trim() ||
+    node.name ||
+    'Metrics';
 
-  const rawValuesStr = readChartPropText(node.props, 'values').trim();
+  const rawValuesStr = (chartProps.readField(node.props, 'values') ?? '').trim();
   const rawValues = rawValuesStr
     ? rawValuesStr
         .split(',')
@@ -41,16 +55,16 @@ function parseChartData(node: CustomSceneNode): {
     : [];
   const values = rawValues.length >= 2 ? rawValues.slice(0, 8) : [25, 48, 76, 100];
 
-  const rawLabelsStr = readChartPropText(node.props, 'labels').trim();
+  const rawLabelsStr = (chartProps.readField(node.props, 'labels') ?? '').trim();
   const rawLabels = rawLabelsStr
     ? rawLabelsStr.split(',').map((s) => s.trim())
     : [];
   const labels = values.map((_, idx) => rawLabels[idx] || `#${idx + 1}`);
 
-  const hiRaw = Number(node.props?.highlight);
+  const resolvedHi = chartProps.readField(node.props, 'highlight');
   const highlightIdx =
-    Number.isFinite(hiRaw) && hiRaw >= 0 && hiRaw < values.length
-      ? Math.round(hiRaw)
+    resolvedHi !== undefined && resolvedHi < values.length
+      ? Math.round(resolvedHi)
       : values.length - 1;
 
   return { title, values, labels, highlightIdx };
@@ -59,12 +73,18 @@ function parseChartData(node: CustomSceneNode): {
 export const chartNodePlugin: SceneNodePlugin = {
   id: 'chart',
   name: 'Bar Chart',
+  defaultName: 'Metrics',
+  defaultColor: 'orange',
+  defaultProps: chartProps.defaults,
+  snippet:
+    '[node:chart] Speed {color: orange, title: "Growth", values: "20,45,75,100", labels: "Q1,Q2,Q3,Q4", highlight: 3}',
+  propFields: chartProps.fields,
   measure(node, ctx) {
-    const rawW = Number(node.props?.width ?? node.props?.w);
-    const rawH = Number(node.props?.height ?? node.props?.h);
+    const explicitW = chartProps.readField(node.props, 'width');
+    const explicitH = chartProps.readField(node.props, 'height');
     let width = 296;
-    if (Number.isFinite(rawW) && rawW >= 180) {
-      width = rawW;
+    if (explicitW !== undefined) {
+      width = explicitW;
     } else {
       const { title, values, labels } = parseChartData(node);
       const titleW = ctx.measureText(title, `700 15px ${ctx.fontFamily}`);
@@ -85,7 +105,7 @@ export const chartNodePlugin: SceneNodePlugin = {
         )
       );
     }
-    const height = Number.isFinite(rawH) && rawH >= 140 ? rawH : 196;
+    const height = explicitH ?? 196;
     return { width, height };
   },
   clipRay(positioned, toward, extraMargin) {

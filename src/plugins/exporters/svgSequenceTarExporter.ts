@@ -14,6 +14,7 @@ export const svgSequenceTarExporterPlugin: ExportPlugin = {
   id: 'svg-sequence-tar',
   name: 'Vector Frames (SVG .tar)',
   shortLabel: 'SVG Tar',
+  category: 'sequence',
   description:
     'Render platform-agnostic SVG frame sequence and FFmpeg script into a .tar bundle without Canvas',
   isSupported() {

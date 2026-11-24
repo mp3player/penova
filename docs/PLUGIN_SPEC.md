@@ -31,15 +31,21 @@ All public contracts and registries are exported from [src/plugins/index.ts](../
 
 ### 0. `SceneNodePlugin` (`sceneNodeRegistry`)
 
-Extends `SceneNode` cleanly in two modes without modifying core layout or timeline compilers:
+Extends `SceneNode` cleanly in two modes without modifying core layout or timeline compilers (built-in visual plugins in [src/plugins/nodes/](../src/plugins/nodes/): `icon`, `sketch`, `code`, `chart`):
 
 - **Composite Mode (`compose(node) => SceneNode`)**: Return a composite `group` / `text` / `shape` tree; Penova automatically measures, clips connectors, and compiles handwriting strokes.
 - **Primitive Mode (`measure(node, ctx)` + `compile(positioned, helpers)`)**: Compute custom dimensions and emit `StrokePath` strokes (`helpers.pushStroke`) or animated text lines (`helpers.pushTextLine`) directly.
+- **Pure-Data Property Metadata (`propFields`)**: Declared via `defineProps(...)` ([src/sdk/propSchema.ts](../src/sdk/propSchema.ts)), keeping plugin contracts 100% free of UI vocabulary while automatically powering Studio inspector fields, symmetric two-way edits, and `[node:<id>] props:` lines in `generateScriptSpec()`.
 
 ```ts
 export interface SceneNodePlugin {
   id: string;
   name: string;
+  defaultName?: string;
+  defaultColor?: ChalkColor;
+  defaultProps?: Record<string, string | number | boolean>;
+  snippet?: string;
+  propFields?: readonly PropFieldDescriptor[];
   compose?(node: CustomSceneNode): SceneNode;
   measure?(
     node: CustomSceneNode,
@@ -211,13 +217,14 @@ Decouples frame generation (`ExportFrameSource`) from output encoding. `ExportFr
 4. `poster-svg` (platform-agnostic 1080P vector SVG poster, zero Canvas dependency)
 5. `svg-sequence-tar` (platform-agnostic SVG frame sequence `.tar` bundle, zero Canvas dependency)
 
-Use `createHttpBridgeExportPlugin` (supporting `frameFormat: 'auto' | 'png-base64' | 'svg' | 'snapshot'`) to connect a local FFmpeg bridge or cloud encoder in 5 lines—it automatically appears in the TopBar exporter selector, and `exportScriptToVideo(scriptText)` compiles `.penova.md` directly through any registered exporter:
+Use `createHttpBridgeExportPlugin` (supporting `frameFormat: 'auto' | 'png-base64' | 'svg' | 'snapshot'`) to connect a local FFmpeg bridge or cloud encoder in 5 lines—it automatically appears in the TopBar exporter menu (grouped into Snapshot vs. Video/Sequence sections by `category`), and `exportScriptToVideo(scriptText)` compiles `.penova.md` directly through any registered exporter:
 
 ```ts
 export interface ExportPlugin {
   id: string;
   name: string;
   shortLabel?: string;
+  category?: 'snapshot' | 'sequence';
   description?: string;
   isSupported?(): boolean;
   export(source: ExportFrameSource, options: ExportRunOptions): Promise<ExportOutput>;
@@ -265,9 +272,59 @@ layoutRegistry.register(verticalDocLayout);
 
 ## 4. Declarative Multi-Scene Project Scripts (`.penova.md`)
 
-Penova can compile any plain-text `.penova.md` document directly into a multi-scene `LessonProject`, resolving every declared `theme`, `layout`, `camera`, `hand`, and `transition` plugin dynamically via [src/engine/parser/projectScript.ts](../src/engine/parser/projectScript.ts):
+Penova can compile any plain-text `.penova.md` document directly into a multi-scene `LessonProject`, resolving every declared `theme`, `layout`, `camera`, `hand`, `transition`, and `[node:<kind>]` plugin dynamically across all 9 registries via [src/engine/parser/projectScript.ts](../src/engine/parser/projectScript.ts):
 
 - Custom `LayoutPlugin` implementations that attach a `textCodec` (optionally documenting `syntaxRules` and `example`) are automatically routable inside `.penova.md` scenes via `layout: <plugin-id>`.
 - Built-in lossless two-way codecs cover all 6 built-in layouts (`flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, `freeform` via `graphScriptCodec`; `document` via `documentScriptCodec`), including frameless cards (`shape: none`), standalone `[text]` / `[shape:<id>]` / `[node:<kind>]`, nested `[group]` trees, `#<id>` disambiguation for duplicate labels, and per-step `{say: "...", pause: <ms>}` subtitle narration & pause overrides.
-- Calling `generateScriptSpec()` introspects all active registries at runtime to emit an exact, up-to-date Markdown specification of all valid plugin IDs and codec syntax rules—suitable for documentation, CLI automation, or external script generators.
+- Calling `generateScriptSpec()` introspects all active registries at runtime to emit an exact, up-to-date Markdown specification of all valid plugin IDs, codec syntax rules, and auto-generated `[node:<id>] props:` lines derived from each `SceneNodePlugin`'s `propFields`—suitable for documentation, CLI automation, or external script generators.
 - See [docs/examples/penova-intro.penova.md](examples/penova-intro.penova.md) for a complete 6-scene product introduction script.
+
+---
+
+## 5. Headless Property Schema (`defineProps`) & Engine/UI Decoupling
+
+Penova enforces a **strict one-way boundary (`UI -> Engine`)**:
+
+- `src/model/`, `src/sdk/`, `src/plugins/`, and `src/engine/` are **100% headless**—zero DOM/React imports, zero UI hints (`rows`, `placeholder`, `label`, `inlineEditPropKey`), and compatible with Node 22 native TypeScript type-stripping as well as the standalone bundler `scripts/bundle-skill.py`.
+- `src/studio/` and `src/components/` own all browser-only editing interactions and optional visual customizations.
+
+### `defineProps` (`src/sdk/propSchema.ts`)
+
+Instead of duplicating `defaultProps`, parser normalization, clamping, and inspector bindings, plugins declare a single pure-data schema via `defineProps` with `prop.string`, `prop.number`, `prop.boolean`, and `prop.enum`:
+
+```ts
+import { defineProps, prop } from '../../sdk/propSchema';
+
+const myProps = defineProps({
+  title: prop.string({ default: 'Metrics', format: 'plain' }),
+  lines: prop.string({ format: 'code', aliases: ['code'] }),
+  height: prop.number({ default: 196, min: 96, max: 420, step: 4 }),
+  mode: prop.enum(['auto', 'manual'], { default: 'auto' }),
+});
+```
+
+- **Pure Semantic Formats**: `format` describes data semantics only (`'plain' | 'multiline' | 'code' | 'svg' | 'icon-id' | 'enum'`).
+- **Single Source of Truth**: Exposes `fields` (`PropFieldDescriptor[]` attached to `SceneNodePlugin.propFields`), `defaults`, and strongly-typed `resolve(rawProps)` (`InferPropValues`).
+- **Symmetric Two-Way Access**: `readField`, `writeField`, and `resetField` (plus generic `readPropBySchema` / `writePropBySchema`) normalize aliases onto canonical keys, enforce `min`/`max` bounds, and return immutable updated `node.props` objects across UI inspectors, canvas inline edits, and script round-trips.
+
+### Companion UI Registry (`src/studio/uiRegistry.ts`)
+
+Any third-party `SceneNodePlugin` with `propFields` renders automatically in the Studio inspector and script quick-insert toolbar with **zero UI code**. When browser-only editor refinements are desired without polluting headless builds, register an optional `StudioNodeUiExtension` on `studioNodeUiRegistry`:
+
+```ts
+import { studioNodeUiRegistry } from '../studio/uiRegistry';
+
+studioNodeUiRegistry.register({
+  id: 'my-widget',
+  inlineEditPropKey: 'title', // enables double-click canvas quick-edit
+  fieldHints: {
+    lines: { label: 'Source Code', rows: 4, placeholder: 'const x = 1;' },
+  },
+  // renderExtra(ctx) { ... } // optional custom React section in Inspector
+});
+```
+
+### Companion SDK Primitives (`src/sdk/`)
+
+- **`src/sdk/sketchPipeline.ts`**: Headless SVG path & bitmap sketch-to-stroke pipeline with 20 built-in icons, extensible via `registerSketchIcon` and observed reactively by Studio pickers via `subscribeSketchIcons` / `listSketchIcons`.
+- **`src/sdk/workflowDag.ts`**: Recursive composable DAG layout & edge-routing kernel for custom graph/pipeline plugins.

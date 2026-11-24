@@ -16,6 +16,7 @@ export const pngSequenceTarExporterPlugin: ExportPlugin = {
   id: 'png-sequence-tar',
   name: 'Offline Frames (FFmpeg .tar)',
   shortLabel: 'FFmpeg Tar',
+  category: 'sequence',
   description: 'Render lossless PNG frame sequence and FFmpeg script into a .tar bundle',
   isSupported() {
     return typeof document !== 'undefined';

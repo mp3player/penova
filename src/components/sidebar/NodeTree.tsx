@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   ArrowDown,
   ArrowRight,
@@ -6,11 +6,16 @@ import {
   ChevronDown,
   ChevronRight,
   Folder,
+  Puzzle,
   Square,
   Trash2,
   Type,
 } from 'lucide-react';
-import { SceneNode, ThemeId } from '../../model/scene';
+import {
+  isCustomSceneNode,
+  SceneNode,
+  ThemeId,
+} from '../../model/scene';
 import { ShapePlugin } from '../../plugins';
 import { resolveColorHex } from '../../engine/render/themes';
 import { useI18n } from '../../i18n';
@@ -35,6 +40,9 @@ interface NodeTreeProps {
 }
 
 function renderNodeIcon(node: SceneNode): React.ReactNode {
+  if (isCustomSceneNode(node)) {
+    return <Puzzle size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />;
+  }
   switch (node.type) {
     case 'text':
       return <Type size={12} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />;
@@ -67,41 +75,50 @@ export const NodeTree: React.FC<NodeTreeProps> = ({
   onAddChildToGroup,
 }) => {
   const { t } = useI18n();
-  return (
-    <>
-      {nodes.map((node, idx) => {
-        const isSelected = node.id === selectedNodeId;
-        const isGroup = node.type === 'group';
-        const isExpanded = isGroup && expandedGroups.has(node.id);
-        const dotColor = resolveColorHex(theme, node.color);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
-        let displayTitle = node.name;
-        if (node.type === 'text') {
-          displayTitle = node.text.trim() || t('tree.emptyText');
-        } else if (node.type === 'connector') {
-          if (node.fromId && node.toId) {
-            const fromN = nodeNameMap.get(node.fromId) ?? node.fromId;
-            const toN = nodeNameMap.get(node.toId) ?? node.toId;
-            displayTitle = `${fromN} ${
-              node.style === 'dashed' ? '-.->' : '→'
-            } ${toN}${node.label ? ` (${node.label})` : ''}`;
-          } else {
-            displayTitle = node.label
-              ? t('tree.freeArrowWithLabel', { label: node.label })
-              : t('tree.freeArrow');
-          }
-        }
+  useEffect(() => {
+    if (depth !== 0 || !selectedNodeId || !rootRef.current) return;
+    const match = rootRef.current.querySelector<HTMLElement>(
+      `[data-node-id="${CSS.escape(selectedNodeId)}"]`
+    );
+    match?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [depth, selectedNodeId]);
 
-        return (
-          <div
-            key={node.id}
-            style={{
-              marginLeft: depth * 12,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 4,
-            }}
-          >
+  const content = nodes.map((node, idx) => {
+    const isSelected = node.id === selectedNodeId;
+    const isGroup = node.type === 'group';
+    const isExpanded = isGroup && expandedGroups.has(node.id);
+    const dotColor = resolveColorHex(theme, node.color);
+
+    let displayTitle = node.name;
+    if (node.type === 'text') {
+      displayTitle = node.text.trim() || t('tree.emptyText');
+    } else if (node.type === 'connector') {
+      if (node.fromId && node.toId) {
+        const fromN = nodeNameMap.get(node.fromId) ?? node.fromId;
+        const toN = nodeNameMap.get(node.toId) ?? node.toId;
+        displayTitle = `${fromN} ${
+          node.style === 'dashed' ? '-.->' : '→'
+        } ${toN}${node.label ? ` (${node.label})` : ''}`;
+      } else {
+        displayTitle = node.label
+          ? t('tree.freeArrowWithLabel', { label: node.label })
+          : t('tree.freeArrow');
+      }
+    }
+
+    return (
+      <div
+        key={node.id}
+        data-node-id={node.id}
+        style={{
+          marginLeft: depth * 12,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
             <div
               style={{
                 borderRadius: 8,
@@ -280,7 +297,17 @@ export const NodeTree: React.FC<NodeTreeProps> = ({
             )}
           </div>
         );
-      })}
-    </>
-  );
+      });
+
+  if (depth === 0) {
+    return (
+      <div
+        ref={rootRef}
+        style={{ display: 'flex', flexDirection: 'column', gap: 5 }}
+      >
+        {content}
+      </div>
+    );
+  }
+  return <>{content}</>;
 };

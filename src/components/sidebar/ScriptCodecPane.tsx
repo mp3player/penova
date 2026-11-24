@@ -12,7 +12,11 @@ import {
 } from '../../engine/parser/projectScript';
 import { LessonProject } from '../../model/project';
 import { LessonScene } from '../../model/scene';
-import { SceneTextCodec } from '../../plugins';
+import {
+  sceneNodeRegistry,
+  SceneTextCodec,
+  useRegistryList,
+} from '../../plugins';
 import { useI18n } from '../../i18n';
 
 interface ScriptCodecPaneProps {
@@ -44,7 +48,8 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
   onExportProjectScript,
   onNotify,
 }) => {
-  const { t, codecMeta } = useI18n();
+  const { t, pluginName, codecMeta } = useI18n();
+  const sceneNodePlugins = useRegistryList(sceneNodeRegistry);
   const [mode, setMode] = useState<'scene' | 'project'>(
     codec ? 'scene' : 'project'
   );
@@ -54,7 +59,10 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
   const [projectWarnings, setProjectWarnings] = useState<string[]>([]);
   const [isProjectDirty, setIsProjectDirty] = useState(false);
   const justAppliedRef = useRef(false);
+  const prevProjectIdRef = useRef(project.id);
   const scriptImportRef = useRef<HTMLInputElement | null>(null);
+  const sceneGutterRef = useRef<HTMLDivElement | null>(null);
+  const projectGutterRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!codec && mode === 'scene') {
@@ -63,19 +71,45 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
   }, [codec, mode]);
 
   useEffect(() => {
-    setProjectDraft(serializeProjectScript(project));
-    setIsProjectDirty(false);
+    const projectChanged = prevProjectIdRef.current !== project.id;
+    prevProjectIdRef.current = project.id;
+
     if (justAppliedRef.current) {
       justAppliedRef.current = false;
-    } else {
-      setProjectWarnings([]);
+      setProjectDraft(serializeProjectScript(project));
+      setIsProjectDirty(false);
+      return;
     }
-  }, [project]);
+
+    if (isProjectDirty && !projectChanged) {
+      return;
+    }
+
+    setProjectDraft(serializeProjectScript(project));
+    setIsProjectDirty(false);
+    setProjectWarnings([]);
+  }, [project, isProjectDirty]);
 
   const effectiveMode = codec ? mode : 'project';
   const meta = codec ? codecMeta(codec) : null;
   const activeWarnings =
     effectiveMode === 'scene' ? warnings : projectWarnings;
+
+  const warningLines = new Set<number>();
+  for (const w of activeWarnings) {
+    const m = w.match(/(?:第\s*(\d+)\s*行|line\s*(\d+))/i);
+    const num = Number(m?.[1] ?? m?.[2]);
+    if (Number.isFinite(num) && num > 0) {
+      warningLines.add(num);
+    }
+  }
+
+  const appendSceneSnippet = (snippet: string) => {
+    const next = scriptText.trimEnd()
+      ? `${scriptText.trimEnd()}\n${snippet}`
+      : snippet;
+    onChange(next);
+  };
 
   const handleCopySpec = async () => {
     const spec = generateScriptSpec();
@@ -148,12 +182,12 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
         <>
           <div
             style={{
-              padding: '8px 10px',
+              padding: '7px 9px',
               borderRadius: 8,
               background: '#101419',
               border: '1px solid var(--border-subtle)',
-              fontSize: 11.5,
-              lineHeight: 1.55,
+              fontSize: 11.2,
+              lineHeight: 1.48,
               color: 'var(--text-secondary)',
             }}
           >
@@ -161,7 +195,7 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
               style={{
                 fontWeight: 600,
                 color: 'var(--accent)',
-                marginBottom: 3,
+                marginBottom: 2,
               }}
             >
               {meta.hintTitle}
@@ -173,22 +207,113 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
             ))}
           </div>
 
-          <textarea
-            className="studio-textarea"
-            value={scriptText}
-            onFocus={onFocus}
-            onBlur={onBlur}
-            onChange={(e) => onChange(e.target.value)}
-            spellCheck={false}
-            style={{
-              flex: 1,
-              resize: 'none',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 12,
-              lineHeight: 1.55,
-              padding: 10,
-            }}
-          />
+          {codec?.id === 'graph-dsl' && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 4,
+              }}
+            >
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                {t('script.snippetsLabel')}
+              </span>
+              <button
+                type="button"
+                className="studio-btn"
+                style={{ height: 22, padding: '0 6px', fontSize: 10.5 }}
+                onClick={() =>
+                  appendSceneSnippet(
+                    '[concept] Concept | Details {color: cyan, shape: rounded, icon: spark}'
+                  )
+                }
+              >
+                +{t('script.snippetCard')}
+              </button>
+              {sceneNodePlugins.map((plugin) => {
+                const snippet =
+                  plugin.snippet ??
+                  `[node:${plugin.id}] ${plugin.defaultName ?? plugin.name} {color: ${plugin.defaultColor ?? 'cyan'}}`;
+                const chipLabel = pluginName(plugin.id, plugin.name);
+                return (
+                  <button
+                    key={plugin.id}
+                    type="button"
+                    className="studio-btn"
+                    style={{ height: 22, padding: '0 6px', fontSize: 10.5 }}
+                    onClick={() => appendSceneSnippet(snippet)}
+                  >
+                    +{chipLabel}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                className="studio-btn"
+                style={{ height: 22, padding: '0 6px', fontSize: 10.5 }}
+                onClick={() => appendSceneSnippet('A -> B : Flow {color: yellow}')}
+              >
+                +{t('script.snippetArrow')}
+              </button>
+            </div>
+          )}
+
+          <div className="studio-code-editor">
+            <div
+              ref={sceneGutterRef}
+              className="studio-line-gutter"
+              style={{ fontSize: 12, lineHeight: 1.55 }}
+              aria-hidden="true"
+            >
+              {Array.from(
+                { length: Math.max(1, scriptText.split('\n').length) },
+                (_, i) => i + 1
+              ).map((ln) => (
+                <div
+                  key={ln}
+                  style={{
+                    color: warningLines.has(ln)
+                      ? '#fcd34d'
+                      : 'var(--text-muted)',
+                    fontWeight: warningLines.has(ln) ? 700 : 400,
+                    background: warningLines.has(ln)
+                      ? 'rgba(245, 158, 11, 0.16)'
+                      : 'transparent',
+                    borderRadius: 3,
+                    paddingRight: 2,
+                  }}
+                >
+                  {ln}
+                </div>
+              ))}
+            </div>
+            <textarea
+              className="studio-textarea"
+              value={scriptText}
+              onFocus={onFocus}
+              onBlur={onBlur}
+              onChange={(e) => onChange(e.target.value)}
+              onScroll={(e) => {
+                if (sceneGutterRef.current) {
+                  sceneGutterRef.current.scrollTop = e.currentTarget.scrollTop;
+                }
+              }}
+              spellCheck={false}
+              style={{
+                flex: 1,
+                border: 'none',
+                borderRadius: 0,
+                boxShadow: 'none',
+                resize: 'none',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+                lineHeight: 1.55,
+                padding: '10px 10px 10px 8px',
+                overflowX: 'auto',
+              }}
+            />
+          </div>
         </>
       ) : (
         <>
@@ -230,15 +355,29 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
             }}
           />
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
             <button
               type="button"
               className="studio-btn primary"
               onClick={handleApplyProject}
+              title={t('script.applyShortcutHint')}
               style={{ flex: 1, height: 27, padding: '0 8px', fontSize: 11.5 }}
             >
               <Play size={11} />
               {t('script.applyBtn')}
+              {isProjectDirty && (
+                <span
+                  style={{
+                    fontSize: 9.8,
+                    padding: '1px 5px',
+                    borderRadius: 99,
+                    background: 'rgba(20, 24, 31, 0.25)',
+                    fontWeight: 700,
+                  }}
+                >
+                  {t('script.unsavedBadge')}
+                </span>
+              )}
             </button>
             <button
               type="button"
@@ -270,23 +409,68 @@ export const ScriptCodecPane: React.FC<ScriptCodecPaneProps> = ({
             </button>
           </div>
 
-          <textarea
-            className="studio-textarea"
-            value={projectDraft}
-            onChange={(e) => {
-              setProjectDraft(e.target.value);
-              setIsProjectDirty(true);
-            }}
-            spellCheck={false}
-            style={{
-              flex: 1,
-              resize: 'none',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 11.5,
-              lineHeight: 1.5,
-              padding: 10,
-            }}
-          />
+          <div className="studio-code-editor">
+            <div
+              ref={projectGutterRef}
+              className="studio-line-gutter"
+              style={{ fontSize: 11.5, lineHeight: 1.5 }}
+              aria-hidden="true"
+            >
+              {Array.from(
+                { length: Math.max(1, projectDraft.split('\n').length) },
+                (_, i) => i + 1
+              ).map((ln) => (
+                <div
+                  key={ln}
+                  style={{
+                    color: warningLines.has(ln)
+                      ? '#fcd34d'
+                      : 'var(--text-muted)',
+                    fontWeight: warningLines.has(ln) ? 700 : 400,
+                    background: warningLines.has(ln)
+                      ? 'rgba(245, 158, 11, 0.16)'
+                      : 'transparent',
+                    borderRadius: 3,
+                    paddingRight: 2,
+                  }}
+                >
+                  {ln}
+                </div>
+              ))}
+            </div>
+            <textarea
+              className="studio-textarea"
+              value={projectDraft}
+              onChange={(e) => {
+                setProjectDraft(e.target.value);
+                setIsProjectDirty(true);
+              }}
+              onKeyDown={(e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  handleApplyProject();
+                }
+              }}
+              onScroll={(e) => {
+                if (projectGutterRef.current) {
+                  projectGutterRef.current.scrollTop = e.currentTarget.scrollTop;
+                }
+              }}
+              spellCheck={false}
+              style={{
+                flex: 1,
+                border: 'none',
+                borderRadius: 0,
+                boxShadow: 'none',
+                resize: 'none',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                padding: '10px 10px 10px 8px',
+                overflowX: 'auto',
+              }}
+            />
+          </div>
         </>
       )}
 

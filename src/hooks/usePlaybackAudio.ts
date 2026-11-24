@@ -16,6 +16,8 @@ export interface UsePlaybackAudioParams {
   compiledProject: CompiledProjectTimeline;
   evalState: ProjectEvalState;
   activeTheme: ThemeId;
+  activeSceneRange: { startMs: number; endMs: number };
+  selectedNodeId: string | null;
   isPlaying: boolean;
   setIsPlaying: React.Dispatch<React.SetStateAction<boolean>>;
   tMs: number;
@@ -24,6 +26,9 @@ export interface UsePlaybackAudioParams {
   exporting: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  onDeleteSelectedNode: () => void;
+  onDuplicateSelectedNode: () => void;
+  onClearSelection: () => void;
   showToast: (msg: string) => void;
 }
 
@@ -31,6 +36,8 @@ export function usePlaybackAudio({
   compiledProject,
   evalState,
   activeTheme,
+  activeSceneRange,
+  selectedNodeId,
   isPlaying,
   setIsPlaying,
   tMs,
@@ -39,11 +46,15 @@ export function usePlaybackAudio({
   exporting,
   onUndo,
   onRedo,
+  onDeleteSelectedNode,
+  onDuplicateSelectedNode,
+  onClearSelection,
   showToast,
 }: UsePlaybackAudioParams) {
   const { t } = useI18n();
   const [speed, setSpeed] = useState(1);
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [loopCurrentScene, setLoopCurrentScene] = useState(false);
   const [audioTrack, setAudioTrack] = useState<AudioTrackState | null>(null);
 
   const soundEngineRef = useRef<ChalkSoundEngine | null>(null);
@@ -119,6 +130,12 @@ export function usePlaybackAudio({
     );
   }, [soundEnabled, isPlaying, exporting, evalState, activeTheme]);
 
+  // Sync looping playback within active scene boundaries
+  const activeSceneRangeRef = useRef(activeSceneRange);
+  activeSceneRangeRef.current = activeSceneRange;
+  const loopSceneRef = useRef(loopCurrentScene);
+  loopSceneRef.current = loopCurrentScene;
+
   // Playback loop via requestAnimationFrame
   useEffect(() => {
     if (!isPlaying || exporting) return;
@@ -130,8 +147,16 @@ export function usePlaybackAudio({
       const dt = Math.min(80, now - lastTime);
       lastTime = now;
       const next = tMsRef.current + dt * speed;
+      const range = activeSceneRangeRef.current;
 
-      if (next >= compiledProject.totalDurationMs) {
+      if (loopSceneRef.current && range.endMs > range.startMs) {
+        if (next >= range.endMs) {
+          tMsRef.current = range.startMs;
+          setTMs(range.startMs);
+          rafId = requestAnimationFrame(tick);
+          return;
+        }
+      } else if (next >= compiledProject.totalDurationMs) {
         tMsRef.current = compiledProject.totalDurationMs;
         setTMs(compiledProject.totalDurationMs);
         setIsPlaying(false);
@@ -155,12 +180,16 @@ export function usePlaybackAudio({
     tMsRef,
   ]);
 
-  // Global shortcuts: Space play/pause & Ctrl/Cmd+Z/Y undo/redo (ignored when editing text)
+  // Global shortcuts: Space play/pause, Ctrl/Cmd+Z/Y undo/redo, Del/Backspace delete, Ctrl/Cmd+D duplicate, Esc clear selection
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
-      const isInput = tag === 'input' || tag === 'textarea' || tag === 'select';
+      const isInput =
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        target?.isContentEditable;
       if (isInput || exporting) return;
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -183,12 +212,41 @@ export function usePlaybackAudio({
         return;
       }
 
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === 'd' &&
+        selectedNodeId
+      ) {
+        e.preventDefault();
+        onDuplicateSelectedNode();
+        return;
+      }
+
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
+        e.preventDefault();
+        onDeleteSelectedNode();
+        return;
+      }
+
+      if (e.key === 'Escape' && selectedNodeId) {
+        e.preventDefault();
+        onClearSelection();
+        return;
+      }
+
       if (e.code === 'Space') {
         e.preventDefault();
         if (isPlayingRef.current) {
           setIsPlaying(false);
         } else {
-          if (tMsRef.current >= compiledProject.totalDurationMs - 20) {
+          const range = activeSceneRangeRef.current;
+          if (loopSceneRef.current && range.endMs > range.startMs) {
+            if (tMsRef.current < range.startMs || tMsRef.current >= range.endMs - 20) {
+              tMsRef.current = range.startMs;
+              setTMs(range.startMs);
+            }
+          } else if (tMsRef.current >= compiledProject.totalDurationMs - 20) {
             tMsRef.current = 0;
             setTMs(0);
           }
@@ -201,9 +259,13 @@ export function usePlaybackAudio({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     exporting,
+    selectedNodeId,
     compiledProject.totalDurationMs,
     onUndo,
     onRedo,
+    onDeleteSelectedNode,
+    onDuplicateSelectedNode,
+    onClearSelection,
     setIsPlaying,
     setTMs,
     tMsRef,
@@ -211,17 +273,28 @@ export function usePlaybackAudio({
 
   const handleTogglePlay = () => {
     if (exporting) return;
-    if (!isPlaying && tMs >= compiledProject.totalDurationMs - 20) {
-      tMsRef.current = 0;
-      setTMs(0);
+    if (!isPlaying) {
+      if (loopCurrentScene && activeSceneRange.endMs > activeSceneRange.startMs) {
+        if (tMs < activeSceneRange.startMs || tMs >= activeSceneRange.endMs - 20) {
+          tMsRef.current = activeSceneRange.startMs;
+          setTMs(activeSceneRange.startMs);
+        }
+      } else if (tMs >= compiledProject.totalDurationMs - 20) {
+        tMsRef.current = 0;
+        setTMs(0);
+      }
     }
     setIsPlaying((p) => !p);
   };
 
   const handleRestart = () => {
     if (exporting) return;
-    tMsRef.current = 0;
-    setTMs(0);
+    const startAt =
+      loopCurrentScene && activeSceneRange.endMs > activeSceneRange.startMs
+        ? activeSceneRange.startMs
+        : 0;
+    tMsRef.current = startAt;
+    setTMs(startAt);
     setIsPlaying(true);
   };
 
@@ -252,6 +325,8 @@ export function usePlaybackAudio({
     setSpeed,
     soundEnabled,
     setSoundEnabled,
+    loopCurrentScene,
+    setLoopCurrentScene,
     audioTrack,
     setAudioTrack,
     handleTogglePlay,

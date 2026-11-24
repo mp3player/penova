@@ -8,12 +8,16 @@ import { cloneScene, PRESET_SCENES } from '../model/presets';
 import { createProjectFromScene } from '../model/project';
 import { isCustomSceneNode } from '../model/scene';
 import { parseScriptToScene, serializeSceneToScript } from '../plugins/codecs/scriptParser';
-import { sceneNodeRegistry } from '../plugins/registry';
+import { generateScriptSpec } from '../engine/parser/projectScript';
+import { exportRegistry, sceneNodeRegistry } from '../plugins/registry';
+import { defineProps, prop } from '../sdk/propSchema';
 import {
   bitmapToPolylinesWorkflow,
   getSketchIconSvg,
   listSketchIcons,
+  registerSketchIcon,
   sketchPipeline,
+  subscribeSketchIcons,
 } from '../sdk/sketchPipeline';
 import {
   compileWorkflowGraph,
@@ -288,5 +292,53 @@ describe('sketchPipeline, recursive DAG & visual SceneNode plugins', () => {
     });
     const tarText = await tarOut.blob.text();
     expect(tarText).toContain('"fps": 12');
+  });
+
+  it('provides headless defineProps two-way read/write, clean contracts, --spec docs, and icon subscriptions', () => {
+    const schema = defineProps({
+      title: prop.string({ default: 'Hello', aliases: ['caption'] }),
+      width: prop.number({ default: 200, min: 100, max: 400, aliases: ['w'] }),
+      code: prop.string({ format: 'code' }),
+    });
+
+    // Alias read + clamp + fallback default
+    const resolved = schema.resolve({ caption: 'World', w: 999 });
+    expect(resolved).toEqual({ title: 'World', width: 400, code: undefined });
+
+    // Symmetric immutable write normalizes alias onto canonical key and clamps
+    const written = schema.writeField({ w: 120 }, 'width', 50);
+    expect(written).toEqual({ width: 100 });
+    expect(schema.readField(written, 'width')).toBe(100);
+
+    // Reset restores field default cleanly
+    const reset = schema.resetField(written, 'width');
+    expect(reset).toEqual({ width: 200 });
+
+    for (const plugin of sceneNodeRegistry.list()) {
+      expect(plugin.defaultProps).toBeDefined();
+      expect(plugin.propFields && plugin.propFields.length).toBeGreaterThan(0);
+      expect(plugin.snippet).toBeTruthy();
+      expect('inlineEditPropKey' in plugin).toBe(false);
+    }
+    for (const exp of exportRegistry.list()) {
+      expect(['snapshot', 'sequence']).toContain(exp.category);
+    }
+
+    const spec = generateScriptSpec();
+    expect(spec).toContain('`[node:chart]` props:');
+    expect(spec).toContain('`highlight`: number [0..7]');
+
+    let notifications = 0;
+    const unsub = subscribeSketchIcons(() => {
+      notifications++;
+    });
+    const before = listSketchIcons();
+    registerSketchIcon('custom-badge', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>');
+    const after = listSketchIcons();
+    unsub();
+
+    expect(notifications).toBe(1);
+    expect(after).toContain('custom-badge');
+    expect(after.length).toBeGreaterThan(before.length);
   });
 });

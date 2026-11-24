@@ -7,6 +7,7 @@ export const posterSvgExporterPlugin: ExportPlugin = {
   id: 'poster-svg',
   name: 'Vector Poster (1080P SVG)',
   shortLabel: 'HD SVG',
+  category: 'snapshot',
   description:
     'Export the final board frame as a resolution-independent 1080P SVG without Canvas',
   isSupported() {

@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import {
   Pause,
   Play,
+  Repeat1,
   RotateCcw,
   SkipBack,
   SkipForward,
@@ -17,8 +18,10 @@ interface TimelineBarProps {
   compiledProject: CompiledProjectTimeline;
   tMs: number;
   isPlaying: boolean;
+  loopCurrentScene: boolean;
   speed: number;
   onTogglePlay: () => void;
+  onToggleLoopScene: () => void;
   onRestart: () => void;
   onSeek: (tMs: number) => void;
   onChangeSpeed: (speed: number) => void;
@@ -39,8 +42,10 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
   compiledProject,
   tMs,
   isPlaying,
+  loopCurrentScene,
   speed,
   onTogglePlay,
+  onToggleLoopScene,
   onRestart,
   onSeek,
   onChangeSpeed,
@@ -183,6 +188,22 @@ export const TimelineBar: React.FC<TimelineBarProps> = ({
             <RotateCcw size={13} />
             {t('timeline.restart')}
           </button>
+
+          {isMultiScene && (
+            <button
+              type="button"
+              className={`studio-btn ${loopCurrentScene ? 'active' : ''}`}
+              onClick={onToggleLoopScene}
+              title={
+                loopCurrentScene
+                  ? t('timeline.loopSceneOnTitle')
+                  : t('timeline.loopSceneOffTitle')
+              }
+            >
+              <Repeat1 size={13} />
+              {t('timeline.loopSceneBtn')}
+            </button>
+          )}
 
           <button
             type="button"

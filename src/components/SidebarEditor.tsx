@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Code2, Layers, Plus, Subtitles } from 'lucide-react';
+import { Code2, Layers, Plus, Puzzle, Subtitles } from 'lucide-react';
 import { AudioTrackState } from '../engine/audio/voiceTrackPlayer';
 import { CompiledProjectTimeline } from '../engine/timeline/projectTimeline';
 import { LessonProject, SubtitleCue } from '../model/project';
@@ -14,10 +14,17 @@ import {
 import {
   createCardNode,
   createConnectorNode,
+  createCustomNode,
   createShapeNode,
   createTextNode,
 } from '../model/builders';
-import { layoutRegistry, shapeRegistry, useRegistryList } from '../plugins';
+import {
+  layoutRegistry,
+  SceneNodePlugin,
+  sceneNodeRegistry,
+  shapeRegistry,
+  useRegistryList,
+} from '../plugins';
 import { MediaTrackPane } from './sidebar/MediaTrackPane';
 import { NodeTree } from './sidebar/NodeTree';
 import { ScriptCodecPane } from './sidebar/ScriptCodecPane';
@@ -29,7 +36,7 @@ interface SidebarEditorProps {
   scene: LessonScene;
   selectedNodeId: string | null;
   audioTrack: AudioTrackState | null;
-  onSelectNode: (nodeId: string | null) => void;
+  onSelectNode: (nodeId: string | null, opts?: { reveal?: boolean }) => void;
   onUpdateScene: (updater: (prev: LessonScene) => LessonScene) => void;
   onUpdateSubtitles: (cues: SubtitleCue[]) => void;
   onToggleShowSubtitles: (show: boolean) => void;
@@ -66,9 +73,10 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
   onExportProjectScript,
   onNotify,
 }) => {
-  const { t, codecMeta } = useI18n();
+  const { t, pluginName, codecMeta } = useI18n();
   const layoutOptions = useRegistryList(layoutRegistry);
   const shapeOptions = useRegistryList(shapeRegistry);
+  const sceneNodePlugins = useRegistryList(sceneNodeRegistry);
   const activeLayout =
     layoutOptions.find((l) => l.id === scene.layoutMode) ??
     layoutRegistry.getOrDefault(scene.layoutMode);
@@ -237,7 +245,25 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
       customSteps: undefined,
       nodes: [...prev.nodes, newNode],
     }));
-    onSelectNode(id);
+    onSelectNode(id, { reveal: true });
+  };
+
+  const addSceneNodePlugin = (plugin: SceneNodePlugin) => {
+    const id = `${plugin.id}-${Date.now().toString(36)}`;
+    const widget = createCustomNode({
+      id,
+      kind: plugin.id,
+      name: plugin.defaultName ?? plugin.name,
+      color: plugin.defaultColor ?? 'cyan',
+      props: plugin.defaultProps ? { ...plugin.defaultProps } : {},
+    });
+
+    onUpdateScene((prev) => ({
+      ...prev,
+      customSteps: undefined,
+      nodes: [...prev.nodes, widget],
+    }));
+    onSelectNode(id, { reveal: true });
   };
 
   const addChildIntoGroup = (groupId: string, childKind: 'text' | 'shape') => {
@@ -482,6 +508,47 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
               </button>
             </div>
 
+            {sceneNodePlugins.length > 0 && (
+              <>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: 'var(--text-muted)',
+                    marginBottom: 5,
+                  }}
+                >
+                  {t('sidebar.widgetsHeading')}
+                </div>
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(66px, 1fr))',
+                    gap: 5,
+                    marginBottom: 10,
+                  }}
+                >
+                  {sceneNodePlugins.map((plugin) => {
+                    const label = pluginName(plugin.id, plugin.name);
+                    return (
+                      <button
+                        key={plugin.id}
+                        type="button"
+                        className="studio-btn"
+                        onClick={() => addSceneNodePlugin(plugin)}
+                        style={{ height: 26, padding: '0 4px', fontSize: 11 }}
+                        title={`${label} ([node:${plugin.id}])`}
+                      >
+                        <Puzzle size={11} />
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               <NodeTree
                 nodes={scene.nodes}
@@ -492,7 +559,7 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
                 topVertices={topVertices}
                 shapeOptions={shapeOptions}
                 supportsGroups={Boolean(activeLayout.supportsGroups)}
-                onSelectNode={onSelectNode}
+                onSelectNode={(id) => onSelectNode(id, { reveal: Boolean(id) })}
                 onToggleGroup={toggleGroupExpand}
                 onUpdateNode={updateNode}
                 onMoveNode={moveNode}

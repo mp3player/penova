@@ -1,4 +1,5 @@
 import { CustomSceneNode, isCustomSceneNode } from '../../model/scene';
+import { defineProps, prop } from '../../sdk/propSchema';
 import { hashString, mulberry32 } from '../../sdk/random';
 import {
   buildRoundedRectPoints,
@@ -10,18 +11,27 @@ import { clipRayToRect } from '../shapes/clipHelpers';
 
 const CODE_MONO_FONT = '"JetBrains Mono", "SF Mono", "Consolas", monospace';
 
-function readPropText(
-  props: Record<string, string | number | boolean | undefined> | undefined,
-  key: string
-): string {
-  const val = props?.[key];
-  if (typeof val === 'string') return val;
-  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
-  return '';
-}
+const codeProps = defineProps({
+  title: prop.string({
+    default: 'demo.penova.md',
+    description: 'Header filename',
+  }),
+  lines: prop.string({
+    default: 'const penova = true;\nrender(penova);',
+    format: 'code',
+    aliases: ['code'],
+    description: 'Code content (supports \\n)',
+  }),
+  width: prop.number({
+    min: 180,
+    step: 10,
+    aliases: ['w'],
+    description: 'Explicit window width',
+  }),
+});
 
 function parseCodeLines(node: CustomSceneNode): string[] {
-  const raw = readPropText(node.props, 'lines') || readPropText(node.props, 'code');
+  const raw = codeProps.readField(node.props, 'lines') ?? '';
   if (!raw.trim()) {
     return [node.name || 'script.penova.md'];
   }
@@ -50,19 +60,27 @@ function buildTinyCirclePts(
 export const codeNodePlugin: SceneNodePlugin = {
   id: 'code',
   name: 'Code Window',
+  defaultName: 'CodeBox',
+  defaultColor: 'cyan',
+  defaultProps: codeProps.defaults,
+  snippet:
+    '[node:code] Snippet {color: cyan, title: "demo.ts", lines: "const x = 1;\\nrender(x);"}',
+  propFields: codeProps.fields,
   measure(node, ctx) {
     const lines = parseCodeLines(node);
-    const rawTitle = readPropText(node.props, 'title').trim();
-    const title = rawTitle || node.name || 'script.penova.md';
+    const title =
+      (codeProps.readField(node.props, 'title') ?? '').trim() ||
+      node.name ||
+      'script.penova.md';
     const font = `400 13.5px ${CODE_MONO_FONT}`;
     let widest = ctx.measureText(title, `700 12.5px ${ctx.fontFamily}`) + 74;
     for (const line of lines) {
       widest = Math.max(widest, ctx.measureText(line, font) + 38);
     }
-    const rawW = Number(node.props?.width ?? node.props?.w);
+    const explicitW = codeProps.readField(node.props, 'width');
     const width =
-      Number.isFinite(rawW) && rawW >= 180
-        ? rawW
+      explicitW !== undefined
+        ? explicitW
         : Math.max(230, Math.min(540, Math.ceil(widest)));
     const height = Math.max(96, 48 + lines.length * 22 + 14);
     return { width, height, payload: { title, lines } };
@@ -83,8 +101,10 @@ export const codeNodePlugin: SceneNodePlugin = {
     }
     const node = positioned.node;
     const lines = parseCodeLines(node);
-    const rawTitle = readPropText(node.props, 'title').trim();
-    const title = rawTitle || node.name || 'script.penova.md';
+    const title =
+      (codeProps.readField(node.props, 'title') ?? '').trim() ||
+      node.name ||
+      'script.penova.md';
 
     const x = positioned.cx - positioned.width / 2;
     const y = positioned.cy - positioned.height / 2;

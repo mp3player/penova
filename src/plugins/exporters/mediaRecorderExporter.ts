@@ -31,6 +31,7 @@ export const mediaRecorderExporterPlugin: ExportPlugin = {
   id: 'mediarecorder-video',
   name: '1080P Video (WebM/MP4)',
   shortLabel: '1080P Video',
+  category: 'sequence',
   description: 'Encode 1080P animation video in browser via MediaRecorder',
   isSupported() {
     return (

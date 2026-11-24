@@ -167,6 +167,86 @@ interface LessonScene {
   transitionOut?: SceneTransitionConfig;
 }
 
+// --- Types: src/sdk/propSchema.ts ---
+
+type PropPrimitiveType = 'string' | 'number' | 'boolean';
+
+type PropDataFormat =
+  | 'plain'
+  | 'multiline'
+  | 'code'
+  | 'svg'
+  | 'icon-id'
+  | 'enum';
+
+interface PropFieldDescriptor {
+  readonly key: string;
+  readonly type: PropPrimitiveType;
+  readonly format?: PropDataFormat;
+  readonly default?: string | number | boolean;
+  readonly min?: number;
+  readonly max?: number;
+  readonly step?: number;
+  readonly enumValues?: readonly string[];
+  readonly aliases?: readonly string[];
+  readonly description?: string;
+}
+
+interface PropBuilderConfig<
+  T extends PropPrimitiveType,
+  V extends string | number | boolean = string | number | boolean,
+> {
+  readonly type: T;
+  readonly format?: PropDataFormat;
+  readonly default?: V;
+  readonly min?: number;
+  readonly max?: number;
+  readonly step?: number;
+  readonly enumValues?: readonly string[];
+  readonly aliases?: readonly string[];
+  readonly description?: string;
+}
+
+type PropSpecMap = Record<string, PropBuilderConfig<PropPrimitiveType>>;
+
+type InferFieldValue<C> =
+  C extends PropBuilderConfig<'string', infer S>
+    ? C extends { default: string }
+      ? string
+      : S | undefined
+    : C extends PropBuilderConfig<'number'>
+    ? C extends { default: number }
+      ? number
+      : number | undefined
+    : C extends PropBuilderConfig<'boolean'>
+    ? C extends { default: boolean }
+      ? boolean
+      : boolean | undefined
+    : unknown;
+
+type InferPropValues<S extends PropSpecMap> = {
+  [K in keyof S]: InferFieldValue<S[K]>;
+};
+
+interface DefinedPropSchema<S extends PropSpecMap> {
+  readonly fields: readonly PropFieldDescriptor[];
+  readonly defaults: Record<string, string | number | boolean>;
+  resolve(rawProps?: Record<string, string | number | boolean | undefined>): InferPropValues<S>;
+  readField<K extends keyof S & string>(
+    rawProps: Record<string, string | number | boolean | undefined> | undefined,
+    key: K
+  ): InferFieldValue<S[K]>;
+  writeField(
+    rawProps: Record<string, string | number | boolean | undefined> | undefined,
+    key: keyof S & string,
+    value: string | number | boolean | undefined
+  ): Record<string, string | number | boolean | undefined>;
+  resetField(
+    rawProps: Record<string, string | number | boolean | undefined> | undefined,
+    key: keyof S & string
+  ): Record<string, string | number | boolean | undefined>;
+}
+
 // --- Types: src/sdk/strokePath.ts ---
 
 interface StrokePath {
@@ -646,6 +726,7 @@ interface ExportPlugin {
   id: string;
   name: string;
   shortLabel?: string;
+  category?: 'snapshot' | 'sequence';
   description?: string;
   isSupported?(): boolean;
   export(
@@ -686,6 +767,11 @@ interface SceneNodeCompileHelpers {
 interface SceneNodePlugin {
   id: string;
   name: string;
+  defaultName?: string;
+  defaultColor?: ChalkColor;
+  defaultProps?: Record<string, string | number | boolean>;
+  snippet?: string;
+  propFields?: readonly PropFieldDescriptor[];
   compose?(node: CustomSceneNode): SceneNode;
   measure?(
     node: CustomSceneNode,
@@ -1616,6 +1702,181 @@ const { isCustomSceneNode, resolveCustomNodeKind, cloneSceneNode, findNodeById, 
     return steps;
   }
   return { isCustomSceneNode, resolveCustomNodeKind, cloneSceneNode, findNodeById, deriveTeachingSteps };
+})();
+
+// --- Module: src/sdk/propSchema.ts ---
+const { prop, defineProps } = (() => {
+  const prop = {
+    string(
+      opts: Omit<PropBuilderConfig<'string', string>, 'type'> = {}
+    ): PropBuilderConfig<'string', string> {
+      return { type: 'string', ...opts };
+    },
+    number(
+      opts: Omit<PropBuilderConfig<'number', number>, 'type'> = {}
+    ): PropBuilderConfig<'number', number> {
+      return { type: 'number', ...opts };
+    },
+    boolean(
+      opts: Omit<PropBuilderConfig<'boolean', boolean>, 'type'> = {}
+    ): PropBuilderConfig<'boolean', boolean> {
+      return { type: 'boolean', ...opts };
+    },
+    enum<const T extends readonly string[]>(
+      values: T,
+      opts: Omit<PropBuilderConfig<'string', T[number]>, 'type' | 'format' | 'enumValues'> = {}
+    ): PropBuilderConfig<'string', T[number]> {
+      return {
+        type: 'string',
+        format: 'enum',
+        enumValues: values,
+        ...opts,
+      };
+    },
+  };
+  function coerceFieldValue(
+    field: PropFieldDescriptor,
+    raw: unknown
+  ): string | number | boolean | undefined {
+    if (raw === undefined || raw === null) return undefined;
+
+    if (field.type === 'number') {
+      const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
+      if (!Number.isFinite(n)) return undefined;
+      let clamped = n;
+      if (field.min !== undefined) clamped = Math.max(field.min, clamped);
+      if (field.max !== undefined) clamped = Math.min(field.max, clamped);
+      return clamped;
+    }
+
+    if (field.type === 'boolean') {
+      if (typeof raw === 'boolean') return raw;
+      const lower = String(raw).trim().toLowerCase();
+      if (lower === 'true' || lower === '1' || lower === 'yes') return true;
+      if (lower === 'false' || lower === '0' || lower === 'no') return false;
+      return undefined;
+    }
+
+    const str = typeof raw === 'string' ? raw : String(raw);
+    if (field.enumValues && field.enumValues.length > 0 && !field.enumValues.includes(str)) {
+      return undefined;
+    }
+    return str;
+  }
+  /**
+   * Symmetric read accessor (UI / Canvas / Script -> normalized explicit value).
+   * Returns `undefined` when no explicit key or alias is present or valid.
+   */
+  function readPropBySchema(
+    fields: readonly PropFieldDescriptor[],
+    rawProps: Record<string, string | number | boolean | undefined> | undefined,
+    key: string
+  ): string | number | boolean | undefined {
+    const field = fields.find((f) => f.key === key);
+    if (!field || !rawProps) return undefined;
+
+    const lookupKeys = [field.key, ...(field.aliases ?? [])];
+    for (const k of lookupKeys) {
+      if (!(k in rawProps)) continue;
+      const val = rawProps[k];
+      if (val === undefined || val === null || val === '') continue;
+      const coerced = coerceFieldValue(field, val);
+      if (coerced !== undefined) return coerced;
+    }
+    return undefined;
+  }
+  /**
+   * Symmetric immutable write accessor (UI / Canvas / Script -> canonical `node.props`).
+   * Normalizes aliases onto the canonical key and enforces min/max bounds.
+   */
+  function writePropBySchema(
+    fields: readonly PropFieldDescriptor[],
+    rawProps: Record<string, string | number | boolean | undefined> | undefined,
+    key: string,
+    value: string | number | boolean | undefined
+  ): Record<string, string | number | boolean | undefined> {
+    const nextProps: Record<string, string | number | boolean | undefined> = {
+      ...(rawProps ?? {}),
+    };
+    const field = fields.find((f) => f.key === key);
+
+    if (field) {
+      for (const alias of field.aliases ?? []) {
+        delete nextProps[alias];
+      }
+      if (value === undefined || value === '') {
+        delete nextProps[key];
+        return nextProps;
+      }
+      const coerced = coerceFieldValue(field, value);
+      if (coerced === undefined) {
+        delete nextProps[key];
+      } else {
+        nextProps[key] = coerced;
+      }
+      return nextProps;
+    }
+
+    if (value === undefined || value === '') {
+      delete nextProps[key];
+    } else {
+      nextProps[key] = value;
+    }
+    return nextProps;
+  }
+  /**
+   * Compiles a declarative property table into a single-source-of-truth
+   * metadata descriptor + strongly typed read/write/reset helpers.
+   */
+  function defineProps<const S extends PropSpecMap>(
+    spec: S
+  ): DefinedPropSchema<S> {
+    const fields: PropFieldDescriptor[] = [];
+    const defaults: Record<string, string | number | boolean> = {};
+
+    for (const [key, cfg] of Object.entries(spec)) {
+      const desc: PropFieldDescriptor = {
+        key,
+        type: cfg.type,
+        format: cfg.format,
+        default: cfg.default,
+        min: cfg.min,
+        max: cfg.max,
+        step: cfg.step,
+        enumValues: cfg.enumValues,
+        aliases: cfg.aliases,
+        description: cfg.description,
+      };
+      fields.push(desc);
+      if (cfg.default !== undefined) {
+        defaults[key] = cfg.default;
+      }
+    }
+
+    return {
+      fields,
+      defaults,
+      resolve(rawProps) {
+        const out: Record<string, string | number | boolean | undefined> = {};
+        for (const field of fields) {
+          const explicit = readPropBySchema(fields, rawProps, field.key);
+          out[field.key] = explicit !== undefined ? explicit : field.default;
+        }
+        return out as InferPropValues<S>;
+      },
+      readField(rawProps, key) {
+        return readPropBySchema(fields, rawProps, key) as InferFieldValue<S[typeof key]>;
+      },
+      writeField(rawProps, key, value) {
+        return writePropBySchema(fields, rawProps, key, value);
+      },
+      resetField(rawProps, key) {
+        const field = fields.find((f) => f.key === key);
+        return writePropBySchema(fields, rawProps, key, field?.default);
+      },
+    };
+  }
+  return { prop, defineProps };
 })();
 
 // --- Module: src/sdk/random.ts ---
@@ -3465,17 +3726,32 @@ const { sketchPipeline, getSketchIconSvg } = (() => {
       <path fill="none" d="M20 80 L60 100 L100 80"/>
     </svg>`,
   };
+  const sketchIconListeners = new Set<() => void>();
+  let cachedSketchIconNames: string[] | null = null;
   function registerSketchIcon(name: string, svgText: string): void {
     const key = name.trim().toLowerCase();
     if (key && svgText.trim()) {
       SKETCH_ICON_LIBRARY[key] = svgText;
+      cachedSketchIconNames = null;
+      for (const listener of sketchIconListeners) {
+        listener();
+      }
     }
   }
   function getSketchIconSvg(name: string): string | undefined {
     return SKETCH_ICON_LIBRARY[name.trim().toLowerCase()];
   }
   function listSketchIcons(): string[] {
-    return Object.keys(SKETCH_ICON_LIBRARY);
+    if (!cachedSketchIconNames) {
+      cachedSketchIconNames = Object.keys(SKETCH_ICON_LIBRARY);
+    }
+    return cachedSketchIconNames;
+  }
+  function subscribeSketchIcons(listener: () => void): () => void {
+    sketchIconListeners.add(listener);
+    return () => {
+      sketchIconListeners.delete(listener);
+    };
   }
   return { sketchPipeline, getSketchIconSvg };
 })();
@@ -3548,12 +3824,33 @@ const { iconNodePlugin, sketchNodePlugin } = (() => {
     if (trimmed.startsWith('<')) return trimmed;
     return `<svg viewBox="0 0 120 120"><path d="${trimmed}"/></svg>`;
   }
+  const iconProps = defineProps({
+    icon: prop.string({ default: 'spark', format: 'icon-id', description: 'Built-in icon name' }),
+    size: prop.number({ default: 36, min: 12, max: 120, step: 2, description: 'Square icon size in px' }),
+    svg: prop.string({ format: 'svg', description: 'Custom inline SVG or path d attribute' }),
+  });
+  const sketchProps = defineProps({
+    icon: prop.string({ default: 'rocket', format: 'icon-id', description: 'Built-in icon name' }),
+    caption: prop.string({
+      default: 'Hand-Drawn',
+      aliases: ['title', 'text'],
+      description: 'Caption rendered below sketch',
+    }),
+    width: prop.number({ min: 40, step: 8, aliases: ['w'] }),
+    height: prop.number({ min: 40, step: 8, aliases: ['h'] }),
+    svg: prop.string({ format: 'svg', description: 'Custom inline SVG or path d attribute' }),
+  });
   const iconNodePlugin: SceneNodePlugin = {
     id: 'icon',
     name: 'Sketch Icon',
+    defaultName: 'Icon',
+    defaultColor: 'yellow',
+    defaultProps: iconProps.defaults,
+    snippet: '[node:icon] Badge {color: yellow, icon: spark, size: 36}',
+    propFields: iconProps.fields,
     measure(node) {
       const rawSize = Number(node.props?.size);
-      const size = Number.isFinite(rawSize) && rawSize > 8 ? rawSize : 30;
+      const size = Number.isFinite(rawSize) && rawSize > 8 ? Math.min(120, rawSize) : 30;
       return {
         width: size,
         height: size,
@@ -3574,13 +3871,11 @@ const { iconNodePlugin, sketchNodePlugin } = (() => {
         ? positioned.node.props
         : undefined;
       const iconName =
-        typeof props?.icon === 'string' && props.icon.trim()
-          ? props.icon.trim()
-          : positioned.node.name;
-      const rawSvg =
-        typeof props?.svg === 'string' && props.svg.trim()
-          ? wrapBareSvgSnippet(props.svg)
-          : getSketchIconSvg(iconName) ?? getSketchIconSvg('spark')!;
+        (iconProps.readField(props, 'icon') ?? '').trim() || positioned.node.name;
+      const svgOverride = (iconProps.readField(props, 'svg') ?? '').trim();
+      const rawSvg = svgOverride
+        ? wrapBareSvgSnippet(svgOverride)
+        : getSketchIconSvg(iconName) ?? getSketchIconSvg('spark')!;
 
       const targetW = Math.max(16, positioned.width - 4);
       const targetH = Math.max(16, positioned.height - 4);
@@ -3606,29 +3901,27 @@ const { iconNodePlugin, sketchNodePlugin } = (() => {
       });
     },
   };
-  function readSketchCaption(
-    props?: Record<string, string | number | boolean | undefined>
-  ): string {
-    const raw = props?.title ?? props?.text ?? props?.caption;
-    if (typeof raw === 'string') return raw.trim();
-    if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw);
-    return '';
-  }
   const sketchNodePlugin: SceneNodePlugin = {
     id: 'sketch',
     name: 'Hand-Drawn Sketch',
+    defaultName: 'Sketch',
+    defaultColor: 'pink',
+    defaultProps: sketchProps.defaults,
+    snippet:
+      '[node:sketch] Art {color: pink, icon: rocket, caption: "Hand-Drawn"}',
+    propFields: sketchProps.fields,
     measure(node, ctx) {
-      const rawW = Number(node.props?.width ?? node.props?.w);
-      const rawH = Number(node.props?.height ?? node.props?.h);
-      const caption = readSketchCaption(node.props);
+      const explicitW = sketchProps.readField(node.props, 'width');
+      const explicitH = sketchProps.readField(node.props, 'height');
+      const caption = (sketchProps.readField(node.props, 'caption') ?? '').trim();
       let width = 168;
-      if (Number.isFinite(rawW) && rawW >= 40) {
-        width = rawW;
+      if (explicitW !== undefined) {
+        width = explicitW;
       } else if (caption) {
         const capW = ctx.measureText(caption, `700 15px ${ctx.fontFamily}`);
         width = Math.max(168, Math.min(360, Math.ceil(capW + 24)));
       }
-      const baseH = Number.isFinite(rawH) && rawH >= 40 ? rawH : 128;
+      const baseH = explicitH ?? 128;
       return {
         width,
         height: caption ? baseH + 26 : baseH,
@@ -3648,15 +3941,13 @@ const { iconNodePlugin, sketchNodePlugin } = (() => {
       const props = isCustomSceneNode(positioned.node)
         ? positioned.node.props
         : undefined;
-      const caption = readSketchCaption(props);
+      const caption = (sketchProps.readField(props, 'caption') ?? '').trim();
       const iconName =
-        typeof props?.icon === 'string' && props.icon.trim()
-          ? props.icon.trim()
-          : positioned.node.name;
-      const svgText =
-        typeof props?.svg === 'string' && props.svg.trim()
-          ? wrapBareSvgSnippet(props.svg)
-          : getSketchIconSvg(iconName) ?? getSketchIconSvg('lightbulb')!;
+        (sketchProps.readField(props, 'icon') ?? '').trim() || positioned.node.name;
+      const svgOverride = (sketchProps.readField(props, 'svg') ?? '').trim();
+      const svgText = svgOverride
+        ? wrapBareSvgSnippet(svgOverride)
+        : getSketchIconSvg(iconName) ?? getSketchIconSvg('lightbulb')!;
 
       const areaH = caption ? positioned.height - 28 : positioned.height;
       const strokes = sketchPipeline.run({
@@ -3701,17 +3992,26 @@ const { iconNodePlugin, sketchNodePlugin } = (() => {
 // --- Module: src/plugins/nodes/codeNodePlugin.ts ---
 const { codeNodePlugin } = (() => {
   const CODE_MONO_FONT = '"JetBrains Mono", "SF Mono", "Consolas", monospace';
-  function readPropText(
-    props: Record<string, string | number | boolean | undefined> | undefined,
-    key: string
-  ): string {
-    const val = props?.[key];
-    if (typeof val === 'string') return val;
-    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
-    return '';
-  }
+  const codeProps = defineProps({
+    title: prop.string({
+      default: 'demo.penova.md',
+      description: 'Header filename',
+    }),
+    lines: prop.string({
+      default: 'const penova = true;\nrender(penova);',
+      format: 'code',
+      aliases: ['code'],
+      description: 'Code content (supports \\n)',
+    }),
+    width: prop.number({
+      min: 180,
+      step: 10,
+      aliases: ['w'],
+      description: 'Explicit window width',
+    }),
+  });
   function parseCodeLines(node: CustomSceneNode): string[] {
-    const raw = readPropText(node.props, 'lines') || readPropText(node.props, 'code');
+    const raw = codeProps.readField(node.props, 'lines') ?? '';
     if (!raw.trim()) {
       return [node.name || 'script.penova.md'];
     }
@@ -3738,19 +4038,27 @@ const { codeNodePlugin } = (() => {
   const codeNodePlugin: SceneNodePlugin = {
     id: 'code',
     name: 'Code Window',
+    defaultName: 'CodeBox',
+    defaultColor: 'cyan',
+    defaultProps: codeProps.defaults,
+    snippet:
+      '[node:code] Snippet {color: cyan, title: "demo.ts", lines: "const x = 1;\\nrender(x);"}',
+    propFields: codeProps.fields,
     measure(node, ctx) {
       const lines = parseCodeLines(node);
-      const rawTitle = readPropText(node.props, 'title').trim();
-      const title = rawTitle || node.name || 'script.penova.md';
+      const title =
+        (codeProps.readField(node.props, 'title') ?? '').trim() ||
+        node.name ||
+        'script.penova.md';
       const font = `400 13.5px ${CODE_MONO_FONT}`;
       let widest = ctx.measureText(title, `700 12.5px ${ctx.fontFamily}`) + 74;
       for (const line of lines) {
         widest = Math.max(widest, ctx.measureText(line, font) + 38);
       }
-      const rawW = Number(node.props?.width ?? node.props?.w);
+      const explicitW = codeProps.readField(node.props, 'width');
       const width =
-        Number.isFinite(rawW) && rawW >= 180
-          ? rawW
+        explicitW !== undefined
+          ? explicitW
           : Math.max(230, Math.min(540, Math.ceil(widest)));
       const height = Math.max(96, 48 + lines.length * 22 + 14);
       return { width, height, payload: { title, lines } };
@@ -3771,8 +4079,10 @@ const { codeNodePlugin } = (() => {
       }
       const node = positioned.node;
       const lines = parseCodeLines(node);
-      const rawTitle = readPropText(node.props, 'title').trim();
-      const title = rawTitle || node.name || 'script.penova.md';
+      const title =
+        (codeProps.readField(node.props, 'title') ?? '').trim() ||
+        node.name ||
+        'script.penova.md';
 
       const x = positioned.cx - positioned.width / 2;
       const y = positioned.cy - positioned.height / 2;
@@ -3879,25 +4189,38 @@ const { codeNodePlugin } = (() => {
 
 // --- Module: src/plugins/nodes/chartNodePlugin.ts ---
 const { chartNodePlugin } = (() => {
-  function readChartPropText(
-    props: Record<string, string | number | boolean | undefined> | undefined,
-    key: string
-  ): string {
-    const val = props?.[key];
-    if (typeof val === 'string') return val;
-    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
-    return '';
-  }
+  const chartProps = defineProps({
+    title: prop.string({ default: 'Growth', description: 'Chart title' }),
+    values: prop.string({
+      default: '22,48,76,100',
+      description: 'Comma-separated bar values',
+    }),
+    labels: prop.string({
+      default: 'Q1,Q2,Q3,Q4',
+      description: 'Comma-separated bar labels',
+    }),
+    highlight: prop.number({
+      default: 3,
+      min: 0,
+      max: 7,
+      step: 1,
+      description: '0-based highlighted bar index',
+    }),
+    width: prop.number({ min: 180, step: 10, aliases: ['w'] }),
+    height: prop.number({ min: 140, step: 10, aliases: ['h'] }),
+  });
   function parseChartData(node: CustomSceneNode): {
     title: string;
     values: number[];
     labels: string[];
     highlightIdx: number;
   } {
-    const rawTitle = readChartPropText(node.props, 'title').trim();
-    const title = rawTitle || node.name || 'Metrics';
+    const title =
+      (chartProps.readField(node.props, 'title') ?? '').trim() ||
+      node.name ||
+      'Metrics';
 
-    const rawValuesStr = readChartPropText(node.props, 'values').trim();
+    const rawValuesStr = (chartProps.readField(node.props, 'values') ?? '').trim();
     const rawValues = rawValuesStr
       ? rawValuesStr
           .split(',')
@@ -3906,16 +4229,16 @@ const { chartNodePlugin } = (() => {
       : [];
     const values = rawValues.length >= 2 ? rawValues.slice(0, 8) : [25, 48, 76, 100];
 
-    const rawLabelsStr = readChartPropText(node.props, 'labels').trim();
+    const rawLabelsStr = (chartProps.readField(node.props, 'labels') ?? '').trim();
     const rawLabels = rawLabelsStr
       ? rawLabelsStr.split(',').map((s) => s.trim())
       : [];
     const labels = values.map((_, idx) => rawLabels[idx] || `#${idx + 1}`);
 
-    const hiRaw = Number(node.props?.highlight);
+    const resolvedHi = chartProps.readField(node.props, 'highlight');
     const highlightIdx =
-      Number.isFinite(hiRaw) && hiRaw >= 0 && hiRaw < values.length
-        ? Math.round(hiRaw)
+      resolvedHi !== undefined && resolvedHi < values.length
+        ? Math.round(resolvedHi)
         : values.length - 1;
 
     return { title, values, labels, highlightIdx };
@@ -3923,12 +4246,18 @@ const { chartNodePlugin } = (() => {
   const chartNodePlugin: SceneNodePlugin = {
     id: 'chart',
     name: 'Bar Chart',
+    defaultName: 'Metrics',
+    defaultColor: 'orange',
+    defaultProps: chartProps.defaults,
+    snippet:
+      '[node:chart] Speed {color: orange, title: "Growth", values: "20,45,75,100", labels: "Q1,Q2,Q3,Q4", highlight: 3}',
+    propFields: chartProps.fields,
     measure(node, ctx) {
-      const rawW = Number(node.props?.width ?? node.props?.w);
-      const rawH = Number(node.props?.height ?? node.props?.h);
+      const explicitW = chartProps.readField(node.props, 'width');
+      const explicitH = chartProps.readField(node.props, 'height');
       let width = 296;
-      if (Number.isFinite(rawW) && rawW >= 180) {
-        width = rawW;
+      if (explicitW !== undefined) {
+        width = explicitW;
       } else {
         const { title, values, labels } = parseChartData(node);
         const titleW = ctx.measureText(title, `700 15px ${ctx.fontFamily}`);
@@ -3949,7 +4278,7 @@ const { chartNodePlugin } = (() => {
           )
         );
       }
-      const height = Number.isFinite(rawH) && rawH >= 140 ? rawH : 196;
+      const height = explicitH ?? 196;
       return { width, height };
     },
     clipRay(positioned, toward, extraMargin) {
@@ -12236,6 +12565,7 @@ const { mediaRecorderExporterPlugin } = (() => {
     id: 'mediarecorder-video',
     name: '1080P Video (WebM/MP4)',
     shortLabel: '1080P Video',
+    category: 'sequence',
     description: 'Encode 1080P animation video in browser via MediaRecorder',
     isSupported() {
       return (
@@ -12353,6 +12683,7 @@ const { posterPngExporterPlugin } = (() => {
     id: 'poster-png',
     name: 'HD Poster (1080P PNG)',
     shortLabel: 'HD PNG',
+    category: 'snapshot',
     description: 'Instantly export the final board frame as a lossless 1080P PNG',
     isSupported() {
       return typeof document !== 'undefined';
@@ -12393,6 +12724,7 @@ const { pngSequenceTarExporterPlugin } = (() => {
     id: 'png-sequence-tar',
     name: 'Offline Frames (FFmpeg .tar)',
     shortLabel: 'FFmpeg Tar',
+    category: 'sequence',
     description: 'Render lossless PNG frame sequence and FFmpeg script into a .tar bundle',
     isSupported() {
       return typeof document !== 'undefined';
@@ -12492,6 +12824,7 @@ const { posterSvgExporterPlugin } = (() => {
     id: 'poster-svg',
     name: 'Vector Poster (1080P SVG)',
     shortLabel: 'HD SVG',
+    category: 'snapshot',
     description:
       'Export the final board frame as a resolution-independent 1080P SVG without Canvas',
     isSupported() {
@@ -12532,6 +12865,7 @@ const { svgSequenceTarExporterPlugin } = (() => {
     id: 'svg-sequence-tar',
     name: 'Vector Frames (SVG .tar)',
     shortLabel: 'SVG Tar',
+    category: 'sequence',
     description:
       'Render platform-agnostic SVG frame sequence and FFmpeg script into a .tar bundle without Canvas',
     isSupported() {
@@ -15651,6 +15985,21 @@ const { parseProjectScript, generateScriptSpec } = (() => {
             `- **scene-node**: ${sceneNodes
               .map((sn) => `\`${sn.id}\` (${sn.name})`)
               .join(', ')}`,
+            ...sceneNodes
+              .filter((sn) => sn.propFields && sn.propFields.length > 0)
+              .map((sn) => {
+                const fieldsSummary = sn
+                  .propFields!.map((f) => {
+                    const fmt = f.format && f.format !== 'plain' ? `/${f.format}` : '';
+                    const range =
+                      f.min !== undefined || f.max !== undefined
+                        ? ` [${f.min ?? ''}..${f.max ?? ''}]`
+                        : '';
+                    return `\`${f.key}\`: ${f.type}${fmt}${range}`;
+                  })
+                  .join(', ');
+                return `  - \`[node:${sn.id}]\` props: ${fieldsSummary}`;
+              }),
           ]
         : []),
       `- **camera**: ${cameras.map((c) => `\`${c.id}\` (${c.name})`).join(', ')}`,

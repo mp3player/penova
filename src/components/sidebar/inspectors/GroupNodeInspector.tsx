@@ -1,5 +1,9 @@
-import React from 'react';
+import React, { useSyncExternalStore } from 'react';
 import { Plus } from 'lucide-react';
+import {
+  listSketchIcons,
+  subscribeSketchIcons,
+} from '../../../sdk/sketchPipeline';
 import {
   getCardSummary,
   isCardGroupNode,
@@ -36,6 +40,11 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
   const { t, pluginName } = useI18n();
   const isCard: boolean = isCardGroupNode(node);
   const summary = getCardSummary(node);
+  const iconOptions = useSyncExternalStore(
+    subscribeSketchIcons,
+    listSketchIcons,
+    listSketchIcons
+  );
   const zoneVal = typeof node.meta?.zone === 'string' ? node.meta.zone : '';
   const sayVal = typeof node.meta?.say === 'string' ? node.meta.say : '';
   const pauseVal =
@@ -147,6 +156,27 @@ export const GroupNodeInspector: React.FC<GroupNodeInspectorProps> = ({
                 ))}
             </select>
           </div>
+
+          <select
+            className="studio-select"
+            value={summary.icon ?? ''}
+            onChange={(e) => {
+              const icon = e.target.value || undefined;
+              onUpdateNode(node.id, (c) =>
+                c.type === 'group' ? updateCardGroupNode(c, { icon }) : c
+              );
+            }}
+            title={t('inspector.cardIconLabel')}
+          >
+            <option value="">
+              {t('inspector.cardIconLabel')}: {t('inspector.cardIconNone')}
+            </option>
+            {iconOptions.map((iconId) => (
+              <option key={iconId} value={iconId}>
+                {t('inspector.cardIconLabel')}: {iconId}
+              </option>
+            ))}
+          </select>
         </>
       ) : (
         <input

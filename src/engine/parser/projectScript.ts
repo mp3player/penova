@@ -561,6 +561,21 @@ export function generateScriptSpec(): string {
           `- **scene-node**: ${sceneNodes
             .map((sn) => `\`${sn.id}\` (${sn.name})`)
             .join(', ')}`,
+          ...sceneNodes
+            .filter((sn) => sn.propFields && sn.propFields.length > 0)
+            .map((sn) => {
+              const fieldsSummary = sn
+                .propFields!.map((f) => {
+                  const fmt = f.format && f.format !== 'plain' ? `/${f.format}` : '';
+                  const range =
+                    f.min !== undefined || f.max !== undefined
+                      ? ` [${f.min ?? ''}..${f.max ?? ''}]`
+                      : '';
+                  return `\`${f.key}\`: ${f.type}${fmt}${range}`;
+                })
+                .join(', ');
+              return `  - \`[node:${sn.id}]\` props: ${fieldsSummary}`;
+            }),
         ]
       : []),
     `- **camera**: ${cameras.map((c) => `\`${c.id}\` (${c.name})`).join(', ')}`,

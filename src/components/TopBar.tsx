@@ -1,9 +1,13 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  ChevronDown,
   Download,
+  FileCode2,
   FolderOpen,
   Globe,
+  Image,
   Monitor,
+  MoreHorizontal,
   Palette,
   PanelLeftClose,
   PanelLeftOpen,
@@ -13,6 +17,7 @@ import {
   Save,
   Smartphone,
   Undo2,
+  Video,
   X,
 } from 'lucide-react';
 import { AspectRatio, LessonScene, ThemeId } from '../model/scene';
@@ -40,11 +45,9 @@ interface TopBarProps {
   onRedo: () => void;
   onSaveProjectJson: () => void;
   onImportProjectJson: (file: File) => void;
-  exporterId: string;
-  onChangeExporterId: (id: string) => void;
   exporting: boolean;
   exportProgress: number;
-  onStartExport: () => void;
+  onStartExport: (exporterId?: string) => void;
   onCancelExport: () => void;
 }
 
@@ -63,15 +66,17 @@ export const TopBar: React.FC<TopBarProps> = ({
   onRedo,
   onSaveProjectJson,
   onImportProjectJson,
-  exporterId,
-  onChangeExporterId,
   exporting,
   exportProgress,
   onStartExport,
   onCancelExport,
 }) => {
-  const { locale, setLocale, t, pluginName, exporterShort } = useI18n();
+  const { locale, setLocale, t, pluginName } = useI18n();
   const projectFileInputRef = useRef<HTMLInputElement | null>(null);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const [openMenu, setOpenMenu] = useState<'more' | 'export' | null>(null);
+
   const presentations = useRegistryList(presentationRegistry);
   const exporters = useRegistryList(exportRegistry);
   const presetProjects = getPresetProjects(locale);
@@ -79,16 +84,60 @@ export const TopBar: React.FC<TopBarProps> = ({
     ? project.id
     : 'custom';
 
+  useEffect(() => {
+    if (!openMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (moreMenuRef.current?.contains(target)) return;
+      if (exportMenuRef.current?.contains(target)) return;
+      setOpenMenu(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenMenu(null);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [openMenu]);
+
+  const snapshotExporters = exporters.filter(
+    (exp) => exp.category === 'snapshot'
+  );
+  const sequenceExporters = exporters.filter(
+    (exp) => exp.category !== 'snapshot'
+  );
+
+  const exporterDesc = (id: string, fallback?: string): string => {
+    switch (id) {
+      case 'mediarecorder-video':
+        return t('topbar.exportDescVideo');
+      case 'png-sequence-tar':
+        return t('topbar.exportDescPngTar');
+      case 'svg-sequence-tar':
+        return t('topbar.exportDescSvgTar');
+      case 'poster-png':
+        return t('topbar.exportDescPosterPng');
+      case 'poster-svg':
+        return t('topbar.exportDescPosterSvg');
+      default:
+        return fallback ?? '';
+    }
+  };
+
   return (
     <header
       style={{
-        minHeight: 50,
+        minHeight: 48,
         height: 'auto',
         display: 'flex',
         flexWrap: 'wrap',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '7px 14px',
+        padding: '6px 14px',
         background: 'var(--bg-panel)',
         borderBottom: '1px solid var(--border-subtle)',
         rowGap: 6,
@@ -107,7 +156,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               ? t('topbar.collapseSidebar')
               : t('topbar.expandSidebar')
           }
-          style={{ width: 32, padding: 0 }}
+          style={{ width: 30, height: 30, padding: 0 }}
         >
           {sidebarOpen ? (
             <PanelLeftClose size={15} />
@@ -127,9 +176,9 @@ export const TopBar: React.FC<TopBarProps> = ({
         >
           <div
             style={{
-              width: 28,
-              height: 28,
-              borderRadius: 8,
+              width: 26,
+              height: 26,
+              borderRadius: 7,
               background: 'linear-gradient(135deg, #f3c969 0%, #e09f3e 100%)',
               color: '#14181f',
               display: 'flex',
@@ -138,43 +187,25 @@ export const TopBar: React.FC<TopBarProps> = ({
               boxShadow: '0 2px 8px rgba(243, 201, 105, 0.28)',
             }}
           >
-            <Pencil size={15} strokeWidth={2.4} />
+            <Pencil size={14} strokeWidth={2.4} />
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
-            <span style={{ fontWeight: 700, fontSize: 13.5, letterSpacing: 0.2 }}>
-              Penova
-            </span>
-            <span
-              style={{
-                fontSize: 10.5,
-                color: 'var(--text-muted)',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {t('topbar.brandSubtitle')}
-            </span>
-          </div>
+          <span style={{ fontWeight: 700, fontSize: 13.5, letterSpacing: 0.2 }}>
+            Penova
+          </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span
-            style={{
-              fontSize: 11.5,
-              color: 'var(--text-secondary)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {t('topbar.templatesLabel')}
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <select
             className="studio-select"
+            aria-label={t('topbar.templatesLabel')}
+            title={t('topbar.templatesLabel')}
             value={activePresetId}
             onChange={(e) => {
               if (e.target.value !== 'custom') {
                 onSelectPreset(e.target.value);
               }
             }}
-            style={{ width: 184, height: 30, padding: '0 8px' }}
+            style={{ width: 176, height: 30, padding: '0 8px' }}
           >
             {presetProjects.map((preset) => (
               <option key={preset.id} value={preset.id}>
@@ -245,37 +276,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
       </div>
 
-      {/* Right: Language Switcher, Undo/Redo, Save/Import Project JSON & Exporters */}
+      {/* Right: Undo/Redo, More Menu (Files & Language), Unified Export Popover */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        <div className="studio-pill-group" title={t('topbar.languageTitle')}>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              padding: '0 4px 0 5px',
-              color: 'var(--text-muted)',
-            }}
-          >
-            <Globe size={12} />
-          </span>
-          <button
-            type="button"
-            className={`studio-pill-item ${locale === 'en' ? 'active' : ''}`}
-            onClick={() => setLocale('en')}
-            style={{ padding: '0 6px', fontSize: 11 }}
-          >
-            EN
-          </button>
-          <button
-            type="button"
-            className={`studio-pill-item ${locale === 'zh-CN' ? 'active' : ''}`}
-            onClick={() => setLocale('zh-CN')}
-            style={{ padding: '0 6px', fontSize: 11 }}
-          >
-            中文
-          </button>
-        </div>
-
         <input
           ref={projectFileInputRef}
           type="file"
@@ -321,28 +323,106 @@ export const TopBar: React.FC<TopBarProps> = ({
           >
             <Redo2 size={13} />
           </button>
-          <button
-            type="button"
-            className="studio-pill-item"
-            aria-label={t('topbar.saveAria')}
-            title={t('topbar.saveTitle')}
-            onClick={onSaveProjectJson}
-            style={{ padding: '0 6px' }}
-          >
-            <Save size={13} />
-          </button>
-          <button
-            type="button"
-            className="studio-pill-item"
-            aria-label={t('topbar.importAria')}
-            title={t('topbar.importTitle')}
-            onClick={() => projectFileInputRef.current?.click()}
-            style={{ padding: '0 6px' }}
-          >
-            <FolderOpen size={13} />
-          </button>
         </div>
 
+        {/* Overflow Files & Language Popover */}
+        <div ref={moreMenuRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            className={`studio-btn ${openMenu === 'more' ? 'active' : ''}`}
+            onClick={() => setOpenMenu((m) => (m === 'more' ? null : 'more'))}
+            title={t('topbar.menuTitle')}
+            aria-label={t('topbar.menuTitle')}
+            style={{ width: 30, padding: 0 }}
+          >
+            <MoreHorizontal size={15} />
+          </button>
+
+          {openMenu === 'more' && (
+            <div className="studio-popover" style={{ minWidth: 214 }}>
+              <button
+                type="button"
+                className="studio-popover-item"
+                onClick={() => {
+                  setOpenMenu(null);
+                  onSaveProjectJson();
+                }}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 500 }}>
+                  <Save size={13} />
+                  {t('topbar.saveTitle')}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="studio-popover-item"
+                onClick={() => {
+                  setOpenMenu(null);
+                  projectFileInputRef.current?.click();
+                }}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 500 }}>
+                  <FolderOpen size={13} />
+                  {t('topbar.importAria')}
+                </span>
+                <span style={{ fontSize: 10.5, color: 'var(--text-muted)', paddingLeft: 20 }}>
+                  .penova.json / .penova.md
+                </span>
+              </button>
+
+              <div
+                style={{
+                  height: 1,
+                  background: 'var(--border-subtle)',
+                  margin: '4px 6px',
+                }}
+              />
+
+              <div
+                style={{
+                  padding: '4px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                }}
+              >
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    fontSize: 11.5,
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  <Globe size={12} />
+                  {locale === 'zh-CN' ? '语言' : 'Language'}
+                </span>
+                <div className="studio-pill-group">
+                  <button
+                    type="button"
+                    className={`studio-pill-item ${locale === 'en' ? 'active' : ''}`}
+                    onClick={() => setLocale('en')}
+                    style={{ height: 22, padding: '0 7px', fontSize: 11 }}
+                  >
+                    EN
+                  </button>
+                  <button
+                    type="button"
+                    className={`studio-pill-item ${locale === 'zh-CN' ? 'active' : ''}`}
+                    onClick={() => setLocale('zh-CN')}
+                    style={{ height: 22, padding: '0 7px', fontSize: 11 }}
+                  >
+                    中文
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Export Action / Unified Export Popover */}
         {exporting ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div
@@ -374,40 +454,101 @@ export const TopBar: React.FC<TopBarProps> = ({
             </button>
           </div>
         ) : (
-          <>
-            <select
-              className="studio-select"
-              aria-label={t('topbar.exportFormatAria')}
-              title={t('topbar.exportFormatTitle')}
-              value={exporterId}
-              onChange={(e) => onChangeExporterId(e.target.value)}
-              style={{ width: 118, height: 30, padding: '0 7px', fontSize: 12 }}
-            >
-              {exporters.map((exp) => {
-                const supported = exp.isSupported ? exp.isSupported() : true;
-                const label = exporterShort(
-                  exp.id,
-                  exp.shortLabel ?? pluginName(exp.id, exp.name)
-                );
-                return (
-                  <option key={exp.id} value={exp.id} disabled={!supported}>
-                    {supported
-                      ? label
-                      : t('topbar.exporterUnavailable', { label })}
-                  </option>
-                );
-              })}
-            </select>
+          <div ref={exportMenuRef} style={{ position: 'relative' }}>
             <button
               type="button"
               className="studio-btn primary"
-              onClick={onStartExport}
+              onClick={() => setOpenMenu((m) => (m === 'export' ? null : 'export'))}
+              title={t('topbar.exportFormatTitle')}
               style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
             >
               <Download size={14} />
               {t('topbar.exportBtn')}
+              <ChevronDown size={13} />
             </button>
-          </>
+
+            {openMenu === 'export' && (
+              <div className="studio-popover" style={{ minWidth: 274 }}>
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    color: 'var(--text-muted)',
+                    padding: '4px 9px 2px',
+                  }}
+                >
+                  {t('topbar.exportMenuSnapshots')}
+                </div>
+                {snapshotExporters.map((exp) => {
+                  const supported = exp.isSupported ? exp.isSupported() : true;
+                  const label = pluginName(exp.id, exp.name);
+                  return (
+                    <button
+                      key={exp.id}
+                      type="button"
+                      className="studio-popover-item"
+                      disabled={!supported}
+                      onClick={() => {
+                        setOpenMenu(null);
+                        onStartExport(exp.id);
+                      }}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600 }}>
+                        {exp.id === 'poster-svg' ? <FileCode2 size={13} color="var(--accent)" /> : <Image size={13} color="var(--accent)" />}
+                        {supported ? label : t('topbar.exporterUnavailable', { label })}
+                      </span>
+                      <span style={{ fontSize: 10.8, color: 'var(--text-secondary)', paddingLeft: 19 }}>
+                        {exporterDesc(exp.id, exp.description)}
+                      </span>
+                    </button>
+                  );
+                })}
+
+                <div
+                  style={{
+                    height: 1,
+                    background: 'var(--border-subtle)',
+                    margin: '4px 6px',
+                  }}
+                />
+
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    color: 'var(--text-muted)',
+                    padding: '4px 9px 2px',
+                  }}
+                >
+                  {t('topbar.exportMenuVideos')}
+                </div>
+                {sequenceExporters.map((exp) => {
+                  const supported = exp.isSupported ? exp.isSupported() : true;
+                  const label = pluginName(exp.id, exp.name);
+                  return (
+                    <button
+                      key={exp.id}
+                      type="button"
+                      className="studio-popover-item"
+                      disabled={!supported}
+                      onClick={() => {
+                        setOpenMenu(null);
+                        onStartExport(exp.id);
+                      }}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600 }}>
+                        <Video size={13} color="#7dd8f7" />
+                        {supported ? label : t('topbar.exporterUnavailable', { label })}
+                      </span>
+                      <span style={{ fontSize: 10.8, color: 'var(--text-secondary)', paddingLeft: 19 }}>
+                        {exporterDesc(exp.id, exp.description)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </header>

@@ -1,4 +1,5 @@
 import { isCustomSceneNode } from '../../model/scene';
+import { defineProps, prop } from '../../sdk/propSchema';
 import { getSketchIconSvg, sketchPipeline } from '../../sdk/sketchPipeline';
 import { SceneNodePlugin } from '../contracts';
 import { clipRayToRect } from '../shapes/clipHelpers';
@@ -9,12 +10,35 @@ function wrapBareSvgSnippet(raw: string): string {
   return `<svg viewBox="0 0 120 120"><path d="${trimmed}"/></svg>`;
 }
 
+const iconProps = defineProps({
+  icon: prop.string({ default: 'spark', format: 'icon-id', description: 'Built-in icon name' }),
+  size: prop.number({ default: 36, min: 12, max: 120, step: 2, description: 'Square icon size in px' }),
+  svg: prop.string({ format: 'svg', description: 'Custom inline SVG or path d attribute' }),
+});
+
+const sketchProps = defineProps({
+  icon: prop.string({ default: 'rocket', format: 'icon-id', description: 'Built-in icon name' }),
+  caption: prop.string({
+    default: 'Hand-Drawn',
+    aliases: ['title', 'text'],
+    description: 'Caption rendered below sketch',
+  }),
+  width: prop.number({ min: 40, step: 8, aliases: ['w'] }),
+  height: prop.number({ min: 40, step: 8, aliases: ['h'] }),
+  svg: prop.string({ format: 'svg', description: 'Custom inline SVG or path d attribute' }),
+});
+
 export const iconNodePlugin: SceneNodePlugin = {
   id: 'icon',
   name: 'Sketch Icon',
+  defaultName: 'Icon',
+  defaultColor: 'yellow',
+  defaultProps: iconProps.defaults,
+  snippet: '[node:icon] Badge {color: yellow, icon: spark, size: 36}',
+  propFields: iconProps.fields,
   measure(node) {
     const rawSize = Number(node.props?.size);
-    const size = Number.isFinite(rawSize) && rawSize > 8 ? rawSize : 30;
+    const size = Number.isFinite(rawSize) && rawSize > 8 ? Math.min(120, rawSize) : 30;
     return {
       width: size,
       height: size,
@@ -35,13 +59,11 @@ export const iconNodePlugin: SceneNodePlugin = {
       ? positioned.node.props
       : undefined;
     const iconName =
-      typeof props?.icon === 'string' && props.icon.trim()
-        ? props.icon.trim()
-        : positioned.node.name;
-    const rawSvg =
-      typeof props?.svg === 'string' && props.svg.trim()
-        ? wrapBareSvgSnippet(props.svg)
-        : getSketchIconSvg(iconName) ?? getSketchIconSvg('spark')!;
+      (iconProps.readField(props, 'icon') ?? '').trim() || positioned.node.name;
+    const svgOverride = (iconProps.readField(props, 'svg') ?? '').trim();
+    const rawSvg = svgOverride
+      ? wrapBareSvgSnippet(svgOverride)
+      : getSketchIconSvg(iconName) ?? getSketchIconSvg('spark')!;
 
     const targetW = Math.max(16, positioned.width - 4);
     const targetH = Math.max(16, positioned.height - 4);
@@ -68,30 +90,27 @@ export const iconNodePlugin: SceneNodePlugin = {
   },
 };
 
-function readSketchCaption(
-  props?: Record<string, string | number | boolean | undefined>
-): string {
-  const raw = props?.title ?? props?.text ?? props?.caption;
-  if (typeof raw === 'string') return raw.trim();
-  if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw);
-  return '';
-}
-
 export const sketchNodePlugin: SceneNodePlugin = {
   id: 'sketch',
   name: 'Hand-Drawn Sketch',
+  defaultName: 'Sketch',
+  defaultColor: 'pink',
+  defaultProps: sketchProps.defaults,
+  snippet:
+    '[node:sketch] Art {color: pink, icon: rocket, caption: "Hand-Drawn"}',
+  propFields: sketchProps.fields,
   measure(node, ctx) {
-    const rawW = Number(node.props?.width ?? node.props?.w);
-    const rawH = Number(node.props?.height ?? node.props?.h);
-    const caption = readSketchCaption(node.props);
+    const explicitW = sketchProps.readField(node.props, 'width');
+    const explicitH = sketchProps.readField(node.props, 'height');
+    const caption = (sketchProps.readField(node.props, 'caption') ?? '').trim();
     let width = 168;
-    if (Number.isFinite(rawW) && rawW >= 40) {
-      width = rawW;
+    if (explicitW !== undefined) {
+      width = explicitW;
     } else if (caption) {
       const capW = ctx.measureText(caption, `700 15px ${ctx.fontFamily}`);
       width = Math.max(168, Math.min(360, Math.ceil(capW + 24)));
     }
-    const baseH = Number.isFinite(rawH) && rawH >= 40 ? rawH : 128;
+    const baseH = explicitH ?? 128;
     return {
       width,
       height: caption ? baseH + 26 : baseH,
@@ -111,15 +130,13 @@ export const sketchNodePlugin: SceneNodePlugin = {
     const props = isCustomSceneNode(positioned.node)
       ? positioned.node.props
       : undefined;
-    const caption = readSketchCaption(props);
+    const caption = (sketchProps.readField(props, 'caption') ?? '').trim();
     const iconName =
-      typeof props?.icon === 'string' && props.icon.trim()
-        ? props.icon.trim()
-        : positioned.node.name;
-    const svgText =
-      typeof props?.svg === 'string' && props.svg.trim()
-        ? wrapBareSvgSnippet(props.svg)
-        : getSketchIconSvg(iconName) ?? getSketchIconSvg('lightbulb')!;
+      (sketchProps.readField(props, 'icon') ?? '').trim() || positioned.node.name;
+    const svgOverride = (sketchProps.readField(props, 'svg') ?? '').trim();
+    const svgText = svgOverride
+      ? wrapBareSvgSnippet(svgOverride)
+      : getSketchIconSvg(iconName) ?? getSketchIconSvg('lightbulb')!;
 
     const areaH = caption ? positioned.height - 28 : positioned.height;
     const strokes = sketchPipeline.run({

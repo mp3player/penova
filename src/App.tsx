@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   CameraMode,
   HandStyle,
@@ -9,6 +9,7 @@ import {
   exportProjectVideo,
   triggerBlobDownload,
 } from './engine/export/videoExporter';
+import { getPresetProjects } from './model/presets';
 import { usePlaybackAudio } from './hooks/usePlaybackAudio';
 import { useProjectWorkspace } from './hooks/useProjectWorkspace';
 import { TopBar } from './components/TopBar';
@@ -19,7 +20,7 @@ import { TimelineBar } from './components/TimelineBar';
 import { useI18n } from './i18n';
 
 export const App: React.FC = () => {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -27,7 +28,6 @@ export const App: React.FC = () => {
   const tMsRef = useRef(tMs);
   tMsRef.current = tMs;
 
-  const [exporterId, setExporterId] = useState<string>('mediarecorder-video');
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -49,10 +49,30 @@ export const App: React.FC = () => {
     showToast,
   });
 
+  const activeSceneRange = useMemo(() => {
+    const seg = workspace.compiledProject.segments[workspace.safeSceneIndex];
+    if (!seg) {
+      return { startMs: 0, endMs: workspace.compiledProject.totalDurationMs };
+    }
+    return { startMs: seg.startMs, endMs: seg.endMs };
+  }, [workspace.compiledProject.segments, workspace.compiledProject.totalDurationMs, workspace.safeSceneIndex]);
+
+  const handleSelectNode = useCallback(
+    (nodeId: string | null, opts?: { reveal?: boolean }) => {
+      setSelectedNodeId(nodeId);
+      if (nodeId && opts?.reveal) {
+        workspace.revealNodeOnTimeline(nodeId);
+      }
+    },
+    [workspace]
+  );
+
   const playback = usePlaybackAudio({
     compiledProject: workspace.compiledProject,
     evalState: workspace.evalState,
     activeTheme: workspace.activeScene.theme,
+    activeSceneRange,
+    selectedNodeId,
     isPlaying,
     setIsPlaying,
     tMs,
@@ -61,10 +81,17 @@ export const App: React.FC = () => {
     exporting,
     onUndo: workspace.handleUndo,
     onRedo: workspace.handleRedo,
+    onDeleteSelectedNode: () => {
+      if (selectedNodeId) workspace.handleDeleteNode(selectedNodeId);
+    },
+    onDuplicateSelectedNode: () => {
+      if (selectedNodeId) workspace.handleDuplicateNode(selectedNodeId);
+    },
+    onClearSelection: () => setSelectedNodeId(null),
     showToast,
   });
 
-  const handleStartExport = async () => {
+  const handleStartExport = async (overrideExporterId?: string) => {
     if (exporting) return;
     setIsPlaying(false);
     setExporting(true);
@@ -75,7 +102,7 @@ export const App: React.FC = () => {
 
     try {
       const result = await exportProjectVideo(workspace.compiledProject, {
-        exporterId,
+        exporterId: overrideExporterId ?? 'mediarecorder-video',
         onProgress: setExportProgress,
         signal: controller.signal,
       });
@@ -105,6 +132,10 @@ export const App: React.FC = () => {
     exportAbortRef.current?.abort();
   };
 
+  const matchingPreset = getPresetProjects(locale).find(
+    (p) => p.id === workspace.project.id
+  );
+
   return (
     <div className="studio-shell">
       <TopBar
@@ -124,8 +155,6 @@ export const App: React.FC = () => {
         onRedo={workspace.handleRedo}
         onSaveProjectJson={workspace.handleSaveProjectJson}
         onImportProjectJson={workspace.handleImportProjectJson}
-        exporterId={exporterId}
-        onChangeExporterId={setExporterId}
         exporting={exporting}
         exportProgress={exportProgress}
         onStartExport={handleStartExport}
@@ -140,7 +169,7 @@ export const App: React.FC = () => {
             scene={workspace.activeScene}
             selectedNodeId={selectedNodeId}
             audioTrack={playback.audioTrack}
-            onSelectNode={setSelectedNodeId}
+            onSelectNode={handleSelectNode}
             onUpdateScene={workspace.updateActiveScene}
             onUpdateSubtitles={workspace.handleUpdateSubtitles}
             onToggleShowSubtitles={workspace.handleToggleShowSubtitles}
@@ -165,7 +194,18 @@ export const App: React.FC = () => {
           isPlaying={isPlaying}
           selectedNodeId={selectedNodeId}
           soundEnabled={playback.soundEnabled}
-          onSelectNode={setSelectedNodeId}
+          restoredFromDraft={workspace.restoredFromDraft}
+          onSelectNode={handleSelectNode}
+          onPausePlayback={() => setIsPlaying(false)}
+          onInlineEditNode={workspace.handleInlineUpdateNodeText}
+          onDuplicateNode={workspace.handleDuplicateNode}
+          onDeleteNode={workspace.handleDeleteNode}
+          onResetToDefaultPreset={
+            matchingPreset
+              ? () => workspace.handleResetPreset(matchingPreset.id)
+              : undefined
+          }
+          onDismissDraftBanner={workspace.dismissDraftBanner}
           onChangeLayoutMode={(layoutMode: LayoutMode) =>
             workspace.updateActiveScene((prev) => ({ ...prev, layoutMode }))
           }
@@ -196,8 +236,10 @@ export const App: React.FC = () => {
         compiledProject={workspace.compiledProject}
         tMs={tMs}
         isPlaying={isPlaying}
+        loopCurrentScene={playback.loopCurrentScene}
         speed={playback.speed}
         onTogglePlay={playback.handleTogglePlay}
+        onToggleLoopScene={() => playback.setLoopCurrentScene((l) => !l)}
         onRestart={playback.handleRestart}
         onSeek={playback.handleSeek}
         onChangeSpeed={playback.setSpeed}

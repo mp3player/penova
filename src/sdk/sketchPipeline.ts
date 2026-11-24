@@ -1496,10 +1496,17 @@ export const SKETCH_ICON_LIBRARY: Record<string, string> = {
   </svg>`,
 };
 
+const sketchIconListeners = new Set<() => void>();
+let cachedSketchIconNames: string[] | null = null;
+
 export function registerSketchIcon(name: string, svgText: string): void {
   const key = name.trim().toLowerCase();
   if (key && svgText.trim()) {
     SKETCH_ICON_LIBRARY[key] = svgText;
+    cachedSketchIconNames = null;
+    for (const listener of sketchIconListeners) {
+      listener();
+    }
   }
 }
 
@@ -1508,5 +1515,15 @@ export function getSketchIconSvg(name: string): string | undefined {
 }
 
 export function listSketchIcons(): string[] {
-  return Object.keys(SKETCH_ICON_LIBRARY);
+  if (!cachedSketchIconNames) {
+    cachedSketchIconNames = Object.keys(SKETCH_ICON_LIBRARY);
+  }
+  return cachedSketchIconNames;
+}
+
+export function subscribeSketchIcons(listener: () => void): () => void {
+  sketchIconListeners.add(listener);
+  return () => {
+    sketchIconListeners.delete(listener);
+  };
 }

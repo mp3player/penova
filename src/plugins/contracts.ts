@@ -12,6 +12,7 @@ import {
   TextAlign,
   ThemeId,
 } from '../model/scene';
+import { PropFieldDescriptor } from '../sdk/propSchema';
 import { StrokePath } from '../sdk/strokePath';
 
 export interface ThemePalette {
@@ -475,6 +476,7 @@ export interface ExportPlugin {
   id: string;
   name: string;
   shortLabel?: string;
+  category?: 'snapshot' | 'sequence';
   description?: string;
   isSupported?(): boolean;
   export(
@@ -515,6 +517,11 @@ export interface SceneNodeCompileHelpers {
 export interface SceneNodePlugin {
   id: string;
   name: string;
+  defaultName?: string;
+  defaultColor?: ChalkColor;
+  defaultProps?: Record<string, string | number | boolean>;
+  snippet?: string;
+  propFields?: readonly PropFieldDescriptor[];
   compose?(node: CustomSceneNode): SceneNode;
   measure?(
     node: CustomSceneNode,

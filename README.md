@@ -26,35 +26,40 @@ All six scenes below ship inside the built-in **`Penova Product Intro (6 Scenes)
 
 ## Highlights
 
-- **Universal `SceneNode` Composite IR**: Abstracts `text`, `shape`, `connector`, and nestable `group` nodes uniformly to power flowcharts, mind maps, zoned concept graphs, long-form handwritten letters, and freeform boards.
-- **8-Registry Plugin Architecture**:
+- **Universal `SceneNode` Composite IR**: Abstracts `text`, `shape`, `connector`, `group`, and extensible `custom` nodes uniformly to power flowcharts, mind maps, zoned concept graphs, visual widgets, long-form handwritten letters, and freeform boards.
+- **9-Registry Headless Plugin Architecture**:
+  - **Custom Scene Nodes (`SceneNodePlugin`)**: Built-in visual widgets (`icon`, `sketch`, `code`, `chart`) plus optional card `icon:` attributes, backed by pure-data `defineProps` schemas ([src/sdk/propSchema.ts](src/sdk/propSchema.ts)) for symmetric two-way Studio binding and automatic `--spec` docs.
   - **Shapes (`ShapePlugin`)**: `rounded`, `circle`, `cloud`, `underline`, `diamond`, `divider`.
-  - **Layouts (`LayoutPlugin`)**: `flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, `document` (Letter / Doc), `freeform`, paired with two-way text codecs (`graphScriptCodec`, `documentScriptCodec`).
+  - **Layouts (`LayoutPlugin`)**: `flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, `document` (Letter / Doc), `freeform`, with **obstacle-aware connector routing** (`routeObstacleAwareConnector`) across graph layouts and two-way text codecs (`graphScriptCodec`, `documentScriptCodec`).
   - **Presentations (`PresentationPlugin`)**: `chalkboard`, `whiteboard`, `blueprint`, `letter-paper`.
   - **Glyph Stroke Providers (`GlyphProviderPlugin`)**: `stroke-order-dict` (Latin, numerals, and foundational CJK strokes, extensible via `registerStrokeOrderGlyphs`) + `ink-grid-fallback` (14×14 momentum ink-tracing for any arbitrary Unicode character).
   - **Hand Gestures (`HandPlugin`)**: `hand-chalk`, `hand-minimal`, `tip-only`, `hidden`, plus `createImageHandPlugin` to plug in real hand PNGs in 5 lines.
   - **Camera Directors (`CameraPlugin`)**: `auto-follow`, `progressive-fit`, `static-overview`, `pen-follow` (scrolling chase camera for long letters).
   - **Scene Transitions (`TransitionPlugin`)**: `chalkboard-eraser`, `page-turn`, `crossfade`, `cut`.
-  - **Exporters (`ExportPlugin`)**: Zero-backend **1080P Video** (WebM/MP4 via `MediaRecorder`), **HD Poster PNG**, and **Offline FFmpeg Tar Bundle** (`.tar` with lossless PNG frames, `manifest.json`, and FFmpeg commands), plus `createHttpBridgeExportPlugin` for custom render servers.
+  - **Exporters (`ExportPlugin`)**: Grouped by `category` (`'snapshot' | 'sequence'`)—zero-backend **1080P Video** (`mediarecorder-video`), **HD Poster PNG** (`poster-png`), **Offline FFmpeg PNG Tar** (`png-sequence-tar`), and headless vector **HD SVG** (`poster-svg`) & **SVG Frame Sequence `.tar`** (`svg-sequence-tar`), plus `createHttpBridgeExportPlugin` for custom render servers.
+- **SDK Extension Primitives (`src/sdk/`)**: Ships a recursive composable DAG kernel (`workflowDag.ts`), an SVG/bitmap sketch-to-stroke pipeline with 20 built-in icons (`sketchPipeline.ts`), and the zero-dependency `defineProps` property schema (`propSchema.ts`).
 - **Declarative `.penova.md` Text-to-Video Pipeline & Agent Skill**: Author multi-scene boards as pure Markdown/script text declaring `theme`, `layout`, `camera`, `hand`, and `transition` plugins (`parseProjectScript` / `serializeProjectScript`), inspect live grammar rules via `generateScriptSpec()`, or equip AI agents directly via the workspace skill at [.agents/skills/penova-animation/SKILL.md](.agents/skills/penova-animation/SKILL.md) (with [docs/examples/penova-intro.penova.md](docs/examples/penova-intro.penova.md)).
-- **Built-in Bilingual Studio (`EN / 简体中文`)**: Ships with an instant `EN / 中文` switcher in the top bar and 6 bilingual showcase presets; third-party plugins automatically fall back to their own `name` without needing i18n keys.
-- **Full Studio Workflow**: Multi-scene timeline, live single-scene & `.penova.md` script editor, auto subtitles with `.srt` import/export, voiceover/BGM track sync, procedural Web Audio writing sound effects, Undo/Redo history, `16:9` / `9:16` aspect ratios, `.penova.json` & `.penova.md` import/export, and localStorage auto-drafts.
+- **Built-in Bilingual Studio (`EN / 简体中文`)**: Ships with an instant `EN / 中文` switcher in the top bar menu and 6 bilingual showcase presets; third-party plugins automatically fall back to their own `name` without needing i18n keys.
+- **Full Studio Workflow & Strict Engine/UI Separation**: Direct canvas click-to-pause & select, double-click inline quick-editing, keyboard shortcuts (`Delete`/`Backspace`, `Ctrl/Cmd+D`, `Esc`), zoom/quick-action HUD, single-scene loop toggle, unified Snapshot & Video `Export` popover, scroll-synced line-numbered script editor with warning highlights & snippet chips, auto subtitles (`.srt`), audio sync, Undo/Redo, and browser-only companion UI customization via [src/studio/uiRegistry.ts](src/studio/uiRegistry.ts).
 
 ---
 
 ## Layered Architecture
 
 ```text
-src/components/, src/hooks/, src/i18n/   Studio UI, workspace/audio hooks & localization
+src/components/, src/hooks/, src/i18n/   Studio UI shell, workspace/audio hooks & localization
                   │
                   ▼
-           src/engine/                    Layout compiler, stroke animator, timeline, camera, audio & renderer
+           src/studio/                    Browser-only companion UI registry (studioNodeUiRegistry)
+                  │   (UI -> Engine, strictly one-way; never bundled into headless exports)
+                  ▼
+           src/engine/                    Layout compiler, stroke animator, timeline, camera, audio & Canvas/SVG renderers
                   │
                   ▼
-           src/plugins/                   8 independent plugin registries & built-in plugins
+           src/plugins/                   9 independent headless plugin registries & built-in plugins
                   │
                   ▼
-             src/sdk/                     Pure math, stroke path, brush & surface primitives
+             src/sdk/                     Pure math, stroke path, brush, sketch pipeline, DAG kernel & defineProps schema
                   │
                   ▼
             src/model/                    Universal SceneNode IR, LessonProject, presets, history & storage

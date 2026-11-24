@@ -10,6 +10,7 @@ export const posterPngExporterPlugin: ExportPlugin = {
   id: 'poster-png',
   name: 'HD Poster (1080P PNG)',
   shortLabel: 'HD PNG',
+  category: 'snapshot',
   description: 'Instantly export the final board frame as a lossless 1080P PNG',
   isSupported() {
     return typeof document !== 'undefined';

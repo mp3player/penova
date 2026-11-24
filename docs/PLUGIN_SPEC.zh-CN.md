@@ -31,15 +31,21 @@ Penova 采用 **两层分离** 的编译器架构：
 
 ### 0. 自定义节点插件 (`SceneNodePlugin` / `sceneNodeRegistry`)
 
-无需修改核心布局器或时间轴编译器，即可按两级模式扩展全新 `SceneNode` 类型：
+无需修改核心布局器或时间轴编译器，即可按两级模式扩展全新 `SceneNode` 类型（内置提供 [src/plugins/nodes/](../src/plugins/nodes/) 下的 `icon`、`sketch`、`code`、`chart`）：
 
 - **组合模式 (`compose(node) => SceneNode`)**：用现有 `group` / `text` / `shape` 拼装出复合结构，引擎自动完成测量、连线裁剪与逐笔书写动画；
-- **原语模式 (`measure(node, ctx)` + `compile(positioned, helpers)`)**：自主计算包围盒并通过 `helpers.pushStroke` / `helpers.pushTextLine` 输出自定义粉笔笔画与文字行。
+- **原语模式 (`measure(node, ctx)` + `compile(positioned, helpers)`)**：自主计算包围盒并通过 `helpers.pushStroke` / `helpers.pushTextLine` 输出自定义粉笔笔画与文字行；
+- **纯数据属性元数据 (`propFields`)**：通过 [src/sdk/propSchema.ts](../src/sdk/propSchema.ts) 的 `defineProps(...)` 声明，既不在核心引擎层引入任何 UI 词汇，又能自动驱动工作室表单、双向不可变更新及 `generateScriptSpec()` 中的 `[node:<id>] props:` 规范输出。
 
 ```ts
 export interface SceneNodePlugin {
   id: string;
   name: string;
+  defaultName?: string;
+  defaultColor?: ChalkColor;
+  defaultProps?: Record<string, string | number | boolean>;
+  snippet?: string;
+  propFields?: readonly PropFieldDescriptor[];
   compose?(node: CustomSceneNode): SceneNode;
   measure?(
     node: CustomSceneNode,
@@ -213,13 +219,14 @@ export interface TransitionPlugin {
 4. `poster-svg`（矢量海报：无 Canvas 依赖，直接导出 1080P `.svg` 矢量终幕）
 5. `svg-sequence-tar`（矢量帧包：无 Canvas 依赖，在服务端/Node 端也能直接导出逐帧 `.svg` 序列包）
 
-此外提供 `createHttpBridgeExportPlugin`（支持 `frameFormat: 'auto' | 'png-base64' | 'svg' | 'snapshot'`）对接本地 FFmpeg 服务或云端合成接口，以及高层入口 `exportScriptToVideo(scriptText)` 一站式完成 `.penova.md` 文本到任意导出插件的编译出片：
+此外提供 `createHttpBridgeExportPlugin`（支持 `frameFormat: 'auto' | 'png-base64' | 'svg' | 'snapshot'`）对接本地 FFmpeg 服务或云端合成接口（TopBar 导出弹层会依据 `category` 自动将其归类到“高清定格图”或“视频与帧序列”分组），以及高层入口 `exportScriptToVideo(scriptText)` 一站式完成 `.penova.md` 文本到任意导出插件的编译出片：
 
 ```ts
 export interface ExportPlugin {
   id: string;
   name: string;
   shortLabel?: string;
+  category?: 'snapshot' | 'sequence';
   description?: string;
   isSupported?(): boolean;
   export(source: ExportFrameSource, options: ExportRunOptions): Promise<ExportOutput>;
@@ -267,9 +274,59 @@ layoutRegistry.register(verticalDocLayout);
 
 ## 四、声明式多幕工程脚本（`.penova.md`）
 
-Penova 支持通过 [src/engine/parser/projectScript.ts](../src/engine/parser/projectScript.ts) 将纯文本 `.penova.md` 直接解析并组装为完整的 `LessonProject`，按每幕声明动态匹配 8 大注册表中的 `theme`、`layout`、`camera`、`hand` 与 `transition` 插件：
+Penova 支持通过 [src/engine/parser/projectScript.ts](../src/engine/parser/projectScript.ts) 将纯文本 `.penova.md` 直接解析并组装为完整的 `LessonProject`，按每幕声明动态匹配 9 大注册表中的 `theme`、`layout`、`camera`、`hand`、`transition` 与 `[node:<kind>]` 插件：
 
 - 任意自定义 `LayoutPlugin` 只要挂载配套的 `textCodec`（并可选填写 `syntaxRules` 与 `example`），即可直接在 `.penova.md` 中通过 `layout: <plugin-id>` 驱动成片。
 - 内置全部 6 大布局均支持无损双向文本映射（`flow-horizontal` / `flow-vertical` / `mindmap` / `concept-graph` / `freeform` 使用 `graphScriptCodec`，`document` 使用 `documentScriptCodec`），支持无框节点 (`shape: none`)、独立原子节点 (`[text]` / `[shape:<id>]` / `[node:<kind>]`)、嵌套 `[group]` 树、`#<id>` 同名节点消歧以及 `{say: "口播字幕", pause: 800}` 分步台词与停顿控制。
-- 调用 `generateScriptSpec()` 会实时扫描当前所有注册表，生成完整的纯文本插件能力与脚本语法规范（可直接用于文档展示或任何外部生成流程）。
+- 调用 `generateScriptSpec()` 会实时扫描当前所有注册表，生成完整的纯文本插件能力与脚本语法规范，并根据各 `SceneNodePlugin` 的 `propFields` 自动生成 `[node:<id>] props:` 属性说明（可直接用于文档展示或任何外部生成流程）。
 - 完整 6 幕声明式产品介绍脚本文档可参考：[docs/examples/penova-intro.penova.md](examples/penova-intro.penova.md)。
+
+---
+
+## 五、无头属性协议 (`defineProps`) 与引擎 / UI 解耦架构
+
+Penova 严格遵循**单向依赖边界（`UI -> Engine`）**：
+
+- `src/model/`、`src/sdk/`、`src/plugins/` 与 `src/engine/` 保持 **100% 无头纯净**——不引入任何 DOM/React 依赖，不包含任何 UI 展示词汇（如 `rows`、`placeholder`、`label`、`inlineEditPropKey`），并兼容 Node 22 原生 TypeScript 类型剥离与无头打包脚本 `scripts/bundle-skill.py`。
+- `src/studio/` 与 `src/components/` 承载全部浏览器端交互细节与可选界面增强。
+
+### `defineProps`（[src/sdk/propSchema.ts](../src/sdk/propSchema.ts)）
+
+插件不再需要手写重复的默认值与解析校验代码，只需使用 `defineProps` 配合 `prop.string`、`prop.number`、`prop.boolean`、`prop.enum` 声明一次纯数据元信息：
+
+```ts
+import { defineProps, prop } from '../../sdk/propSchema';
+
+const myProps = defineProps({
+  title: prop.string({ default: 'Metrics', format: 'plain' }),
+  lines: prop.string({ format: 'code', aliases: ['code'] }),
+  height: prop.number({ default: 196, min: 96, max: 420, step: 4 }),
+  mode: prop.enum(['auto', 'manual'], { default: 'auto' }),
+});
+```
+
+- **纯语义格式 (`format`)**：仅表达数据语义（`'plain' | 'multiline' | 'code' | 'svg' | 'icon-id' | 'enum'`），不包含任何控件参数。
+- **单一数据源**：统一产出 `fields`（挂载到 `SceneNodePlugin.propFields`）、`defaults` 以及强类型的 `resolve(rawProps)`（`InferPropValues`）。
+- **对称双向不可变读写**：`readField`、`writeField`、`resetField`（以及泛化的 `readPropBySchema` / `writePropBySchema`）自动完成别名归一化、`min`/`max` 裁剪并返回新的 `node.props`，让侧边栏检查器、画布快编与脚本文本保持双向同步。
+
+### 伴生 UI 注册表（[src/studio/uiRegistry.ts](../src/studio/uiRegistry.ts)）
+
+任何声明了 `propFields` 的第三方 `SceneNodePlugin`，无需编写一行 UI 代码即可自动生成工作室属性面板与脚本快捷插入项；若需要在浏览器端补充文案提示、指定双击快编字段或追加自定义交互区块，可向 `studioNodeUiRegistry` 注册可选的 `StudioNodeUiExtension`，且绝不会污染无头引擎包：
+
+```ts
+import { studioNodeUiRegistry } from '../studio/uiRegistry';
+
+studioNodeUiRegistry.register({
+  id: 'my-widget',
+  inlineEditPropKey: 'title', // 指定画布双击行内快编对应的属性键
+  fieldHints: {
+    lines: { label: 'Source Code', rows: 4, placeholder: 'const x = 1;' },
+  },
+  // renderExtra(ctx) { ... } // 可选：向属性面板底部追加自定义 React 区块
+});
+```
+
+### 配套 SDK 原语（`src/sdk/`）
+
+- **[src/sdk/sketchPipeline.ts](../src/sdk/sketchPipeline.ts)**：SVG 路径与位图简笔画矢量化管线，内置 20 枚常用图标；支持 `registerSketchIcon` 动态扩展，并通过 `subscribeSketchIcons` / `listSketchIcons` 向工作室选择器提供响应式图标订阅。
+- **[src/sdk/workflowDag.ts](../src/sdk/workflowDag.ts)**：面向自定义图谱与流水线布局插件的递归可组合 DAG 排版内核。

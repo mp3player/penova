@@ -2,11 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AspectRatio,
   clearAllOffsets,
+  findNodeById,
+  isCustomSceneNode,
   LessonScene,
   Point,
+  removeNodeInTree,
+  resolveCustomNodeKind,
+  SceneNode,
   TransitionId,
   updateNodeInTree,
 } from '../model/scene';
+import { updateCardGroupNode } from '../model/builders';
 import {
   cloneProject,
   cloneSceneWithDetails,
@@ -29,6 +35,9 @@ import {
   saveProjectDraft,
   serializeProjectToJson,
 } from '../model/projectStorage';
+import { sceneNodeRegistry } from '../plugins';
+import { writePropBySchema } from '../sdk/propSchema';
+import { studioNodeUiRegistry } from '../studio/uiRegistry';
 import { getPresetProjects } from '../model/presets';
 import { Locale, useI18n } from '../i18n';
 import {
@@ -83,8 +92,12 @@ export function useProjectWorkspace({
   showToast,
 }: UseProjectWorkspaceParams) {
   const { locale, t } = useI18n();
+  const [initialDraft] = useState<LessonProject | null>(() => loadProjectDraft());
+  const [restoredFromDraft, setRestoredFromDraft] = useState<boolean>(
+    () => initialDraft !== null
+  );
   const [history, setHistory] = useState<HistoryState<LessonProject>>(() =>
-    createHistory(loadProjectDraft() ?? cloneProject(getPresetProjects(locale)[0]))
+    createHistory(initialDraft ?? cloneProject(getPresetProjects(locale)[0]))
   );
   const project = history.present;
   const [activeSceneIndex, setActiveSceneIndex] = useState(0);
@@ -256,6 +269,7 @@ export function useProjectWorkspace({
     if (options?.clearDraft) {
       clearProjectDraft();
     }
+    setRestoredFromDraft(false);
     commitProject((prevProj) => {
       const cloned = cloneProject(found);
       const currentHand =
@@ -426,6 +440,129 @@ export function useProjectWorkspace({
     }));
   };
 
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      updateActiveScene((prev) => ({
+        ...prev,
+        customSteps: undefined,
+        nodes: removeNodeInTree(prev.nodes, nodeId),
+      }));
+      setSelectedNodeId((curr) => (curr === nodeId ? null : curr));
+      showToast(t('toast.nodeDeleted'));
+    },
+    [setSelectedNodeId, showToast, t, updateActiveScene]
+  );
+
+  const handleDuplicateNode = useCallback(
+    (nodeId: string) => {
+      const target = findNodeById(activeScene.nodes, nodeId);
+      if (!target) return;
+      const suffix = Date.now().toString(36).slice(-4);
+      const cloneWithFreshIds = (n: SceneNode): SceneNode => {
+        const nextId = `${n.id}-copy-${suffix}`;
+        if (n.type === 'group') {
+          return {
+            ...n,
+            id: nextId,
+            children: n.children.map(cloneWithFreshIds),
+          };
+        }
+        return { ...n, id: nextId };
+      };
+      const cloned = cloneWithFreshIds(target);
+      if (target.type !== 'connector') {
+        cloned.offset = {
+          x: (target.offset?.x ?? 0) + 28,
+          y: (target.offset?.y ?? 0) + 28,
+        };
+      }
+      updateActiveScene((prev) => {
+        const idx = prev.nodes.findIndex((n) => n.id === nodeId);
+        const nextNodes = [...prev.nodes];
+        if (idx !== -1) {
+          nextNodes.splice(idx + 1, 0, cloned);
+        } else {
+          nextNodes.push(cloned);
+        }
+        return {
+          ...prev,
+          customSteps: undefined,
+          nodes: nextNodes,
+        };
+      });
+      setSelectedNodeId(cloned.id);
+      showToast(t('toast.nodeDuplicated'));
+    },
+    [activeScene.nodes, setSelectedNodeId, showToast, t, updateActiveScene]
+  );
+
+  const handleInlineUpdateNodeText = useCallback(
+    (nodeId: string, nextText: string) => {
+      const trimmed = nextText.trim();
+      if (!trimmed) return;
+      updateActiveScene((prev) => ({
+        ...prev,
+        customSteps: undefined,
+        nodes: updateNodeInTree(prev.nodes, nodeId, (node) => {
+          if (node.type === 'group') {
+            return updateCardGroupNode(node, { label: trimmed });
+          }
+          if (node.type === 'text') {
+            return {
+              ...node,
+              text: trimmed,
+              name: trimmed.slice(0, 18) || node.name,
+            };
+          }
+          if (node.type === 'connector') {
+            return { ...node, label: trimmed };
+          }
+          if (isCustomSceneNode(node)) {
+            const kind = resolveCustomNodeKind(node);
+            const propKey = studioNodeUiRegistry.get(kind)?.inlineEditPropKey;
+            if (propKey) {
+              const fields = sceneNodeRegistry.get(kind)?.propFields ?? [];
+              return {
+                ...node,
+                props: writePropBySchema(fields, node.props, propKey, trimmed),
+              };
+            }
+          }
+          return { ...node, name: trimmed };
+        }),
+      }));
+    },
+    [updateActiveScene]
+  );
+
+  const revealNodeOnTimeline = useCallback(
+    (nodeId: string | null) => {
+      if (!nodeId) return;
+      const seg = compiledProject.segments[safeSceneIndex];
+      if (!seg) return;
+      const matchedStep = seg.timeline.steps.find((s) =>
+        s.step.nodeIds.includes(nodeId)
+      );
+      const localRevealMs = matchedStep
+        ? matchedStep.endMs
+        : seg.timeline.outroStartMs;
+      const absRevealMs = Math.min(
+        seg.endMs - 20,
+        seg.startMs + Math.max(80, localRevealMs)
+      );
+      if (tMsRef.current < absRevealMs - 30 || tMsRef.current > seg.endMs) {
+        setIsPlaying(false);
+        tMsRef.current = absRevealMs;
+        setTMs(absRevealMs);
+      }
+    },
+    [compiledProject.segments, safeSceneIndex, setIsPlaying, setTMs, tMsRef]
+  );
+
+  const dismissDraftBanner = useCallback(() => {
+    setRestoredFromDraft(false);
+  }, []);
+
   const handleChangeAspectRatio = (aspectRatio: AspectRatio) => {
     commitProject((prev) => ({
       ...prev,
@@ -461,6 +598,7 @@ export function useProjectWorkspace({
         : parseProjectFromJson(raw);
 
       lastCoalesceRef.current = { key: null, at: 0 };
+      setRestoredFromDraft(false);
       setHistory(resetHistory(imported));
       setActiveSceneIndex(0);
       setSelectedNodeId(null);
@@ -546,6 +684,8 @@ export function useProjectWorkspace({
     activeScene,
     compiledProject,
     evalState,
+    restoredFromDraft,
+    dismissDraftBanner,
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
     handleUndo,
@@ -561,6 +701,10 @@ export function useProjectWorkspace({
     handleChangeTransition,
     handleNudgeNode,
     handleResetAdjustments,
+    handleDeleteNode,
+    handleDuplicateNode,
+    handleInlineUpdateNodeText,
+    revealNodeOnTimeline,
     handleChangeAspectRatio,
     handleSaveProjectJson,
     handleImportProjectJson,
