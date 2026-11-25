@@ -6,6 +6,7 @@ import {
   LayoutMode,
   LessonScene,
   PacingPreset,
+  SceneFontPreset,
   ThemeId,
   TransitionId,
 } from '../../model/scene';
@@ -21,6 +22,7 @@ import {
   transitionRegistry,
 } from '../../plugins';
 import { generateAutoSubtitles } from '../subtitle/subtitleEngine';
+import { isSceneFontPreset } from '../render/fonts';
 import { isPacingPreset } from '../timeline/pacing';
 import { compileProjectTimeline } from '../timeline/projectTimeline';
 
@@ -48,6 +50,7 @@ const SCENE_META_KEYS = new Set([
   'transition-duration',
   'spotlight',
   'pacing',
+  'font',
 ]);
 
 interface RawSceneSection {
@@ -357,6 +360,18 @@ export function parseProjectScript(
       }
     }
 
+    const rawFont = (meta.font ?? '').trim().toLowerCase();
+    let font: SceneFontPreset | undefined;
+    if (rawFont) {
+      if (isSceneFontPreset(rawFont)) {
+        font = rawFont === 'theme-default' ? undefined : rawFont;
+      } else {
+        warnings.push(
+          `Scene ${idx + 1}: unknown font "${rawFont}", using theme default`
+        );
+      }
+    }
+
     const initialTitle =
       meta.title ??
       section.explicitTitle ??
@@ -374,6 +389,7 @@ export function parseProjectScript(
       transitionOut: transitionConfig,
       ...(spotlight ? { spotlight: true } : {}),
       ...(pacing ? { pacing } : {}),
+      ...(font ? { font } : {}),
     };
 
     const layoutPlugin = layoutRegistry.getOrDefault(layoutMode);
@@ -406,6 +422,7 @@ export function parseProjectScript(
       transitionOut: transitionConfig,
       ...(spotlight ? { spotlight: true } : {}),
       ...(pacing ? { pacing } : {}),
+      ...(font ? { font } : {}),
     };
     return finalScene;
   });
@@ -511,6 +528,9 @@ export function serializeProjectScript(project: LessonProject): string {
     if (typeof scene.pacing === 'string') {
       lines.push(`pacing: ${scene.pacing}`);
     }
+    if (scene.font && scene.font !== 'theme-default') {
+      lines.push(`font: ${scene.font}`);
+    }
     if (idx < project.scenes.length - 1 || scene.transitionOut?.type) {
       lines.push(
         `transition: ${scene.transitionOut?.type ?? 'chalkboard-eraser'}`
@@ -585,7 +605,7 @@ export function generateScriptSpec(): string {
     '',
     '- Optional top frontmatter (`--- ... ---`): `title`, `aspectRatio` (`16:9` | `9:16`), `subtitles` (`auto` | `off`).',
     '- Divide scenes with `=== scene ===` (or `=== scene: Scene Title ===`).',
-    '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`, `spotlight`: `true` | `false`, `pacing`: `natural` | `crisp` | `deliberate` | `linear`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
+    '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`, `spotlight`: `true` | `false`, `pacing`: `natural` | `crisp` | `deliberate` | `linear`, `font`: `theme-default` | `xiaolai` | `marker` | `kuaile` | `longcang` | `blueprint-hand` | `wenkai`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
     '',
     '## 2. Currently Registered Plugins (Valid IDs)',
     '',

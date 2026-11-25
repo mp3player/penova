@@ -167,6 +167,15 @@ export interface ScenePacingConfig {
   restAlpha: number;
 }
 
+export type SceneFontPreset =
+  | 'theme-default'
+  | 'xiaolai'
+  | 'marker'
+  | 'kuaile'
+  | 'longcang'
+  | 'blueprint-hand'
+  | 'wenkai';
+
 export type ScenePacingOption = PacingPreset | Partial<ScenePacingConfig>;
 
 export interface LessonScene {
@@ -182,6 +191,7 @@ export interface LessonScene {
   transitionOut?: SceneTransitionConfig;
   spotlight?: boolean;
   pacing?: ScenePacingOption;
+  font?: SceneFontPreset;
 }
 
 export function cloneSceneNode(node: SceneNode): SceneNode {

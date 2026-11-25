@@ -3,6 +3,7 @@ import {
   CameraMode,
   HandStyle,
   LayoutMode,
+  SceneFontPreset,
   ThemeId,
 } from './model/scene';
 import {
@@ -214,6 +215,12 @@ export const App: React.FC = () => {
           }
           onChangeHandStyle={(handStyle: HandStyle) =>
             workspace.updateActiveScene((prev) => ({ ...prev, handStyle }))
+          }
+          onChangeFont={(font: SceneFontPreset) =>
+            workspace.updateActiveScene((prev) => ({
+              ...prev,
+              font: font === 'theme-default' ? undefined : font,
+            }))
           }
           onToggleSound={() => playback.setSoundEnabled((s) => !s)}
           onNudgeNode={workspace.handleNudgeNode}

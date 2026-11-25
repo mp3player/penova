@@ -10,6 +10,7 @@ import {
   Network,
   RotateCcw,
   Trash2,
+  Type,
   Volume2,
   VolumeX,
   Workflow,
@@ -25,6 +26,7 @@ import {
   LayoutMode,
   LessonScene,
   Point,
+  SceneFontPreset,
 } from '../model/scene';
 import { readInlineNodeText } from '../studio/nodeSchemas';
 import {
@@ -36,6 +38,7 @@ import {
   useRegistryList,
 } from '../plugins';
 import { CameraState } from '../engine/camera/cameraDirector';
+import { SCENE_FONT_PRESETS } from '../engine/render/fonts';
 import { renderProjectFrame } from '../engine/render/projectRenderer';
 import {
   getActiveCamera,
@@ -66,6 +69,7 @@ interface CanvasStageProps {
   onChangeLayoutMode: (mode: LayoutMode) => void;
   onChangeCameraMode: (mode: CameraMode) => void;
   onChangeHandStyle: (style: HandStyle) => void;
+  onChangeFont: (font: SceneFontPreset) => void;
   onToggleSound: () => void;
   onNudgeNode: (nodeId: string, offset: Point) => void;
   onResetAdjustments: () => void;
@@ -114,11 +118,12 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
   onChangeLayoutMode,
   onChangeCameraMode,
   onChangeHandStyle,
+  onChangeFont,
   onToggleSound,
   onNudgeNode,
   onResetAdjustments,
 }) => {
-  const { t, pluginName } = useI18n();
+  const { locale, t, pluginName } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -574,6 +579,36 @@ export const CanvasStage: React.FC<CanvasStageProps> = ({
             {hands.map((hand) => (
               <option key={hand.id} value={hand.id} style={{ background: '#161b22' }}>
                 {t('canvas.handLabel')}: {pluginName(hand.id, hand.name)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div
+          className="studio-pill-group"
+          title={t('canvas.fontGroupTitle')}
+          style={{ padding: '2px 6px', gap: 5 }}
+        >
+          <Type size={13} color="var(--text-muted)" />
+          <select
+            className="studio-select"
+            aria-label={t('canvas.fontGroupTitle')}
+            value={scene.font ?? 'theme-default'}
+            onChange={(e) => onChangeFont(e.target.value as SceneFontPreset)}
+            style={{
+              width: 'auto',
+              height: 26,
+              padding: '0 4px',
+              border: 'none',
+              background: 'transparent',
+              fontSize: 12,
+              boxShadow: 'none',
+            }}
+          >
+            {SCENE_FONT_PRESETS.map((fp) => (
+              <option key={fp.id} value={fp.id} style={{ background: '#161b22' }}>
+                {t('canvas.fontLabel')}:{' '}
+                {locale === 'zh-CN' ? fp.labelZh : fp.labelEn}
               </option>
             ))}
           </select>

@@ -30,6 +30,7 @@ import {
   MeasureTextFn,
   positionGroupChildren,
 } from './textMeasure';
+import { resolveSceneFontFamily } from '../render/fonts';
 
 export type { PositionedSceneNode, GroupBox, ComputedLayout };
 export { clipPointToNodeBorder };
@@ -102,8 +103,9 @@ export function computeDiagramLayout(
 ): ComputedLayout {
   const layoutPlugin = layoutRegistry.getOrDefault(scene.layoutMode);
   const presentation = presentationRegistry.getOrDefault(scene.theme);
+  const boardFontFamily = resolveSceneFontFamily(scene, presentation.fontFamily);
   const measureNode = (node: SceneNode) =>
-    measureSceneNode(node, measureFn, undefined, presentation.fontFamily);
+    measureSceneNode(node, measureFn, undefined, boardFontFamily);
 
   const overlayNodes = scene.nodes.filter((n): n is CustomSceneNode =>
     isCustomSceneNode(n) && isOverlaySceneNode(n)

@@ -20,6 +20,7 @@ import { isMonospaceFont } from '../layout/textMeasure';
 import { ComputedLayout, PositionedSceneNode } from '../layout/diagramLayout';
 import { resolveScenePacing } from './pacing';
 import { resolveColorHex } from '../render/themes';
+import { resolveSceneFontFamily } from '../render/fonts';
 import {
   generateConnectorStrokes,
   generateGroupFrameStrokes,
@@ -202,7 +203,7 @@ export function compileTimeline(
 ): CompiledTimeline {
   const layoutPlugin = layoutRegistry.getOrDefault(scene.layoutMode);
   const presentation = presentationRegistry.getOrDefault(scene.theme);
-  const boardFontFamily = presentation.fontFamily;
+  const boardFontFamily = resolveSceneFontFamily(scene, presentation.fontFamily);
   const pacing = resolveScenePacing(scene.pacing);
   const overlayNodeIds = new Set(
     scene.nodes.filter(isOverlaySceneNode).map((n) => n.id)

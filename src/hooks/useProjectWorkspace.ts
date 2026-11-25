@@ -45,6 +45,8 @@ import {
   serializeProjectScript,
 } from '../engine/parser/projectScript';
 import { triggerBlobDownload } from '../engine/export/videoExporter';
+import { getSceneFontPresetOption } from '../engine/render/fonts';
+import { clearGlyphCache } from '../engine/sketch/textStrokes';
 import { safeFilename } from '../plugins/exporters/helpers';
 
 export interface UseProjectWorkspaceParams {
@@ -113,11 +115,45 @@ export function useProjectWorkspace({
   const activeSceneIndexRef = useRef(safeSceneIndex);
   activeSceneIndexRef.current = safeSceneIndex;
 
+  const [fontVersion, setFontVersion] = useState(0);
+  const sceneFontKey = project.scenes.map((s) => s.font ?? '').join('|');
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || !('fonts' in document)) return;
+    const families = new Set<string>();
+    for (const scene of project.scenes) {
+      if (!scene.font || scene.font === 'theme-default') continue;
+      for (const fam of getSceneFontPresetOption(scene.font).loadFamilies) {
+        families.add(fam);
+      }
+    }
+    if (families.size === 0) return;
+
+    let cancelled = false;
+    const tasks: Promise<FontFace[]>[] = [];
+    for (const fam of families) {
+      tasks.push(document.fonts.load(`400 20px "${fam}"`));
+      tasks.push(document.fonts.load(`700 20px "${fam}"`));
+    }
+    Promise.all(tasks)
+      .then(() => {
+        if (cancelled) return;
+        clearGlyphCache();
+        setFontVersion((v) => v + 1);
+      })
+      .catch(() => {
+        // Ignore font load errors and rely on fallback family
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sceneFontKey, project.scenes]);
+
   const compiledTimelineBase = useMemo(
     () => compileProjectTimeline(project),
     // Subtitle edits must not trigger layout or timeline recompilation
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [project.id, project.title, project.aspectRatio, project.scenes]
+    [project.id, project.title, project.aspectRatio, project.scenes, fontVersion]
   );
 
   const compiledProject = useMemo(

@@ -171,6 +171,15 @@ interface ScenePacingConfig {
   restAlpha: number;
 }
 
+type SceneFontPreset =
+  | 'theme-default'
+  | 'xiaolai'
+  | 'marker'
+  | 'kuaile'
+  | 'longcang'
+  | 'blueprint-hand'
+  | 'wenkai';
+
 type ScenePacingOption = PacingPreset | Partial<ScenePacingConfig>;
 
 interface LessonScene {
@@ -186,6 +195,7 @@ interface LessonScene {
   transitionOut?: SceneTransitionConfig;
   spotlight?: boolean;
   pacing?: ScenePacingOption;
+  font?: SceneFontPreset;
 }
 
 // --- Types: src/sdk/propSchema.ts ---
@@ -1126,6 +1136,16 @@ interface LessonProject {
 // --- Types: src/engine/layout/textMeasure.ts ---
 
 type MeasureTextFn = (text: string, font: string) => number;
+
+// --- Types: src/engine/render/fonts.ts ---
+
+interface SceneFontPresetOption {
+  id: SceneFontPreset;
+  labelEn: string;
+  labelZh: string;
+  fontFamily?: string;
+  loadFamilies: string[];
+}
 
 // --- Types: src/engine/sketch/textStrokes.ts ---
 
@@ -14844,6 +14864,82 @@ const { isMonospaceFont, estimateCharAdvanceWidth, defaultMeasureText, wrapText,
   return { isMonospaceFont, estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode, positionGroupChildren };
 })();
 
+// --- Module: src/engine/render/fonts.ts ---
+const { isSceneFontPreset, resolveSceneFontFamily } = (() => {
+  const SCENE_FONT_PRESETS: readonly SceneFontPresetOption[] = [
+    {
+      id: 'theme-default',
+      labelEn: 'Theme Default',
+      labelZh: '主题默认',
+      loadFamilies: [],
+    },
+    {
+      id: 'xiaolai',
+      labelEn: 'Xiaolai Hand (CN)',
+      labelZh: '小赖手绘 (推荐百搭)',
+      fontFamily: "'Penova Xiaolai', 'Xiaolai', 'Segoe Print', cursive",
+      loadFamilies: ['Penova Xiaolai'],
+    },
+    {
+      id: 'marker',
+      labelEn: 'LXGW Marker (Board)',
+      labelZh: '霞鹜漫黑 (板书粗笔)',
+      fontFamily: "'Penova Marker', 'LXGW Marker Gothic', 'Segoe Print', cursive",
+      loadFamilies: ['Penova Marker'],
+    },
+    {
+      id: 'kuaile',
+      labelEn: 'ZCOOL KuaiLe (Playful)',
+      labelZh: '站酷快乐 (圆润俏皮)',
+      fontFamily: "'Penova KuaiLe', 'ZCOOL KuaiLe', cursive",
+      loadFamilies: ['Penova KuaiLe'],
+    },
+    {
+      id: 'longcang',
+      labelEn: 'Long Cang (Brush)',
+      labelZh: '龙藏手书 (毛笔随性)',
+      fontFamily: "'Penova LongCang', 'Long Cang', cursive",
+      loadFamilies: ['Penova LongCang'],
+    },
+    {
+      id: 'blueprint-hand',
+      labelEn: 'Architects + Xiaolai',
+      labelZh: '建筑师手写 + 小赖',
+      fontFamily:
+        "'Penova Architects', 'Architects Daughter', 'Penova Xiaolai', 'Xiaolai', cursive",
+      loadFamilies: ['Penova Architects', 'Penova Xiaolai'],
+    },
+    {
+      id: 'wenkai',
+      labelEn: 'LXGW WenKai (Classic)',
+      labelZh: '霞鹜文楷 (经典楷书)',
+      fontFamily: "'Penova WenKai', 'LXGW WenKai', 'KaiTi', serif",
+      loadFamilies: ['Penova WenKai'],
+    },
+  ];
+  const FONT_PRESET_MAP = new Map<string, SceneFontPresetOption>(
+    SCENE_FONT_PRESETS.map((p) => [p.id, p])
+  );
+  function isSceneFontPreset(raw: string): raw is SceneFontPreset {
+    return FONT_PRESET_MAP.has(raw);
+  }
+  function getSceneFontPresetOption(
+    preset: SceneFontPreset | undefined
+  ): SceneFontPresetOption {
+    return (
+      (preset ? FONT_PRESET_MAP.get(preset) : undefined) ?? SCENE_FONT_PRESETS[0]
+    );
+  }
+  function resolveSceneFontFamily(
+    scene: Pick<LessonScene, 'theme' | 'font'>,
+    fallbackThemeFont: string
+  ): string {
+    const opt = getSceneFontPresetOption(scene.font);
+    return opt.fontFamily ?? fallbackThemeFont;
+  }
+  return { isSceneFontPreset, resolveSceneFontFamily };
+})();
+
 // --- Module: src/engine/layout/diagramLayout.ts ---
 const { computeDiagramLayout } = (() => {
   function getNodeSearchLabels(node: SceneNode): string[] {
@@ -14911,8 +15007,9 @@ const { computeDiagramLayout } = (() => {
   ): ComputedLayout {
     const layoutPlugin = layoutRegistry.getOrDefault(scene.layoutMode);
     const presentation = presentationRegistry.getOrDefault(scene.theme);
+    const boardFontFamily = resolveSceneFontFamily(scene, presentation.fontFamily);
     const measureNode = (node: SceneNode) =>
-      measureSceneNode(node, measureFn, undefined, presentation.fontFamily);
+      measureSceneNode(node, measureFn, undefined, boardFontFamily);
 
     const overlayNodes = scene.nodes.filter((n): n is CustomSceneNode =>
       isCustomSceneNode(n) && isOverlaySceneNode(n)
@@ -15847,7 +15944,7 @@ const { compileTimeline } = (() => {
   ): CompiledTimeline {
     const layoutPlugin = layoutRegistry.getOrDefault(scene.layoutMode);
     const presentation = presentationRegistry.getOrDefault(scene.theme);
-    const boardFontFamily = presentation.fontFamily;
+    const boardFontFamily = resolveSceneFontFamily(scene, presentation.fontFamily);
     const pacing = resolveScenePacing(scene.pacing);
     const overlayNodeIds = new Set(
       scene.nodes.filter(isOverlaySceneNode).map((n) => n.id)
@@ -16971,6 +17068,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
     'transition-duration',
     'spotlight',
     'pacing',
+    'font',
   ]);
   function unquote(val: string): string {
     const trimmed = val.trim();
@@ -17268,6 +17366,18 @@ const { parseProjectScript, generateScriptSpec } = (() => {
         }
       }
 
+      const rawFont = (meta.font ?? '').trim().toLowerCase();
+      let font: SceneFontPreset | undefined;
+      if (rawFont) {
+        if (isSceneFontPreset(rawFont)) {
+          font = rawFont === 'theme-default' ? undefined : rawFont;
+        } else {
+          warnings.push(
+            `Scene ${idx + 1}: unknown font "${rawFont}", using theme default`
+          );
+        }
+      }
+
       const initialTitle =
         meta.title ??
         section.explicitTitle ??
@@ -17285,6 +17395,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
         transitionOut: transitionConfig,
         ...(spotlight ? { spotlight: true } : {}),
         ...(pacing ? { pacing } : {}),
+        ...(font ? { font } : {}),
       };
 
       const layoutPlugin = layoutRegistry.getOrDefault(layoutMode);
@@ -17317,6 +17428,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
         transitionOut: transitionConfig,
         ...(spotlight ? { spotlight: true } : {}),
         ...(pacing ? { pacing } : {}),
+        ...(font ? { font } : {}),
       };
       return finalScene;
     });
@@ -17421,6 +17533,9 @@ const { parseProjectScript, generateScriptSpec } = (() => {
       if (typeof scene.pacing === 'string') {
         lines.push(`pacing: ${scene.pacing}`);
       }
+      if (scene.font && scene.font !== 'theme-default') {
+        lines.push(`font: ${scene.font}`);
+      }
       if (idx < project.scenes.length - 1 || scene.transitionOut?.type) {
         lines.push(
           `transition: ${scene.transitionOut?.type ?? 'chalkboard-eraser'}`
@@ -17494,7 +17609,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
       '',
       '- Optional top frontmatter (`--- ... ---`): `title`, `aspectRatio` (`16:9` | `9:16`), `subtitles` (`auto` | `off`).',
       '- Divide scenes with `=== scene ===` (or `=== scene: Scene Title ===`).',
-      '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`, `spotlight`: `true` | `false`, `pacing`: `natural` | `crisp` | `deliberate` | `linear`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
+      '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`, `spotlight`: `true` | `false`, `pacing`: `natural` | `crisp` | `deliberate` | `linear`, `font`: `theme-default` | `xiaolai` | `marker` | `kuaile` | `longcang` | `blueprint-hand` | `wenkai`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
       '',
       '## 2. Currently Registered Plugins (Valid IDs)',
       '',
@@ -18126,6 +18241,7 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
     subtitleText?: string
   ): EvaluatedSceneSnapshot {
     const presentation = presentationRegistry.getOrDefault(scene.theme);
+    const boardFontFamily = resolveSceneFontFamily(scene, presentation.fontFamily);
     const evalState = evaluateTimelineAt(timeline, tMs);
     const cam = getActiveCamera(
       scene,
@@ -18227,7 +18343,7 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
       title: scene.title,
       theme: scene.theme,
       handStyle: scene.handStyle,
-      fontFamily: presentation.fontFamily,
+      fontFamily: boardFontFamily,
       palette: presentation.palette,
       width,
       height,

@@ -20,6 +20,7 @@ import {
 } from '../timeline/projectTimeline';
 import { CompiledTimeline, evaluateTimelineAt } from '../timeline/timelineEngine';
 import { getActiveCamera, worldToScreen } from './sceneRenderer';
+import { resolveSceneFontFamily } from './fonts';
 import { resolveColorHex } from './themes';
 
 function extractFontFamilyFromCssFont(
@@ -205,6 +206,7 @@ export function evaluateSceneFrameSnapshot(
   subtitleText?: string
 ): EvaluatedSceneSnapshot {
   const presentation = presentationRegistry.getOrDefault(scene.theme);
+  const boardFontFamily = resolveSceneFontFamily(scene, presentation.fontFamily);
   const evalState = evaluateTimelineAt(timeline, tMs);
   const cam = getActiveCamera(
     scene,
@@ -306,7 +308,7 @@ export function evaluateSceneFrameSnapshot(
     title: scene.title,
     theme: scene.theme,
     handStyle: scene.handStyle,
-    fontFamily: presentation.fontFamily,
+    fontFamily: boardFontFamily,
     palette: presentation.palette,
     width,
     height,

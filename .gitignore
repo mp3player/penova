@@ -6,6 +6,7 @@ dist/
 dist-ssr/
 promo/
 *.local
+public/fonts/
 
 # Vite & test caches
 .vite/
