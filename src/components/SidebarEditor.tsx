@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Code2, Layers, Plus, Puzzle, Subtitles } from 'lucide-react';
+import { Code2, Layers, Subtitles } from 'lucide-react';
 import { AudioTrackState } from '../engine/audio/voiceTrackPlayer';
 import { CompiledProjectTimeline } from '../engine/timeline/projectTimeline';
 import { LessonProject, SubtitleCue } from '../model/project';
@@ -12,16 +12,11 @@ import {
   updateNodeInTree,
 } from '../model/scene';
 import {
-  createCardNode,
-  createConnectorNode,
-  createCustomNode,
   createShapeNode,
   createTextNode,
 } from '../model/builders';
 import {
   layoutRegistry,
-  SceneNodePlugin,
-  sceneNodeRegistry,
   shapeRegistry,
   useRegistryList,
 } from '../plugins';
@@ -73,10 +68,9 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
   onExportProjectScript,
   onNotify,
 }) => {
-  const { t, pluginName, codecMeta } = useI18n();
+  const { t, codecMeta } = useI18n();
   const layoutOptions = useRegistryList(layoutRegistry);
   const shapeOptions = useRegistryList(shapeRegistry);
-  const sceneNodePlugins = useRegistryList(sceneNodeRegistry);
   const activeLayout =
     layoutOptions.find((l) => l.id === scene.layoutMode) ??
     layoutRegistry.getOrDefault(scene.layoutMode);
@@ -183,87 +177,6 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
     if (selectedNodeId === nodeId) {
       onSelectNode(null);
     }
-  };
-
-  const addTopNode = (kind: 'text' | 'shape' | 'connector' | 'card') => {
-    const id = `${kind}-${Date.now().toString(36)}`;
-    let newNode: SceneNode;
-    if (kind === 'text') {
-      const isDoc = scene.layoutMode === 'document';
-      newNode = createTextNode({
-        id,
-        text: t('sidebar.newTextDefault'),
-        color: 'white',
-        align: isDoc ? 'left' : 'center',
-        fontSize: isDoc ? 21 : 20,
-        maxWidth: isDoc ? 580 : 240,
-      });
-    } else if (kind === 'shape') {
-      const isDoc = scene.layoutMode === 'document';
-      newNode = createShapeNode({
-        id,
-        shape: isDoc ? 'divider' : defaultShapeId,
-        color: isDoc ? 'orange' : 'cyan',
-        width: isDoc ? 560 : 170,
-        height: isDoc ? 24 : 78,
-      });
-    } else if (kind === 'connector') {
-      const vertices = scene.nodes.filter((n) => n.type !== 'connector');
-      newNode =
-        vertices.length >= 2
-          ? createConnectorNode({
-              id,
-              fromId: vertices[0].id,
-              toId: vertices[1].id,
-              color: vertices[0].color,
-            })
-          : createConnectorNode({
-              id,
-              fromPoint: { x: -90, y: 0 },
-              toPoint: { x: 90, y: 0 },
-              color: 'yellow',
-            });
-    } else {
-      const lastZone = [...scene.nodes]
-        .reverse()
-        .find((n) => typeof n.meta?.zone === 'string')?.meta?.zone;
-      newNode = createCardNode({
-        id,
-        label: t('sidebar.newCardDefaultLabel', {
-          num: scene.nodes.filter((n) => n.type !== 'connector').length + 1,
-        }),
-        subtitle: t('sidebar.newCardDefaultSubtitle'),
-        role: 'concept',
-        color: 'cyan',
-        shape: defaultShapeId,
-        zone: typeof lastZone === 'string' ? lastZone : undefined,
-      });
-    }
-
-    onUpdateScene((prev) => ({
-      ...prev,
-      customSteps: undefined,
-      nodes: [...prev.nodes, newNode],
-    }));
-    onSelectNode(id, { reveal: true });
-  };
-
-  const addSceneNodePlugin = (plugin: SceneNodePlugin) => {
-    const id = `${plugin.id}-${Date.now().toString(36)}`;
-    const widget = createCustomNode({
-      id,
-      kind: plugin.id,
-      name: plugin.defaultName ?? plugin.name,
-      color: plugin.defaultColor ?? 'cyan',
-      props: plugin.defaultProps ? { ...plugin.defaultProps } : {},
-    });
-
-    onUpdateScene((prev) => ({
-      ...prev,
-      customSteps: undefined,
-      nodes: [...prev.nodes, widget],
-    }));
-    onSelectNode(id, { reveal: true });
   };
 
   const addChildIntoGroup = (groupId: string, childKind: 'text' | 'shape') => {
@@ -457,97 +370,6 @@ export const SidebarEditor: React.FC<SidebarEditorProps> = ({
                 {t('sidebar.nodeTreeHeading', { count: scene.nodes.length })}
               </span>
             </div>
-
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: 5,
-                marginBottom: 9,
-              }}
-            >
-              <button
-                type="button"
-                className="studio-btn"
-                onClick={() => addTopNode('text')}
-                style={{ height: 26, padding: '0 4px', fontSize: 11 }}
-                title={t('sidebar.addTextTitle')}
-              >
-                <Plus size={11} />
-                {t('sidebar.addTextBtn')}
-              </button>
-              <button
-                type="button"
-                className="studio-btn"
-                onClick={() => addTopNode('shape')}
-                style={{ height: 26, padding: '0 4px', fontSize: 11 }}
-                title={t('sidebar.addShapeTitle')}
-              >
-                <Plus size={11} />
-                {t('sidebar.addShapeBtn')}
-              </button>
-              <button
-                type="button"
-                className="studio-btn"
-                onClick={() => addTopNode('connector')}
-                style={{ height: 26, padding: '0 4px', fontSize: 11 }}
-                title={t('sidebar.addArrowTitle')}
-              >
-                <Plus size={11} />
-                {t('sidebar.addArrowBtn')}
-              </button>
-              <button
-                type="button"
-                className="studio-btn"
-                onClick={() => addTopNode('card')}
-                style={{ height: 26, padding: '0 4px', fontSize: 11 }}
-                title={t('sidebar.addCardTitle')}
-              >
-                <Plus size={11} />
-                {t('sidebar.addCardBtn')}
-              </button>
-            </div>
-
-            {sceneNodePlugins.length > 0 && (
-              <>
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: 'var(--text-muted)',
-                    marginBottom: 5,
-                  }}
-                >
-                  {t('sidebar.widgetsHeading')}
-                </div>
-
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(66px, 1fr))',
-                    gap: 5,
-                    marginBottom: 10,
-                  }}
-                >
-                  {sceneNodePlugins.map((plugin) => {
-                    const label = pluginName(plugin.id, plugin.name);
-                    return (
-                      <button
-                        key={plugin.id}
-                        type="button"
-                        className="studio-btn"
-                        onClick={() => addSceneNodePlugin(plugin)}
-                        style={{ height: 26, padding: '0 4px', fontSize: 11 }}
-                        title={`${label} ([node:${plugin.id}])`}
-                      >
-                        <Puzzle size={11} />
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               <NodeTree

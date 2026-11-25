@@ -1,12 +1,19 @@
 export type PropPrimitiveType = 'string' | 'number' | 'boolean';
 
-export type PropDataFormat =
+export type BuiltInPropFormat =
   | 'plain'
   | 'multiline'
   | 'code'
   | 'svg'
   | 'icon-id'
-  | 'enum';
+  | 'enum'
+  | 'color'
+  | 'shape-id'
+  | 'node-ref';
+
+export type PropDataFormat = BuiltInPropFormat | (string & {});
+
+export type PropValuesMap = Record<string, string | number | boolean | undefined>;
 
 export interface PropFieldDescriptor {
   readonly key: string;
@@ -19,6 +26,7 @@ export interface PropFieldDescriptor {
   readonly enumValues?: readonly string[];
   readonly aliases?: readonly string[];
   readonly description?: string;
+  readonly when?: (values: PropValuesMap) => boolean;
 }
 
 export interface PropBuilderConfig<
@@ -34,21 +42,26 @@ export interface PropBuilderConfig<
   readonly enumValues?: readonly string[];
   readonly aliases?: readonly string[];
   readonly description?: string;
+  readonly when?: (values: PropValuesMap) => boolean;
 }
 
 export type PropSpecMap = Record<string, PropBuilderConfig<PropPrimitiveType>>;
 
 type InferFieldValue<C> =
-  C extends PropBuilderConfig<'string', infer S>
-    ? C extends { default: string }
+  C extends { readonly enumValues: readonly (infer E extends string)[] }
+    ? C extends { readonly default: E }
+      ? E
+      : E | undefined
+    : C extends { readonly type: 'string' }
+    ? C extends { readonly default: string }
       ? string
-      : S | undefined
-    : C extends PropBuilderConfig<'number'>
-    ? C extends { default: number }
+      : string | undefined
+    : C extends { readonly type: 'number' }
+    ? C extends { readonly default: number }
       ? number
       : number | undefined
-    : C extends PropBuilderConfig<'boolean'>
-    ? C extends { default: boolean }
+    : C extends { readonly type: 'boolean' }
+    ? C extends { readonly default: boolean }
       ? boolean
       : boolean | undefined
     : unknown;
@@ -64,7 +77,7 @@ export interface DefinedPropSchema<S extends PropSpecMap> {
   readField<K extends keyof S & string>(
     rawProps: Record<string, string | number | boolean | undefined> | undefined,
     key: K
-  ): InferFieldValue<S[K]>;
+  ): InferFieldValue<S[K]> | undefined;
   writeField(
     rawProps: Record<string, string | number | boolean | undefined> | undefined,
     key: keyof S & string,
@@ -77,25 +90,35 @@ export interface DefinedPropSchema<S extends PropSpecMap> {
 }
 
 export const prop = {
-  string(
-    opts: Omit<PropBuilderConfig<'string', string>, 'type'> = {}
-  ): PropBuilderConfig<'string', string> {
+  string<
+    const O extends Omit<PropBuilderConfig<'string', string>, 'type'> = Record<string, never>,
+  >(opts: O = {} as O): { readonly type: 'string' } & O {
     return { type: 'string', ...opts };
   },
-  number(
-    opts: Omit<PropBuilderConfig<'number', number>, 'type'> = {}
-  ): PropBuilderConfig<'number', number> {
+  number<
+    const O extends Omit<PropBuilderConfig<'number', number>, 'type'> = Record<string, never>,
+  >(opts: O = {} as O): { readonly type: 'number' } & O {
     return { type: 'number', ...opts };
   },
-  boolean(
-    opts: Omit<PropBuilderConfig<'boolean', boolean>, 'type'> = {}
-  ): PropBuilderConfig<'boolean', boolean> {
+  boolean<
+    const O extends Omit<PropBuilderConfig<'boolean', boolean>, 'type'> = Record<string, never>,
+  >(opts: O = {} as O): { readonly type: 'boolean' } & O {
     return { type: 'boolean', ...opts };
   },
-  enum<const T extends readonly string[]>(
+  enum<
+    const T extends readonly string[],
+    const O extends Omit<
+      PropBuilderConfig<'string', T[number]>,
+      'type' | 'format' | 'enumValues'
+    > = Record<string, never>,
+  >(
     values: T,
-    opts: Omit<PropBuilderConfig<'string', T[number]>, 'type' | 'format' | 'enumValues'> = {}
-  ): PropBuilderConfig<'string', T[number]> {
+    opts: O = {} as O
+  ): {
+    readonly type: 'string';
+    readonly format: 'enum';
+    readonly enumValues: T;
+  } & O {
     return {
       type: 'string',
       format: 'enum',
@@ -104,6 +127,16 @@ export const prop = {
     };
   },
 };
+
+function shouldPreserveEmptyString(field: PropFieldDescriptor): boolean {
+  return (
+    field.type === 'string' &&
+    (!field.enumValues || field.enumValues.length === 0) &&
+    field.format !== 'icon-id' &&
+    typeof field.default === 'string' &&
+    field.default.length > 0
+  );
+}
 
 function coerceFieldValue(
   field: PropFieldDescriptor,
@@ -147,11 +180,16 @@ export function readPropBySchema(
   const field = fields.find((f) => f.key === key);
   if (!field || !rawProps) return undefined;
 
+  const preserveEmpty = shouldPreserveEmptyString(field);
   const lookupKeys = [field.key, ...(field.aliases ?? [])];
   for (const k of lookupKeys) {
     if (!(k in rawProps)) continue;
     const val = rawProps[k];
-    if (val === undefined || val === null || val === '') continue;
+    if (val === undefined || val === null) continue;
+    if (val === '') {
+      if (preserveEmpty) return '';
+      continue;
+    }
     const coerced = coerceFieldValue(field, val);
     if (coerced !== undefined) return coerced;
   }
@@ -177,8 +215,13 @@ export function writePropBySchema(
     for (const alias of field.aliases ?? []) {
       delete nextProps[alias];
     }
-    if (value === undefined || value === '') {
+    const preserveEmpty = shouldPreserveEmptyString(field);
+    if (value === undefined || (value === '' && !preserveEmpty)) {
       delete nextProps[key];
+      return nextProps;
+    }
+    if (value === '' && preserveEmpty) {
+      nextProps[key] = '';
       return nextProps;
     }
     const coerced = coerceFieldValue(field, value);
@@ -220,6 +263,7 @@ export function defineProps<const S extends PropSpecMap>(
       enumValues: cfg.enumValues,
       aliases: cfg.aliases,
       description: cfg.description,
+      when: cfg.when,
     };
     fields.push(desc);
     if (cfg.default !== undefined) {
@@ -239,7 +283,9 @@ export function defineProps<const S extends PropSpecMap>(
       return out as InferPropValues<S>;
     },
     readField(rawProps, key) {
-      return readPropBySchema(fields, rawProps, key) as InferFieldValue<S[typeof key]>;
+      return readPropBySchema(fields, rawProps, key) as
+        | InferFieldValue<S[typeof key]>
+        | undefined;
     },
     writeField(rawProps, key, value) {
       return writePropBySchema(fields, rawProps, key, value);
@@ -249,4 +295,18 @@ export function defineProps<const S extends PropSpecMap>(
       return writePropBySchema(fields, rawProps, key, field?.default);
     },
   };
+}
+
+export function isFieldVisible(
+  field: PropFieldDescriptor,
+  values: PropValuesMap
+): boolean {
+  return field.when ? field.when(values) : true;
+}
+
+export function filterVisibleFields(
+  fields: readonly PropFieldDescriptor[],
+  values: PropValuesMap
+): PropFieldDescriptor[] {
+  return fields.filter((field) => isFieldVisible(field, values));
 }

@@ -37,11 +37,12 @@ export const iconNodePlugin: SceneNodePlugin = {
   snippet: '[node:icon] Badge {color: yellow, icon: spark, size: 36}',
   propFields: iconProps.fields,
   measure(node) {
-    const rawSize = Number(node.props?.size);
-    const size = Number.isFinite(rawSize) && rawSize > 8 ? Math.min(120, rawSize) : 30;
+    const resolved = iconProps.resolve(
+      isCustomSceneNode(node) ? node.props : undefined
+    );
     return {
-      width: size,
-      height: size,
+      width: resolved.size,
+      height: resolved.size,
     };
   },
   clipRay(positioned, toward, extraMargin) {

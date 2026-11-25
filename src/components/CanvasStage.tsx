@@ -22,22 +22,17 @@ import {
   findNodeById,
   HandStyle,
   hasAnyOffset,
-  isCustomSceneNode,
   LayoutMode,
   LessonScene,
   Point,
-  resolveCustomNodeKind,
 } from '../model/scene';
-import { getCardSummary } from '../model/builders';
-import { readPropBySchema } from '../sdk/propSchema';
-import { studioNodeUiRegistry } from '../studio/uiRegistry';
+import { readInlineNodeText } from '../studio/nodeSchemas';
 import {
   cameraRegistry,
   handRegistry,
   LayoutIconKind,
   layoutRegistry,
   PositionedSceneNode,
-  sceneNodeRegistry,
   useRegistryList,
 } from '../plugins';
 import { CameraState } from '../engine/camera/cameraDirector';
@@ -98,28 +93,7 @@ function readInlineEditableText(
   nodeId: string
 ): string | null {
   const node = findNodeById(scene.nodes, nodeId);
-  if (!node) return null;
-  if (node.type === 'group') {
-    return getCardSummary(node).label;
-  }
-  if (node.type === 'text') {
-    return node.text;
-  }
-  if (node.type === 'connector') {
-    return node.label ?? '';
-  }
-  if (isCustomSceneNode(node)) {
-    const kind = resolveCustomNodeKind(node);
-    const propKey = studioNodeUiRegistry.get(kind)?.inlineEditPropKey;
-    if (propKey) {
-      const fields = sceneNodeRegistry.get(kind)?.propFields ?? [];
-      const val = readPropBySchema(fields, node.props, propKey);
-      if (typeof val === 'string' && val.trim()) {
-        return val;
-      }
-    }
-  }
-  return node.name;
+  return node ? readInlineNodeText(node) : null;
 }
 
 export const CanvasStage: React.FC<CanvasStageProps> = ({

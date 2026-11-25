@@ -287,7 +287,7 @@ Penova 支持通过 [src/engine/parser/projectScript.ts](../src/engine/parser/pr
 
 Penova 严格遵循**单向依赖边界（`UI -> Engine`）**：
 
-- `src/model/`、`src/sdk/`、`src/plugins/` 与 `src/engine/` 保持 **100% 无头纯净**——不引入任何 DOM/React 依赖，不包含任何 UI 展示词汇（如 `rows`、`placeholder`、`label`、`inlineEditPropKey`），并兼容 Node 22 原生 TypeScript 类型剥离与无头打包脚本 `scripts/bundle-skill.py`。
+- `src/model/`、`src/sdk/`、`src/engine/` 以及 `src/plugins/` 下的全部插件定义保持 **100% 无头纯净**——不引入任何 DOM 依赖或 UI 展示词汇（如 `rows`、`placeholder`、`label`、`inlineEditPropKey`），并兼容 Node 22 原生 TypeScript 类型剥离与无头打包脚本 `scripts/bundle-skill.py`（仅浏览器订阅辅助钩子 `src/plugins/useRegistryList.ts` 使用 React 且会被无头打包自动排除）。
 - `src/studio/` 与 `src/components/` 承载全部浏览器端交互细节与可选界面增强。
 
 ### `defineProps`（[src/sdk/propSchema.ts](../src/sdk/propSchema.ts)）
@@ -300,28 +300,46 @@ import { defineProps, prop } from '../../sdk/propSchema';
 const myProps = defineProps({
   title: prop.string({ default: 'Metrics', format: 'plain' }),
   lines: prop.string({ format: 'code', aliases: ['code'] }),
+  curve: prop.string({
+    format: 'bezier-curve', // 开放字符串：若 propControlRegistry 已注册则自动匹配对应控件
+    when: (v) => v.mode === 'manual', // 纯数据条件显隐谓词
+  }),
   height: prop.number({ default: 196, min: 96, max: 420, step: 4 }),
   mode: prop.enum(['auto', 'manual'], { default: 'auto' }),
 });
 ```
 
-- **纯语义格式 (`format`)**：仅表达数据语义（`'plain' | 'multiline' | 'code' | 'svg' | 'icon-id' | 'enum'`），不包含任何控件参数。
-- **单一数据源**：统一产出 `fields`（挂载到 `SceneNodePlugin.propFields`）、`defaults` 以及强类型的 `resolve(rawProps)`（`InferPropValues`）。
+- **开放语义格式与纯数据条件**：`format` 支持内置格式（`'plain' | 'multiline' | 'code' | 'svg' | 'icon-id' | 'enum' | 'color' | 'shape-id' | 'node-ref'`）及任意自定义控件 ID；`when(values)` 仅基于数据字段声明显隐，零 UI 耦合。
+- **单一数据源**：统一产出 `fields`（挂载到 `SceneNodePlugin.propFields`）、`defaults`、`filterVisibleFields` 以及强类型的 `resolve(rawProps)`（`InferPropValues`）。
+- **显式声明、按需接入（类似 Unreal `UPROPERTY` 语义）**：`propFields` 完全可选。纯无头插件可以不写 `propFields`、直接读取 `node.props`，不影响引擎编译与导出；仅当需要工作室属性面板与 `--spec` 文档生成时再声明 `propFields`。
 - **对称双向不可变读写**：`readField`、`writeField`、`resetField`（以及泛化的 `readPropBySchema` / `writePropBySchema`）自动完成别名归一化、`min`/`max` 裁剪并返回新的 `node.props`，让侧边栏检查器、画布快编与脚本文本保持双向同步。
 
-### 伴生 UI 注册表（[src/studio/uiRegistry.ts](../src/studio/uiRegistry.ts)）
+### 属性控件与伴生 UI 注册表（[src/studio/propControls.tsx](../src/studio/propControls.tsx)、[src/studio/uiRegistry.ts](../src/studio/uiRegistry.ts)）
 
-任何声明了 `propFields` 的第三方 `SceneNodePlugin`，无需编写一行 UI 代码即可自动生成工作室属性面板与脚本快捷插入项；若需要在浏览器端补充文案提示、指定双击快编字段或追加自定义交互区块，可向 `studioNodeUiRegistry` 注册可选的 `StudioNodeUiExtension`，且绝不会污染无头引擎包：
+所有内置基础 IR 节点（[src/studio/nodeSchemas.tsx](../src/studio/nodeSchemas.tsx) 中的 `core:text`、`core:shape`、`core:connector`、`core:card`、`core:group`）与第三方 `SceneNodePlugin` 已统一接入同一套声明式检查器（[NodeInspector.tsx](../src/components/sidebar/NodeInspector.tsx)），并按三级优先级为每个属性动态匹配控件：
+
+1. **字段级专属组件覆写**：优先使用 `studioNodeUiRegistry` 中该节点配置的 `fieldControls[key]`。
+2. **语义控件注册表 (`propControlRegistry`)**：依次匹配 `fieldHints[key].controlId` 或 `field.format`——支持通过 `propControlRegistry.register({ id: 'bezier-curve', render })` 扩展全新属性控件。
+3. **基础类型兜底**：匹配 `propControlRegistry.get(field.type)`（`'string'`、`'number'`、`'boolean'`），且基础控件本身同样可通过 `{ override: true }` 全局替换。
 
 ```ts
+import { propControlRegistry } from '../studio/propControls';
 import { studioNodeUiRegistry } from '../studio/uiRegistry';
 
+// 可选：注册可复用的自定义属性控件
+propControlRegistry.register({
+  id: 'bezier-curve',
+  render: (ctx) => /* 基于 ctx.value / ctx.onChange / ctx.onReset 渲染 ReactNode */ null,
+});
+
+// 可选：为特定节点补充提示、双击快编目标、字段专属控件或附加交互区
 studioNodeUiRegistry.register({
   id: 'my-widget',
   inlineEditPropKey: 'title', // 指定画布双击行内快编对应的属性键
   fieldHints: {
-    lines: { label: 'Source Code', rows: 4, placeholder: 'const x = 1;' },
+    lines: { label: 'Source Code', rows: 4, span: 2, placeholder: 'const x = 1;' },
   },
+  // fieldControls: { curve: (ctx) => ... }, // 字段级 React 组件覆写
   // renderExtra(ctx) { ... } // 可选：向属性面板底部追加自定义 React 区块
 });
 ```

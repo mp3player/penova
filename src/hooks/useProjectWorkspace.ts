@@ -3,16 +3,13 @@ import {
   AspectRatio,
   clearAllOffsets,
   findNodeById,
-  isCustomSceneNode,
   LessonScene,
   Point,
   removeNodeInTree,
-  resolveCustomNodeKind,
   SceneNode,
   TransitionId,
   updateNodeInTree,
 } from '../model/scene';
-import { updateCardGroupNode } from '../model/builders';
 import {
   cloneProject,
   cloneSceneWithDetails,
@@ -35,9 +32,7 @@ import {
   saveProjectDraft,
   serializeProjectToJson,
 } from '../model/projectStorage';
-import { sceneNodeRegistry } from '../plugins';
-import { writePropBySchema } from '../sdk/propSchema';
-import { studioNodeUiRegistry } from '../studio/uiRegistry';
+import { writeInlineNodeText } from '../studio/nodeSchemas';
 import { getPresetProjects } from '../model/presets';
 import { Locale, useI18n } from '../i18n';
 import {
@@ -503,33 +498,9 @@ export function useProjectWorkspace({
       updateActiveScene((prev) => ({
         ...prev,
         customSteps: undefined,
-        nodes: updateNodeInTree(prev.nodes, nodeId, (node) => {
-          if (node.type === 'group') {
-            return updateCardGroupNode(node, { label: trimmed });
-          }
-          if (node.type === 'text') {
-            return {
-              ...node,
-              text: trimmed,
-              name: trimmed.slice(0, 18) || node.name,
-            };
-          }
-          if (node.type === 'connector') {
-            return { ...node, label: trimmed };
-          }
-          if (isCustomSceneNode(node)) {
-            const kind = resolveCustomNodeKind(node);
-            const propKey = studioNodeUiRegistry.get(kind)?.inlineEditPropKey;
-            if (propKey) {
-              const fields = sceneNodeRegistry.get(kind)?.propFields ?? [];
-              return {
-                ...node,
-                props: writePropBySchema(fields, node.props, propKey, trimmed),
-              };
-            }
-          }
-          return { ...node, name: trimmed };
-        }),
+        nodes: updateNodeInTree(prev.nodes, nodeId, (node) =>
+          writeInlineNodeText(node, trimmed, prev.nodes)
+        ),
       }));
     },
     [updateActiveScene]

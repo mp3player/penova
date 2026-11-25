@@ -285,7 +285,7 @@ Penova can compile any plain-text `.penova.md` document directly into a multi-sc
 
 Penova enforces a **strict one-way boundary (`UI -> Engine`)**:
 
-- `src/model/`, `src/sdk/`, `src/plugins/`, and `src/engine/` are **100% headless**—zero DOM/React imports, zero UI hints (`rows`, `placeholder`, `label`, `inlineEditPropKey`), and compatible with Node 22 native TypeScript type-stripping as well as the standalone bundler `scripts/bundle-skill.py`.
+- `src/model/`, `src/sdk/`, `src/engine/`, and all plugin definitions under `src/plugins/` are **100% headless**—zero DOM/React imports, zero UI hints (`rows`, `placeholder`, `label`, `inlineEditPropKey`), and compatible with Node 22 native TypeScript type-stripping as well as the standalone bundler `scripts/bundle-skill.py` (which excludes only the optional browser React subscription hook `src/plugins/useRegistryList.ts`).
 - `src/studio/` and `src/components/` own all browser-only editing interactions and optional visual customizations.
 
 ### `defineProps` (`src/sdk/propSchema.ts`)
@@ -298,28 +298,46 @@ import { defineProps, prop } from '../../sdk/propSchema';
 const myProps = defineProps({
   title: prop.string({ default: 'Metrics', format: 'plain' }),
   lines: prop.string({ format: 'code', aliases: ['code'] }),
+  curve: prop.string({
+    format: 'bezier-curve', // open string: maps to propControlRegistry if registered
+    when: (v) => v.mode === 'manual', // pure-data conditional visibility
+  }),
   height: prop.number({ default: 196, min: 96, max: 420, step: 4 }),
   mode: prop.enum(['auto', 'manual'], { default: 'auto' }),
 });
 ```
 
-- **Pure Semantic Formats**: `format` describes data semantics only (`'plain' | 'multiline' | 'code' | 'svg' | 'icon-id' | 'enum'`).
-- **Single Source of Truth**: Exposes `fields` (`PropFieldDescriptor[]` attached to `SceneNodePlugin.propFields`), `defaults`, and strongly-typed `resolve(rawProps)` (`InferPropValues`).
+- **Open Semantic Formats & Pure Conditions**: `format` accepts built-ins (`'plain' | 'multiline' | 'code' | 'svg' | 'icon-id' | 'enum' | 'color' | 'shape-id' | 'node-ref'`) or any custom control ID; `when(values)` expresses conditional visibility cleanly without UI coupling.
+- **Single Source of Truth**: Exposes `fields` (`PropFieldDescriptor[]` attached to `SceneNodePlugin.propFields`), `defaults`, `filterVisibleFields`, and strongly-typed `resolve(rawProps)` (`InferPropValues`).
+- **Explicit Opt-In (Unreal `UPROPERTY` Semantics)**: `propFields` is strictly optional. Pure headless plugins can omit `propFields` and read `node.props` directly without affecting compilation or export; declare `propFields` only when you want Studio property projection and `--spec` documentation.
 - **Symmetric Two-Way Access**: `readField`, `writeField`, and `resetField` (plus generic `readPropBySchema` / `writePropBySchema`) normalize aliases onto canonical keys, enforce `min`/`max` bounds, and return immutable updated `node.props` objects across UI inspectors, canvas inline edits, and script round-trips.
 
-### Companion UI Registry (`src/studio/uiRegistry.ts`)
+### Property Control & Companion UI Registries (`src/studio/propControls.tsx`, `src/studio/uiRegistry.ts`)
 
-Any third-party `SceneNodePlugin` with `propFields` renders automatically in the Studio inspector and script quick-insert toolbar with **zero UI code**. When browser-only editor refinements are desired without polluting headless builds, register an optional `StudioNodeUiExtension` on `studioNodeUiRegistry`:
+Both built-in core IR nodes (`core:text`, `core:shape`, `core:connector`, `core:card`, `core:group` via `src/studio/nodeSchemas.tsx`) and third-party `SceneNodePlugin`s share a **single schema-driven inspector** ([NodeInspector.tsx](../src/components/sidebar/NodeInspector.tsx)) that resolves each field's widget in 3 tiers:
+
+1. **Per-Field Component Override**: `studioNodeUiRegistry` → `fieldControls[key]` (highest priority).
+2. **Semantic Control Plugin (`propControlRegistry`)**: Matches `fieldHints[key].controlId` or `field.format`—including custom controls registered via `propControlRegistry.register({ id: 'bezier-curve', render })`.
+3. **Primitive Type Fallback**: Matches `propControlRegistry.get(field.type)` (`'string'`, `'number'`, `'boolean'`), all of which are themselves replaceable plugins via `{ override: true }`.
 
 ```ts
+import { propControlRegistry } from '../studio/propControls';
 import { studioNodeUiRegistry } from '../studio/uiRegistry';
 
+// Optional: register a bespoke reusable property editor control
+propControlRegistry.register({
+  id: 'bezier-curve',
+  render: (ctx) => /* ReactNode using ctx.value / ctx.onChange / ctx.onReset */ null,
+});
+
+// Optional: refine Studio hints, inline-edit targets, or extra sections
 studioNodeUiRegistry.register({
   id: 'my-widget',
   inlineEditPropKey: 'title', // enables double-click canvas quick-edit
   fieldHints: {
-    lines: { label: 'Source Code', rows: 4, placeholder: 'const x = 1;' },
+    lines: { label: 'Source Code', rows: 4, span: 2, placeholder: 'const x = 1;' },
   },
+  // fieldControls: { curve: (ctx) => ... }, // per-field React override
   // renderExtra(ctx) { ... } // optional custom React section in Inspector
 });
 ```

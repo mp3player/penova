@@ -1,100 +1,82 @@
 import type { ReactNode } from 'react';
-import { CustomSceneNode } from '../model/scene';
+import type { MessageKey } from '../i18n';
+import type { SceneNode } from '../model/scene';
+import type { ShapePlugin } from '../plugins/contracts';
 import { PluginRegistry } from '../plugins/registry';
+import type { PropFieldDescriptor } from '../sdk/propSchema';
 
 export interface StudioFieldUiHint {
   label?: string;
+  labelKey?: MessageKey;
   placeholder?: string;
+  placeholderKey?: MessageKey;
   rows?: number;
+  span?: 1 | 2;
+  compact?: boolean;
+  hideLabel?: boolean;
+  controlId?: string;
+  optionLabels?: Record<string, string>;
+  optionLabelKeys?: Record<string, MessageKey>;
+  optionTemplateKey?: MessageKey;
+  optionTemplateVar?: string;
+  allowNone?: boolean;
+  noneLabelKey?: MessageKey;
+  excludeIds?: readonly string[];
+  freeLabelKey?: MessageKey;
+  nodeOptionKey?: MessageKey;
+}
+
+export interface PropControlContext {
+  field: PropFieldDescriptor;
+  value: string | number | boolean | undefined;
+  resolvedValue: string | number | boolean | undefined;
+  effectiveDefault?: string | number | boolean;
+  label: string;
+  placeholder?: string;
+  hint?: StudioFieldUiHint;
+  onChange: (nextVal: string | number | boolean | undefined) => void;
+  onReset: () => void;
+  canReset: boolean;
+  node: SceneNode;
+  shapeOptions: ShapePlugin[];
+  topVertices: SceneNode[];
+  t: (key: MessageKey, params?: Record<string, string | number>) => string;
+  pluginName: (id: string, fallback: string) => string;
+}
+
+export type PropControlRenderer = (ctx: PropControlContext) => ReactNode;
+
+export interface PropControlPlugin {
+  id: string;
+  render: PropControlRenderer;
 }
 
 export interface StudioExtraSectionContext {
-  node: CustomSceneNode;
+  node: SceneNode;
+  onUpdateNode: (
+    nodeId: string,
+    updater: (node: SceneNode) => SceneNode
+  ) => void;
   onUpdateProps: (
     nextProps: Record<string, string | number | boolean | undefined>
   ) => void;
+  onAddChildToGroup: (groupId: string, kind: 'text' | 'shape') => void;
+  t: (key: MessageKey, params?: Record<string, string | number>) => string;
 }
 
 export interface StudioNodeUiExtension {
   id: string;
   inlineEditPropKey?: string;
   fieldHints?: Record<string, StudioFieldUiHint>;
+  fieldControls?: Record<string, PropControlRenderer>;
   renderExtra?(ctx: StudioExtraSectionContext): ReactNode;
 }
 
 /**
  * Browser-only companion UI registry (decoupled from headless Engine & Plugins).
- * Optional entries refine editor hints, inline-edit targets, or custom sections
- * without polluting engine contracts or scripts/bundle-skill.py.
+ * Optional entries refine editor hints, inline-edit targets, per-field controls,
+ * or custom sections without polluting engine contracts or scripts/bundle-skill.py.
  */
 export const studioNodeUiRegistry = new PluginRegistry<StudioNodeUiExtension>(
   'studio-node-ui'
-);
-
-studioNodeUiRegistry.register(
-  {
-    id: 'code',
-    inlineEditPropKey: 'title',
-    fieldHints: {
-      title: { label: 'Title', placeholder: 'demo.penova.md' },
-      lines: {
-        label: 'Code Lines',
-        rows: 4,
-        placeholder: 'const x = 1;\nrender(x);',
-      },
-      width: { label: 'Width', placeholder: 'Auto' },
-    },
-  },
-  { override: true }
-);
-
-studioNodeUiRegistry.register(
-  {
-    id: 'chart',
-    inlineEditPropKey: 'title',
-    fieldHints: {
-      title: { label: 'Title', placeholder: 'Metrics' },
-      values: { label: 'Values', placeholder: '22,48,76,100' },
-      labels: { label: 'Labels', placeholder: 'Q1,Q2,Q3,Q4' },
-      highlight: { label: 'Highlight', placeholder: '3' },
-      width: { label: 'Width', placeholder: 'Auto' },
-      height: { label: 'Height', placeholder: '196' },
-    },
-  },
-  { override: true }
-);
-
-studioNodeUiRegistry.register(
-  {
-    id: 'sketch',
-    inlineEditPropKey: 'caption',
-    fieldHints: {
-      icon: { label: 'Icon' },
-      caption: { label: 'Caption', placeholder: 'Optional caption' },
-      width: { label: 'Width', placeholder: '168' },
-      height: { label: 'Height', placeholder: '128' },
-      svg: {
-        label: 'Custom SVG / Path',
-        rows: 2,
-        placeholder: '<svg>...</svg> or d="..."',
-      },
-    },
-  },
-  { override: true }
-);
-
-studioNodeUiRegistry.register(
-  {
-    id: 'icon',
-    fieldHints: {
-      icon: { label: 'Icon' },
-      size: { label: 'Size (px)', placeholder: '36' },
-      svg: {
-        label: 'Custom SVG / Path',
-        rows: 2,
-        placeholder: '<svg>...</svg> or d="..."',
-      },
-    },
-  },
-  { override: true }
 );
