@@ -16,6 +16,7 @@ import {
 } from './nodes/sketchNodePlugin';
 import { codeNodePlugin } from './nodes/codeNodePlugin';
 import { chartNodePlugin } from './nodes/chartNodePlugin';
+import { annotateNodePlugin } from './nodes/annotateNodePlugin';
 
 import { roundedShapePlugin } from './shapes/roundedShape';
 import { circleShapePlugin } from './shapes/circleShape';
@@ -84,6 +85,7 @@ export function registerBuiltinPlugins(): void {
   sceneNodeRegistry.register(sketchNodePlugin, { override: true });
   sceneNodeRegistry.register(codeNodePlugin, { override: true });
   sceneNodeRegistry.register(chartNodePlugin, { override: true });
+  sceneNodeRegistry.register(annotateNodePlugin, { override: true });
 
   // Register layouts
   layoutRegistry.register(flowHorizontalPlugin, { override: true });
@@ -133,6 +135,11 @@ registerBuiltinPlugins();
 
 import { useRegistryList } from './useRegistryList';
 import { stripMarkdownFence } from './codecs/shared';
+import {
+  isMermaidScript,
+  mermaidScriptCodec,
+  parseMermaidToScene,
+} from './codecs/mermaidCodec';
 
 export * from './contracts';
 export * from './registry';
@@ -142,4 +149,8 @@ export {
   createImageHandPlugin,
   createHttpBridgeExportPlugin,
   stripMarkdownFence,
+  annotateNodePlugin,
+  isMermaidScript,
+  mermaidScriptCodec,
+  parseMermaidToScene,
 };

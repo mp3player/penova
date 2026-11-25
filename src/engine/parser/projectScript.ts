@@ -44,6 +44,7 @@ const SCENE_META_KEYS = new Set([
   'transition',
   'transitionduration',
   'transition-duration',
+  'spotlight',
 ]);
 
 interface RawSceneSection {
@@ -334,6 +335,13 @@ export function parseProjectScript(
       ...(parsedTransDur !== undefined ? { durationMs: parsedTransDur } : {}),
     };
 
+    const rawSpotlight = (meta.spotlight ?? '').trim().toLowerCase();
+    const spotlight =
+      rawSpotlight === 'true' ||
+      rawSpotlight === '1' ||
+      rawSpotlight === 'on' ||
+      rawSpotlight === 'yes';
+
     const initialTitle =
       meta.title ??
       section.explicitTitle ??
@@ -349,6 +357,7 @@ export function parseProjectScript(
       handStyle,
       nodes: [],
       transitionOut: transitionConfig,
+      ...(spotlight ? { spotlight: true } : {}),
     };
 
     const layoutPlugin = layoutRegistry.getOrDefault(layoutMode);
@@ -367,15 +376,19 @@ export function parseProjectScript(
     }
 
     // Preserve explicit scene metadata title unless body explicitly declared `# Title`
+    const resolvedLayoutMode = meta.layout
+      ? layoutMode
+      : parsed.scene.layoutMode;
     const finalScene: LessonScene = {
       ...parsed.scene,
       id: baseScene.id,
       theme,
-      layoutMode,
+      layoutMode: resolvedLayoutMode,
       cameraMode,
       aspectRatio,
       handStyle,
       transitionOut: transitionConfig,
+      ...(spotlight ? { spotlight: true } : {}),
     };
     return finalScene;
   });
@@ -475,6 +488,9 @@ export function serializeProjectScript(project: LessonProject): string {
     lines.push(`layout: ${scene.layoutMode}`);
     lines.push(`camera: ${scene.cameraMode}`);
     lines.push(`hand: ${scene.handStyle}`);
+    if (scene.spotlight) {
+      lines.push('spotlight: true');
+    }
     if (idx < project.scenes.length - 1 || scene.transitionOut?.type) {
       lines.push(
         `transition: ${scene.transitionOut?.type ?? 'chalkboard-eraser'}`
@@ -549,7 +565,7 @@ export function generateScriptSpec(): string {
     '',
     '- Optional top frontmatter (`--- ... ---`): `title`, `aspectRatio` (`16:9` | `9:16`), `subtitles` (`auto` | `off`).',
     '- Divide scenes with `=== scene ===` (or `=== scene: Scene Title ===`).',
-    '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
+    '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`, `spotlight`: `true` | `false`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
     '',
     '## 2. Currently Registered Plugins (Valid IDs)',
     '',

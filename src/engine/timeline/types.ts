@@ -23,6 +23,8 @@ export interface CompiledStrokeItem {
   stroke: StrokePath;
   startPoint: Point;
   endPoint: Point;
+  stepIndex?: number;
+  nodeId?: string;
 }
 
 export interface CompiledGroupFrameItem {
@@ -35,6 +37,8 @@ export interface CompiledGroupFrameItem {
   stroke: StrokePath;
   startPoint: Point;
   endPoint: Point;
+  stepIndex?: number;
+  nodeId?: string;
 }
 
 export interface CompiledTextLineItem {
@@ -54,6 +58,8 @@ export interface CompiledTextLineItem {
   spans: CompiledGlyphSpan[];
   startPoint: Point;
   endPoint: Point;
+  stepIndex?: number;
+  nodeId?: string;
 }
 
 export type CompiledItem =
@@ -71,6 +77,7 @@ export interface CompiledStep {
   items: CompiledItem[];
   focusBounds: Rect;
   cumulativeBounds: Rect;
+  focusNodeIds?: string[];
 }
 
 export interface CompiledTimeline {
@@ -80,6 +87,7 @@ export interface CompiledTimeline {
   totalDurationMs: number;
   layout: ComputedLayout;
   fullBounds: Rect;
+  spotlight?: boolean;
 }
 
 export interface PenState {
@@ -98,5 +106,6 @@ export interface TimelineEvalState {
   tMs: number;
   activeStepIndex: number;
   itemProgress: Map<string, number>;
+  itemOpacity?: Map<string, number>;
   pen: PenState;
 }

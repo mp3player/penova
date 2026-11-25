@@ -53,6 +53,12 @@ const SEMI_NARROW_ASCII = new Set([
 const WIDE_LOWER_ASCII = new Set(['m', 'w']);
 const WIDE_UPPER_ASCII = new Set(['M', 'W', '@', '%', '&']);
 
+const MONOSPACE_FONT_RE = /(?:mono|consolas|courier|menlo|jetbrains)/i;
+
+export function isMonospaceFont(font: string): boolean {
+  return MONOSPACE_FONT_RE.test(font);
+}
+
 /**
  * 估算单字符在无浏览器 Canvas 上下文时的排版前进宽度，用于修复等宽近似导致的 ASCII 间距失真。
  */
@@ -60,9 +66,13 @@ export function estimateCharAdvanceWidth(
   ch: string,
   fontSize: number,
   boldBoost = 1.0,
+  isMonospace = false
 ): number {
+  if (isMonospace) {
+    return (isWideChar(ch) ? 1.05 : 0.615) * fontSize * boldBoost;
+  }
   if (ch === ' ') {
-    return fontSize * 0.33;
+    return fontSize * 0.42;
   }
   if (isWideChar(ch)) {
     return fontSize * 1.02 * boldBoost;
@@ -96,9 +106,10 @@ export function defaultMeasureText(text: string, font: string): number {
   const fontSize = parseFontSize(font);
   const boldBoost =
     font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
+  const mono = isMonospaceFont(font);
   let total = 0;
   for (const ch of text) {
-    total += estimateCharAdvanceWidth(ch, fontSize, boldBoost);
+    total += estimateCharAdvanceWidth(ch, fontSize, boldBoost, mono);
   }
   return total;
 }

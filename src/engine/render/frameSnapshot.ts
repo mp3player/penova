@@ -223,6 +223,9 @@ export function evaluateSceneFrameSnapshot(
   for (const item of timeline.allItems) {
     const p = evalState.itemProgress.get(item.id) ?? 0;
     if (p <= 0) continue;
+    const rawOpacity = evalState.itemOpacity?.get(item.id);
+    const opacityProp =
+      rawOpacity !== undefined && rawOpacity < 0.999 ? { opacity: rawOpacity } : {};
 
     if (item.kind === 'group-frame') {
       groupFrames.push({
@@ -230,6 +233,7 @@ export function evaluateSceneFrameSnapshot(
         color: item.color,
         colorHex: resolveColorHex(scene.theme, item.color),
         progress: p,
+        ...opacityProp,
         stroke: item.stroke,
       });
     } else if (item.kind === 'stroke') {
@@ -238,6 +242,7 @@ export function evaluateSceneFrameSnapshot(
         color: item.color,
         colorHex: resolveColorHex(scene.theme, item.color),
         progress: p,
+        ...opacityProp,
         stroke: item.stroke,
       });
     } else if (item.kind === 'text-line') {
@@ -279,6 +284,7 @@ export function evaluateSceneFrameSnapshot(
         bgWidth: item.bgWidth,
         bgHeight: item.bgHeight,
         progress: p,
+        ...opacityProp,
         spans,
       });
     }
@@ -741,9 +747,13 @@ function renderSceneLayerSvg(
       palette,
       false
     );
-    if (fillSvg) parts.push(fillSvg);
     const svg = renderStrokeSvg(gf.stroke, gf.colorHex, gf.progress, theme);
-    if (svg) parts.push(svg);
+    const combined = `${fillSvg}${svg}`;
+    if (!combined) continue;
+    const op = gf.opacity ?? 1;
+    parts.push(
+      op < 0.999 ? `<g opacity="${op.toFixed(3)}">${combined}</g>` : combined
+    );
   }
 
   const cardFillOpacity = palette.cardFillOpacity ?? 0.085;
@@ -756,9 +766,13 @@ function renderSceneLayerSvg(
       palette,
       true
     );
-    if (fillSvg) parts.push(fillSvg);
     const svg = renderStrokeSvg(st.stroke, st.colorHex, st.progress, theme);
-    if (svg) parts.push(svg);
+    const combined = `${fillSvg}${svg}`;
+    if (!combined) continue;
+    const op = st.opacity ?? 1;
+    parts.push(
+      op < 0.999 ? `<g opacity="${op.toFixed(3)}">${combined}</g>` : combined
+    );
   }
 
   const maskDefs: string[] = [];
@@ -766,6 +780,10 @@ function renderSceneLayerSvg(
   let maskSeq = 0;
 
   for (const line of snap.textLines) {
+    const lineOp = line.opacity ?? 1;
+    if (lineOp < 0.999) {
+      textEls.push(`<g opacity="${lineOp.toFixed(3)}">`);
+    }
     if (line.isEdgeLabel || line.isGroupTitle) {
       const pillAlpha = Math.min(1, line.progress * 3.5).toFixed(3);
       const rx = (line.centerX - line.bgWidth / 2).toFixed(2);
@@ -791,6 +809,7 @@ function renderSceneLayerSvg(
     const escFont = escapeXml(
       extractFontFamilyFromCssFont(line.font, snap.fontFamily)
     );
+    const isMonoLine = /(?:mono|consolas|courier|menlo|jetbrains)/i.test(line.font);
 
     let i = 0;
     while (i < line.spans.length) {
@@ -821,13 +840,25 @@ function renderSceneLayerSvg(
           const runRight = last.boxX + last.width - last.padX;
           const midX = ((runLeft + runRight) / 2).toFixed(2);
           const ty = (first.boxY + first.height * 0.52).toFixed(2);
-          textEls.push(
-            `<text x="${midX}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${first.fontSize.toFixed(
-              1
-            )}" font-weight="${boldWeight}" text-anchor="middle" dominant-baseline="central">${escapeXml(
-              runText
-            )}</text>`
-          );
+          if (isMonoLine) {
+            textEls.push(
+              `<text x="${runLeft.toFixed(
+                2
+              )}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${first.fontSize.toFixed(
+                1
+              )}" font-weight="${boldWeight}" text-anchor="start" dominant-baseline="central">${escapeXml(
+                runText
+              )}</text>`
+            );
+          } else {
+            textEls.push(
+              `<text x="${midX}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${first.fontSize.toFixed(
+                1
+              )}" font-weight="${boldWeight}" text-anchor="middle" dominant-baseline="central">${escapeXml(
+                runText
+              )}</text>`
+            );
+          }
           i = j + 1;
           continue;
         }
@@ -895,6 +926,9 @@ function renderSceneLayerSvg(
         }
       }
       i++;
+    }
+    if (lineOp < 0.999) {
+      textEls.push('</g>');
     }
   }
 

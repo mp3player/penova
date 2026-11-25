@@ -79,7 +79,8 @@ function drawStrokeInteriorFill(
   progress: number,
   baseFillOpacity: number,
   palette: ThemePalette,
-  allowShadow: boolean
+  allowShadow: boolean,
+  dimAlpha = 1
 ): void {
   if (!stroke.fillOpacity || stroke.fillOpacity <= 0 || stroke.points.length < 3) {
     return;
@@ -91,7 +92,7 @@ function drawStrokeInteriorFill(
     : allowShadow
     ? 0.22
     : baseFillOpacity;
-  const alpha = effectiveBaseOpacity * stroke.fillOpacity * fillReveal;
+  const alpha = effectiveBaseOpacity * stroke.fillOpacity * fillReveal * dimAlpha;
   if (alpha <= 0.005) return;
 
   const tracePath = () => {
@@ -106,7 +107,7 @@ function drawStrokeInteriorFill(
   if (isSurfaceCard && palette.cardShadow) {
     ctx.save();
     ctx.translate(palette.cardShadow.dx, palette.cardShadow.dy);
-    ctx.globalAlpha = fillReveal;
+    ctx.globalAlpha = fillReveal * dimAlpha;
     ctx.fillStyle = palette.cardShadow.color;
     tracePath();
     ctx.fill();
@@ -169,6 +170,11 @@ export function renderSceneFrame(
     if (item.kind !== 'group-frame') continue;
     const p = evalState.itemProgress.get(item.id) ?? 0;
     if (p <= 0) continue;
+    const itemAlpha = evalState.itemOpacity?.get(item.id) ?? 1;
+    const strokeToDraw =
+      itemAlpha < 0.999
+        ? { ...item.stroke, opacity: item.stroke.opacity * itemAlpha }
+        : item.stroke;
     const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
     drawStrokeInteriorFill(
       ctx,
@@ -177,9 +183,10 @@ export function renderSceneFrame(
       p,
       zoneFillOpacity,
       palette,
-      false
+      false,
+      itemAlpha
     );
-    presentation.drawStroke(ctx, item.stroke, p);
+    presentation.drawStroke(ctx, strokeToDraw, p);
   }
 
   // Pass B: Strokes (edges + node shapes)
@@ -187,6 +194,11 @@ export function renderSceneFrame(
     if (item.kind !== 'stroke') continue;
     const p = evalState.itemProgress.get(item.id) ?? 0;
     if (p <= 0) continue;
+    const itemAlpha = evalState.itemOpacity?.get(item.id) ?? 1;
+    const strokeToDraw =
+      itemAlpha < 0.999
+        ? { ...item.stroke, opacity: item.stroke.opacity * itemAlpha }
+        : item.stroke;
     const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
     drawStrokeInteriorFill(
       ctx,
@@ -195,9 +207,10 @@ export function renderSceneFrame(
       p,
       cardFillOpacity,
       palette,
-      true
+      true,
+      itemAlpha
     );
-    presentation.drawStroke(ctx, item.stroke, p);
+    presentation.drawStroke(ctx, strokeToDraw, p);
   }
 
   // Pass C: Text lines (edge label pills, group titles, node titles & subtitles)
@@ -205,10 +218,11 @@ export function renderSceneFrame(
     if (item.kind !== 'text-line') continue;
     const lineProgress = evalState.itemProgress.get(item.id) ?? 0;
     if (lineProgress <= 0) continue;
+    const itemAlpha = evalState.itemOpacity?.get(item.id) ?? 1;
 
     if (item.isEdgeLabel || item.isGroupTitle) {
       ctx.save();
-      ctx.globalAlpha = Math.min(1, lineProgress * 3.5);
+      ctx.globalAlpha = Math.min(1, lineProgress * 3.5) * itemAlpha;
       ctx.fillStyle = palette.labelPillBg;
       ctx.strokeStyle = palette.labelPillBorder;
       ctx.lineWidth = 1;
@@ -221,6 +235,10 @@ export function renderSceneFrame(
       ctx.restore();
     }
 
+    if (itemAlpha < 0.999) {
+      ctx.save();
+      ctx.globalAlpha *= itemAlpha;
+    }
     for (const span of item.spans) {
       let charP = 0;
       if (evalState.tMs >= span.endMs) {
@@ -239,6 +257,9 @@ export function renderSceneFrame(
         charP,
         scratch
       );
+    }
+    if (itemAlpha < 0.999) {
+      ctx.restore();
     }
   }
 

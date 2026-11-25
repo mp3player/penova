@@ -348,3 +348,6 @@ studioNodeUiRegistry.register({
 
 - **[src/sdk/sketchPipeline.ts](../src/sdk/sketchPipeline.ts)**：SVG 路径与位图简笔画矢量化管线，内置 20 枚常用图标；支持 `registerSketchIcon` 动态扩展，并通过 `subscribeSketchIcons` / `listSketchIcons` 向工作室选择器提供响应式图标订阅。
 - **[src/sdk/workflowDag.ts](../src/sdk/workflowDag.ts)**：面向自定义图谱与流水线布局插件的递归可组合 DAG 排版内核。
+- **零位移覆盖标注插件（`SceneNodePlugin.isOverlay`）**：声明 `isOverlay: true` 的节点插件（如内置 `[node:annotate]`）不参与 DAG / 树 / 栏位排版计算，而是在 `computeDiagramLayout` 阶段按 `target` 节点包围盒原地叠绘，并在开启 `spotlight: true` 时与其目标节点同步保持高亮。
+- **聚光灯聚焦变暗（`LessonScene.spotlight`）**：场景元数据开启 `spotlight: true` 后，引擎在逐步讲解过程中会将非当前焦点步骤元素平滑变暗（`0.26` 基底透明度、`260ms` 过渡），并在片尾收束阶段统一恢复全亮，同时作用于 Canvas 实时渲染与无头 SVG 导出。
+- **原生 Mermaid 导入（`src/plugins/codecs/mermaidCodec.ts`）**：通过 `mermaidScriptCodec` 与 `parseScriptToScene` 自动识别，可直接解析 `flowchart` / `graph`、`subgraph` 区块、多形状节点以及虚线/标签/链式边并编译为标准场景图。

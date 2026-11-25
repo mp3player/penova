@@ -346,3 +346,6 @@ studioNodeUiRegistry.register({
 
 - **`src/sdk/sketchPipeline.ts`**: Headless SVG path & bitmap sketch-to-stroke pipeline with 20 built-in icons, extensible via `registerSketchIcon` and observed reactively by Studio pickers via `subscribeSketchIcons` / `listSketchIcons`.
 - **`src/sdk/workflowDag.ts`**: Recursive composable DAG layout & edge-routing kernel for custom graph/pipeline plugins.
+- **Zero-Displacement Overlay Nodes (`SceneNodePlugin.isOverlay`)**: Plugins marked `isOverlay: true` (such as built-in `[node:annotate]`) are excluded from DAG/tree/column vertex allocation, resolved post-layout against their `target` node's bounds in `computeDiagramLayout`, and kept co-focused under scene `spotlight: true` dimming.
+- **Timeline Focus Dimming (`LessonScene.spotlight`)**: Optional per-scene metadata (`spotlight: true`) dims prior unfocused items (`0.26` floor with `260ms` transition) and smoothly restores full opacity at scene outro across both Canvas and headless SVG exports.
+- **Native Mermaid Import (`src/plugins/codecs/mermaidCodec.ts`)**: `mermaidScriptCodec` and auto-detection inside `parseScriptToScene` import `flowchart`/`graph` diagrams (including `subgraph`, shapes, dashed/labeled/chained edges) directly into standard `LessonScene` nodes.

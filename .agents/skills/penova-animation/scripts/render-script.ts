@@ -165,6 +165,7 @@ interface LessonScene {
   nodes: SceneNode[];
   customSteps?: TeachingStep[];
   transitionOut?: SceneTransitionConfig;
+  spotlight?: boolean;
 }
 
 // --- Types: src/sdk/propSchema.ts ---
@@ -652,6 +653,7 @@ interface EvaluatedTextLineSnapshot {
   bgWidth: number;
   bgHeight: number;
   progress: number;
+  opacity?: number;
   spans: EvaluatedGlyphSnapshot[];
 }
 
@@ -660,6 +662,7 @@ interface EvaluatedStrokeSnapshot {
   color: ChalkColor;
   colorHex: string;
   progress: number;
+  opacity?: number;
   stroke: StrokePath;
 }
 
@@ -668,6 +671,7 @@ interface EvaluatedGroupFrameSnapshot {
   color: ChalkColor;
   colorHex: string;
   progress: number;
+  opacity?: number;
   stroke: StrokePath;
 }
 
@@ -785,6 +789,7 @@ interface SceneNodePlugin {
   defaultProps?: Record<string, string | number | boolean>;
   snippet?: string;
   propFields?: readonly PropFieldDescriptor[];
+  isOverlay?: boolean;
   compose?(node: CustomSceneNode): SceneNode;
   measure?(
     node: CustomSceneNode,
@@ -909,6 +914,27 @@ interface CardSummary {
   zone?: string;
   say?: string;
   pause?: number;
+}
+
+// --- Types: src/plugins/codecs/mermaidCodec.ts ---
+
+interface MermaidNodeDraft {
+  rawId: string;
+  nodeId: string;
+  label: string;
+  subtitle?: string;
+  role: CardRole;
+  shape: NodeShape;
+  color: ChalkColor;
+  zone?: string;
+  explicitStyled: boolean;
+}
+
+interface ParsedEdgeMatch {
+  leftSegment: string;
+  dashed: boolean;
+  label?: string;
+  rightStart: number;
 }
 
 // --- Types: src/plugins/codecs/scriptParser.ts ---
@@ -1114,6 +1140,8 @@ interface CompiledStrokeItem {
   stroke: StrokePath;
   startPoint: Point;
   endPoint: Point;
+  stepIndex?: number;
+  nodeId?: string;
 }
 
 interface CompiledGroupFrameItem {
@@ -1126,6 +1154,8 @@ interface CompiledGroupFrameItem {
   stroke: StrokePath;
   startPoint: Point;
   endPoint: Point;
+  stepIndex?: number;
+  nodeId?: string;
 }
 
 interface CompiledTextLineItem {
@@ -1145,6 +1175,8 @@ interface CompiledTextLineItem {
   spans: CompiledGlyphSpan[];
   startPoint: Point;
   endPoint: Point;
+  stepIndex?: number;
+  nodeId?: string;
 }
 
 type CompiledItem =
@@ -1162,6 +1194,7 @@ interface CompiledStep {
   items: CompiledItem[];
   focusBounds: Rect;
   cumulativeBounds: Rect;
+  focusNodeIds?: string[];
 }
 
 interface CompiledTimeline {
@@ -1171,6 +1204,7 @@ interface CompiledTimeline {
   totalDurationMs: number;
   layout: ComputedLayout;
   fullBounds: Rect;
+  spotlight?: boolean;
 }
 
 interface PenState {
@@ -1189,6 +1223,7 @@ interface TimelineEvalState {
   tMs: number;
   activeStepIndex: number;
   itemProgress: Map<string, number>;
+  itemOpacity?: Map<string, number>;
   pen: PenState;
 }
 
@@ -1540,7 +1575,10 @@ const { isCustomSceneNode, resolveCustomNodeKind, cloneSceneNode, findNodeById, 
    * starts from root / zero-in-degree vertices, advancing via BFS + topological readiness
    * so each new step draws incoming bound connectors together with the newly revealed node.
    */
-  function deriveTeachingSteps(scene: LessonScene): TeachingStep[] {
+  function deriveTeachingSteps(
+    scene: LessonScene,
+    overlayNodeIds?: ReadonlySet<string>
+  ): TeachingStep[] {
     if (scene.customSteps && scene.customSteps.length > 0) {
       return scene.customSteps;
     }
@@ -1568,8 +1606,15 @@ const { isCustomSceneNode, resolveCustomNodeKind, cloneSceneNode, findNodeById, 
       ownerTopId.has(n.fromId!) &&
       ownerTopId.has(n.toId!);
 
+    const isOverlayVertex = (n: SceneNode): boolean =>
+      overlayNodeIds
+        ? overlayNodeIds.has(n.id)
+        : isCustomSceneNode(n) && resolveCustomNodeKind(n) === 'annotate';
+
     const boundConnectors = scene.nodes.filter(isBoundConnector);
-    const vertices = scene.nodes.filter((n) => !isBoundConnector(n));
+    const allVertices = scene.nodes.filter((n) => !isBoundConnector(n));
+    const vertices = allVertices.filter((n) => !isOverlayVertex(n));
+    const overlayVertices = allVertices.filter((n) => isOverlayVertex(n));
 
     const nodeMap = new Map<string, SceneNode>();
     const orderIndex = new Map<string, number>();
@@ -1710,6 +1755,20 @@ const { isCustomSceneNode, resolveCustomNodeKind, cloneSceneNode, findNodeById, 
           nodeIds: leftoverConnectors.map((c) => c.id),
         });
       }
+    }
+
+    for (const overlayNode of overlayVertices) {
+      const rawPause = overlayNode.meta?.pause;
+      const pauseMs =
+        typeof rawPause === 'number' && Number.isFinite(rawPause) && rawPause >= 0
+          ? Math.round(rawPause)
+          : undefined;
+      steps.push({
+        id: `step-${steps.length + 1}-${overlayNode.id}`,
+        title: overlayNode.name || '标注',
+        nodeIds: [overlayNode.id],
+        ...(pauseMs !== undefined ? { pauseMs } : {}),
+      });
     }
 
     return steps;
@@ -4050,6 +4109,48 @@ const { iconNodePlugin, sketchNodePlugin } = (() => {
 // --- Module: src/plugins/nodes/codeNodePlugin.ts ---
 const { codeNodePlugin } = (() => {
   const CODE_MONO_FONT = '"JetBrains Mono", "SF Mono", "Consolas", monospace';
+  const VALID_CHALK_COLORS: readonly ChalkColor[] = [
+    'white',
+    'yellow',
+    'cyan',
+    'pink',
+    'green',
+    'orange',
+  ];
+  function resolveHighlightColor(raw: string | undefined): ChalkColor {
+    const val = (raw ?? '').trim().toLowerCase();
+    return (VALID_CHALK_COLORS as readonly string[]).includes(val)
+      ? (val as ChalkColor)
+      : 'yellow';
+  }
+  function parseHighlightLineSet(
+    raw: string | undefined,
+    totalLines: number
+  ): Set<number> {
+    const out = new Set<number>();
+    const text = (raw ?? '').trim();
+    if (!text || totalLines <= 0) return out;
+
+    for (const token of text.split(/[\s,;]+/)) {
+      if (!token) continue;
+      const rangeMatch = /^(\d+)\s*[-–—]\s*(\d+)$/.exec(token);
+      if (rangeMatch) {
+        const a = Number(rangeMatch[1]);
+        const b = Number(rangeMatch[2]);
+        const lo = Math.max(1, Math.min(a, b));
+        const hi = Math.min(totalLines, Math.max(a, b));
+        for (let lineNo = lo; lineNo <= hi; lineNo++) {
+          out.add(lineNo - 1);
+        }
+        continue;
+      }
+      const single = Number(token);
+      if (Number.isInteger(single) && single >= 1 && single <= totalLines) {
+        out.add(single - 1);
+      }
+    }
+    return out;
+  }
   const codeProps = defineProps({
     title: prop.string({
       default: 'demo.penova.md',
@@ -4066,6 +4167,17 @@ const { codeNodePlugin } = (() => {
       step: 10,
       aliases: ['w'],
       description: 'Explicit window width',
+    }),
+    highlight: prop.string({
+      default: '',
+      aliases: ['highlightLine', 'hl'],
+      description: '1-based lines or ranges to highlight (e.g. "2" or "2,4-5")',
+    }),
+    highlightColor: prop.string({
+      default: 'yellow',
+      format: 'color',
+      aliases: ['hlColor'],
+      description: 'Marker highlight color',
     }),
   });
   function parseCodeLines(node: CustomSceneNode): string[] {
@@ -4117,7 +4229,7 @@ const { codeNodePlugin } = (() => {
       const width =
         explicitW !== undefined
           ? explicitW
-          : Math.max(230, Math.min(540, Math.ceil(widest)));
+          : Math.max(240, Math.min(640, Math.ceil(widest)));
       const height = Math.max(96, 48 + lines.length * 22 + 14);
       return { width, height, payload: { title, lines } };
     },
@@ -4223,14 +4335,23 @@ const { codeNodePlugin } = (() => {
         gapAfterMs: 28,
       });
 
-      // 5. Progressive code lines
+      const highlightedSet = parseHighlightLineSet(
+        codeProps.readField(node.props, 'highlight'),
+        lines.length
+      );
+      const hlColor = resolveHighlightColor(
+        codeProps.readField(node.props, 'highlightColor')
+      );
+
+      // 5. Progressive code lines (with optional hand-drawn highlighter sweep)
       lines.forEach((line, idx) => {
+        const cy = y + 48 + idx * 22;
         helpers.pushTextLine({
           id: `${positioned.id}-code-${idx}`,
           text: line,
           boxLeftX: x + 18,
           boxWidth: Math.max(120, positioned.width - 36),
-          centerY: y + 48 + idx * 22,
+          centerY: cy,
           align: 'left',
           fontSize: 13.5,
           fontWeight: 400,
@@ -4239,6 +4360,36 @@ const { codeNodePlugin } = (() => {
           msPerChar: 28,
           gapAfterMs: 24,
         });
+
+        if (highlightedSet.has(idx)) {
+          const usableW = Math.max(120, positioned.width - 36);
+          const approxLineW = Math.min(usableW, Math.max(64, line.length * 8.3 + 12));
+          const hlStartX = x + 16;
+          const hlEndX = Math.min(x + positioned.width - 14, hlStartX + approxLineW);
+          const hlOpacity =
+            helpers.theme === 'whiteboard' || helpers.theme === 'letter-paper'
+              ? 0.34
+              : 0.28;
+          helpers.pushStroke(
+            buildStrokePath(
+              `${positioned.id}-hl-${idx}`,
+              sketchSegment(
+                { x: hlStartX, y: cy + 0.5 },
+                { x: hlEndX, y: cy - 0.5 },
+                rand,
+                0.85,
+                20
+              ),
+              {
+                width: 17,
+                color: hlColor,
+                opacity: hlOpacity,
+                speedFactor: 1.55,
+              }
+            ),
+            28
+          );
+        }
       });
     },
   };
@@ -4546,6 +4697,227 @@ const { chartNodePlugin } = (() => {
   return { chartNodePlugin };
 })();
 
+// --- Module: src/plugins/nodes/annotateNodePlugin.ts ---
+const { annotateNodePlugin } = (() => {
+  const ANNOTATE_STYLES = [
+    'circle',
+    'cross',
+    'highlight',
+    'underline',
+    'check',
+  ] as const;
+  const annotateProps = defineProps({
+    style: prop.enum(ANNOTATE_STYLES, {
+      default: 'circle',
+      aliases: ['kind', 'mode'],
+      description: 'Hand-drawn emphasis style (circle, cross, highlight, underline, check)',
+    }),
+    target: prop.string({
+      default: '',
+      format: 'node-ref',
+      aliases: ['for', 'on', 'ref'],
+      description: 'Target node ID (#id) or label to annotate',
+    }),
+    label: prop.string({
+      default: '',
+      aliases: ['note', 'callout', 'text'],
+      description: 'Optional callout text rendered near the annotation',
+    }),
+    pad: prop.number({
+      default: 12,
+      min: 0,
+      max: 48,
+      step: 2,
+      description: 'Extra padding around the target bounds',
+    }),
+  });
+  function buildHandCirclePoints(
+    cx: number,
+    cy: number,
+    rx: number,
+    ry: number,
+    rand: () => number
+  ): Point[] {
+    const pts: Point[] = [];
+    const totalSteps = 34;
+    const startAngle = -0.35 + (rand() - 0.5) * 0.2;
+    const totalAngle = Math.PI * 2.22; // Slight natural teacher overlap
+    for (let i = 0; i <= totalSteps; i++) {
+      const t = i / totalSteps;
+      const angle = startAngle + t * totalAngle;
+      const wobbleR = 1 + (rand() - 0.5) * 0.045 + Math.sin(angle * 3) * 0.015;
+      pts.push({
+        x: cx + Math.cos(angle) * rx * wobbleR,
+        y: cy + Math.sin(angle) * ry * wobbleR,
+      });
+    }
+    return pts;
+  }
+  const annotateNodePlugin: SceneNodePlugin = {
+    id: 'annotate',
+    name: 'Annotation Overlay',
+    defaultName: 'Mark',
+    defaultColor: 'pink',
+    defaultProps: annotateProps.defaults,
+    isOverlay: true,
+    snippet:
+      '[node:annotate] Mark {style: circle, target: TargetNode, label: "Key!", color: pink}',
+    propFields: annotateProps.fields,
+    measure(node, ctx) {
+      const label = (annotateProps.readField(node.props, 'label') ?? '').trim();
+      const pad = annotateProps.readField(node.props, 'pad') ?? 12;
+      const labelW = label
+        ? Math.ceil(ctx.measureText(label, `700 14px ${ctx.fontFamily}`)) + 24
+        : 0;
+      const target = (annotateProps.readField(node.props, 'target') ?? '').trim();
+      return {
+        width: Math.max(120, labelW),
+        height: 56,
+        payload: {
+          target,
+          label,
+          pad,
+          style: annotateProps.resolve(node.props).style,
+        },
+      };
+    },
+    compile(positioned, helpers) {
+      if (!isCustomSceneNode(positioned.node)) return;
+      const node = positioned.node;
+      const props = annotateProps.resolve(node.props);
+      const pad = Math.max(0, props.pad ?? 12);
+      const label = (props.label ?? '').trim();
+      const cx = positioned.cx;
+      const cy = positioned.cy;
+      const w = Math.max(48, positioned.width);
+      const h = Math.max(36, positioned.height);
+      const rand = mulberry32(hashString(`annotate:${positioned.id}`));
+
+      if (props.style === 'cross') {
+        const x1 = cx - w / 2 - pad * 0.4;
+        const x2 = cx + w / 2 + pad * 0.4;
+        const y1 = cy - h / 2 - pad * 0.4;
+        const y2 = cy + h / 2 + pad * 0.4;
+        helpers.pushStroke(
+          buildStrokePath(
+            `${positioned.id}-cross-1`,
+            sketchSegment({ x: x1, y: y1 }, { x: x2, y: y2 }, rand, 1.4, 18),
+            { width: 3.4, color: node.color, opacity: 0.94, speedFactor: 1.45 }
+          ),
+          28
+        );
+        helpers.pushStroke(
+          buildStrokePath(
+            `${positioned.id}-cross-2`,
+            sketchSegment({ x: x2, y: y1 }, { x: x1, y: y2 }, rand, 1.4, 18),
+            { width: 3.4, color: node.color, opacity: 0.94, speedFactor: 1.5 }
+          ),
+          40
+        );
+      } else if (props.style === 'highlight') {
+        const markerWidth = Math.max(18, Math.min(34, h * 0.42));
+        const x1 = cx - w / 2 - pad * 0.5;
+        const x2 = cx + w / 2 + pad * 0.5;
+        helpers.pushStroke(
+          buildStrokePath(
+            `${positioned.id}-highlight`,
+            sketchSegment({ x: x1, y: cy + 1 }, { x: x2, y: cy - 1 }, rand, 0.9, 22),
+            {
+              width: markerWidth,
+              color: node.color,
+              opacity: 0.25,
+              speedFactor: 1.55,
+            }
+          ),
+          40
+        );
+      } else if (props.style === 'underline') {
+        const yLine = cy + h / 2 + Math.max(5, pad * 0.55);
+        const x1 = cx - w / 2 - pad * 0.35;
+        const x2 = cx + w / 2 + pad * 0.35;
+        helpers.pushStroke(
+          buildStrokePath(
+            `${positioned.id}-ul-1`,
+            sketchSegment({ x: x1, y: yLine }, { x: x2, y: yLine - 1.5 }, rand, 1.3, 22),
+            { width: 3.0, color: node.color, opacity: 0.95, speedFactor: 1.45 }
+          ),
+          24
+        );
+        helpers.pushStroke(
+          buildStrokePath(
+            `${positioned.id}-ul-2`,
+            sketchSegment(
+              { x: x1 + 6, y: yLine + 5 },
+              { x: x2 - 4, y: yLine + 3.5 },
+              rand,
+              1.1,
+              20
+            ),
+            { width: 2.2, color: node.color, opacity: 0.8, speedFactor: 1.65 }
+          ),
+          40
+        );
+      } else if (props.style === 'check') {
+        const size = Math.max(28, Math.min(54, Math.min(w, h) * 0.65));
+        const baseX = cx + w / 2 - size * 0.15;
+        const baseY = cy - h / 2 + size * 0.15;
+        const p1 = { x: baseX - size * 0.42, y: baseY + size * 0.08 };
+        const p2 = { x: baseX - size * 0.1, y: baseY + size * 0.42 };
+        const p3 = { x: baseX + size * 0.5, y: baseY - size * 0.34 };
+        const pts = [
+          ...sketchSegment(p1, p2, rand, 1.0, 10),
+          ...sketchSegment(p2, p3, rand, 1.1, 14).slice(1),
+        ];
+        helpers.pushStroke(
+          buildStrokePath(`${positioned.id}-check`, pts, {
+            width: 3.6,
+            color: node.color,
+            opacity: 0.96,
+            speedFactor: 1.45,
+          }),
+          40
+        );
+      } else {
+        // Default: expressive loose teacher circle/oval around the target node
+        const rx = w / 2 + pad;
+        const ry = h / 2 + pad * 0.85;
+        const pts = buildHandCirclePoints(cx, cy, rx, ry, rand);
+        helpers.pushStroke(
+          buildStrokePath(`${positioned.id}-circle`, pts, {
+            width: 3.1,
+            color: node.color,
+            opacity: 0.95,
+            speedFactor: 1.35,
+          }),
+          42
+        );
+      }
+
+      if (label) {
+        const boxW = Math.max(140, w + pad * 2 + 40);
+        const labelY =
+          props.style === 'underline'
+            ? cy + h / 2 + Math.max(24, pad * 0.6 + 20)
+            : cy - h / 2 - pad - 15;
+        helpers.pushTextLine({
+          id: `${positioned.id}-label`,
+          text: label,
+          boxLeftX: cx - boxW / 2,
+          boxWidth: boxW,
+          centerY: labelY,
+          align: 'center',
+          fontSize: 14.5,
+          fontWeight: 700,
+          color: node.color,
+          msPerChar: 75,
+          gapAfterMs: 36,
+        });
+      }
+    },
+  };
+  return { annotateNodePlugin };
+})();
+
 // --- Module: src/plugins/shapes/roundedShape.ts ---
 const { roundedShapePlugin } = (() => {
   const roundedShapePlugin: ShapePlugin = {
@@ -4568,10 +4940,8 @@ const { roundedShapePlugin } = (() => {
       const y = cy - height / 2;
       const rand = mulberry32(hashString(`shape:${id}`));
       const baseWidth = emphasized ? 3.3 : 2.6;
-      const strokes: StrokePath[] = [];
-
       const primaryPts = buildRoundedRectPoints(x, y, width, height, 14, rand, 4);
-      strokes.push(
+      return [
         buildStrokePath(`${id}-box-1`, primaryPts, {
           width: baseWidth,
           color,
@@ -4580,31 +4950,8 @@ const { roundedShapePlugin } = (() => {
           surfaceShadow: true,
           dashed,
           speedFactor: 1.12,
-        })
-      );
-
-      if (emphasized) {
-        const accentPts = buildRoundedRectPoints(
-          x - 3.5,
-          y - 3.5,
-          width + 7,
-          height + 7,
-          16,
-          rand,
-          3
-        );
-        strokes.push(
-          buildStrokePath(`${id}-box-2`, accentPts, {
-            width: 1.8,
-            color,
-            opacity: 0.52,
-            dashed,
-            speedFactor: 1.4,
-          })
-        );
-      }
-
-      return strokes;
+        }),
+      ];
     },
   };
   return { roundedShapePlugin };
@@ -4638,7 +4985,6 @@ const { circleShapePlugin } = (() => {
       const { id, cx, cy, width, height, color, emphasized, dashed } = input;
       const rand = mulberry32(hashString(`shape:${id}`));
       const baseWidth = emphasized ? 3.3 : 2.6;
-      const strokes: StrokePath[] = [];
 
       const rx = width / 2;
       const ry = height / 2;
@@ -4662,7 +5008,7 @@ const { circleShapePlugin } = (() => {
         });
       }
 
-      strokes.push(
+      return [
         buildStrokePath(`${id}-circle-1`, pts, {
           width: baseWidth,
           color,
@@ -4671,31 +5017,8 @@ const { circleShapePlugin } = (() => {
           surfaceShadow: true,
           dashed,
           speedFactor: 1.1,
-        })
-      );
-
-      if (emphasized) {
-        const pts2: Point[] = [];
-        for (let i = 0; i <= 34; i++) {
-          const t = i / 34;
-          const ang = startAngle + 0.35 + Math.PI * 1.92 * t;
-          pts2.push({
-            x: cx + Math.cos(ang) * (rx + 2.5 + (rand() - 0.5) * 3),
-            y: cy + Math.sin(ang) * (ry + 2.5 + (rand() - 0.5) * 3),
-          });
-        }
-        strokes.push(
-          buildStrokePath(`${id}-circle-2`, pts2, {
-            width: 1.9,
-            color,
-            opacity: 0.55,
-            dashed,
-            speedFactor: 1.35,
-          })
-        );
-      }
-
-      return strokes;
+        }),
+      ];
     },
   };
   return { circleShapePlugin };
@@ -4968,7 +5291,7 @@ const { dividerShapePlugin } = (() => {
 })();
 
 // --- Module: src/model/builders.ts ---
-const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, createCardNode, getCardSummary } = (() => {
+const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, createCardNode, isCardGroupNode, getCardSummary } = (() => {
   function createTextNode(opts: {
     id: string;
     text: string;
@@ -5470,7 +5793,7 @@ const { createTextNode, createShapeNode, createConnectorNode, createCustomNode, 
       pause,
     };
   }
-  return { createTextNode, createShapeNode, createConnectorNode, createCustomNode, createCardNode, getCardSummary };
+  return { createTextNode, createShapeNode, createConnectorNode, createCustomNode, createCardNode, isCardGroupNode, getCardSummary };
 })();
 
 // --- Module: src/plugins/codecs/shared.ts ---
@@ -5618,6 +5941,487 @@ const { stripMarkdownFence, splitMetaPairs, unquoteMetaString, formatMetaString,
     return null;
   }
   return { stripMarkdownFence, splitMetaPairs, unquoteMetaString, formatMetaString, extractTrailingMetaBlock };
+})();
+
+// --- Module: src/plugins/codecs/mermaidCodec.ts ---
+const { isMermaidScript, parseMermaidToScene } = (() => {
+  const MERMAID_HEADER_RE = /^(?:flowchart|graph)\b(?:\s+(TB|TD|BT|RL|LR))?/i;
+  const SUBGRAPH_RE =
+    /^subgraph\s+([^\s\[]+)(?:\s*\[([\s\S]+)\])?\s*$|^subgraph\s+(.+)$/i;
+  const COLOR_ROTATION: readonly ChalkColor[] = [
+    'cyan',
+    'green',
+    'orange',
+    'pink',
+    'yellow',
+  ];
+  function sanitizeMermaidId(raw: string): string {
+    const stem = raw
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return stem ? `mm-${stem}` : 'mm-node';
+  }
+  function unquoteMermaidLabel(raw: string): string {
+    let s = raw.trim();
+    if (
+      (s.startsWith('"') && s.endsWith('"')) ||
+      (s.startsWith("'") && s.endsWith("'")) ||
+      (s.startsWith('`') && s.endsWith('`'))
+    ) {
+      s = s.slice(1, -1);
+    }
+    return s
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/\\n/g, '\n')
+      .trim();
+  }
+  function splitMermaidStatements(rawLines: string[]): string[] {
+    const out: string[] = [];
+    for (const line of rawLines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('%%')) continue;
+      let curr = '';
+      let quote: string | null = null;
+      let depth = 0;
+      for (let i = 0; i < trimmed.length; i++) {
+        const ch = trimmed[i];
+        if (quote) {
+          curr += ch;
+          if (ch === quote && trimmed[i - 1] !== '\\') {
+            quote = null;
+          }
+          continue;
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+          quote = ch;
+          curr += ch;
+          continue;
+        }
+        if (ch === '[' || ch === '(' || ch === '{') {
+          depth++;
+          curr += ch;
+          continue;
+        }
+        if (ch === ']' || ch === ')' || ch === '}') {
+          depth = Math.max(0, depth - 1);
+          curr += ch;
+          continue;
+        }
+        if (ch === ';' && depth === 0) {
+          if (curr.trim()) out.push(curr.trim());
+          curr = '';
+          continue;
+        }
+        curr += ch;
+      }
+      if (curr.trim()) out.push(curr.trim());
+    }
+    return out;
+  }
+  function parseNodeToken(rawToken: string): {
+    rawId: string;
+    label?: string;
+    shape?: NodeShape;
+    role?: CardRole;
+    color?: ChalkColor;
+    declared: boolean;
+  } | null {
+    let token = rawToken.trim();
+    if (!token) return null;
+
+    // Strip trailing Mermaid class annotation (`:::className`)
+    token = token.replace(/:::[A-Za-z0-9_-]+$/, '').trim();
+    if (!token) return null;
+
+    const idMatch = /^([A-Za-z0-9_.-]+)/.exec(token);
+    if (!idMatch) return null;
+    const rawId = idMatch[1];
+    const rest = token.slice(rawId.length).trim();
+
+    if (!rest) {
+      return { rawId, declared: false };
+    }
+
+    let inner = rest;
+    let shape: NodeShape = 'rounded';
+    let role: CardRole = 'concept';
+    let color: ChalkColor | undefined;
+
+    const patterns: Array<{
+      open: string;
+      close: string;
+      shape: NodeShape;
+      role: CardRole;
+      color?: ChalkColor;
+    }> = [
+      { open: '(((', close: ')))', shape: 'circle', role: 'root', color: 'yellow' },
+      { open: '((', close: '))', shape: 'circle', role: 'concept', color: 'cyan' },
+      { open: '([', close: '])', shape: 'circle', role: 'step', color: 'cyan' },
+      { open: '[(', close: ')]', shape: 'rounded', role: 'highlight', color: 'green' },
+      { open: '[[', close: ']]', shape: 'rounded', role: 'step' },
+      { open: '{{', close: '}}', shape: 'diamond', role: 'highlight', color: 'yellow' },
+      { open: '[/', close: '/]', shape: 'rounded', role: 'step' },
+      { open: '[\\', close: '\\]', shape: 'rounded', role: 'step' },
+      { open: '(', close: ')', shape: 'rounded', role: 'step' },
+      { open: '{', close: '}', shape: 'diamond', role: 'highlight', color: 'yellow' },
+      { open: '[', close: ']', shape: 'rounded', role: 'concept' },
+      { open: '>', close: ']', shape: 'cloud', role: 'note', color: 'orange' },
+    ];
+
+    let matched = false;
+    for (const pat of patterns) {
+      if (rest.startsWith(pat.open) && rest.endsWith(pat.close)) {
+        inner = rest.slice(pat.open.length, rest.length - pat.close.length);
+        shape = pat.shape;
+        role = pat.role;
+        color = pat.color;
+        matched = true;
+        break;
+      }
+    }
+
+    if (!matched) {
+      return { rawId, declared: false };
+    }
+
+    const label = unquoteMermaidLabel(inner) || rawId;
+    return { rawId, label, shape, role, color, declared: true };
+  }
+  function findNextEdgeOperator(stmt: string, fromIndex: number): ParsedEdgeMatch | null {
+    let quote: string | null = null;
+    let bracketDepth = 0;
+
+    for (let i = fromIndex; i < stmt.length; i++) {
+      const ch = stmt[i];
+      if (quote) {
+        if (ch === quote && stmt[i - 1] !== '\\') quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        quote = ch;
+        continue;
+      }
+      if (ch === '[' || ch === '(' || ch === '{') {
+        bracketDepth++;
+        continue;
+      }
+      if (ch === ']' || ch === ')' || ch === '}') {
+        bracketDepth = Math.max(0, bracketDepth - 1);
+        continue;
+      }
+      if (bracketDepth > 0) continue;
+
+      const tail = stmt.slice(i);
+
+      // Inline labeled edges: `-- label -->` / `-. label .->` / `== label ==>`
+      const inlineMatch =
+        /^(?:(--)\s+([^-\n]+?)\s+(--+>)|(-\.)\s+([^.\n]+?)\s+(\.-+>)|(==)\s+([^=\n]+?)\s+(==+>))/.exec(
+          tail
+        );
+      if (inlineMatch) {
+        const dashed = Boolean(inlineMatch[4]);
+        const rawLabel = (inlineMatch[2] ?? inlineMatch[5] ?? inlineMatch[8] ?? '').trim();
+        return {
+          leftSegment: stmt.slice(fromIndex, i).trim(),
+          dashed,
+          label: rawLabel ? unquoteMermaidLabel(rawLabel) : undefined,
+          rightStart: i + inlineMatch[0].length,
+        };
+      }
+
+      // Standard Mermaid arrows (optionally followed by `|Label|`)
+      const arrowMatch =
+        /^(?:<?-+\.+->|-\.+-|<==+>|==+>|===+|<-+>|--+>|-+>|--+|o--+o|x--+x)(?:\s*\|([^|]+)\|)?/.exec(
+          tail
+        );
+      if (arrowMatch) {
+        const opText = arrowMatch[0];
+        const dashed = opText.includes('.');
+        const rawLabel = arrowMatch[1];
+        return {
+          leftSegment: stmt.slice(fromIndex, i).trim(),
+          dashed,
+          label: rawLabel ? unquoteMermaidLabel(rawLabel) : undefined,
+          rightStart: i + opText.length,
+        };
+      }
+    }
+
+    return null;
+  }
+  function isMermaidScript(raw: string): boolean {
+    const cleaned = stripMarkdownFence(raw).replace(/\r\n/g, '\n');
+    const lines = cleaned.split('\n');
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t || t.startsWith('%%')) continue;
+      return MERMAID_HEADER_RE.test(t);
+    }
+    return false;
+  }
+  function parseMermaidToScene(
+    raw: string,
+    base: LessonScene
+  ): { scene: LessonScene; warnings: string[] } {
+    const warnings: string[] = [];
+    const cleaned = stripMarkdownFence(raw).replace(/\r\n/g, '\n');
+    const rawLines = cleaned.split('\n');
+
+    let title = base.title;
+    let direction: 'TD' | 'TB' | 'BT' | 'RL' | 'LR' = 'TD';
+    let foundHeader = false;
+
+    for (const line of rawLines) {
+      const t = line.trim();
+      if (!t) continue;
+      const titleComment = /^%%\s*title\s*:\s*(.+)$/i.exec(t);
+      if (titleComment) {
+        title = unquoteMermaidLabel(titleComment[1]);
+        continue;
+      }
+      if (t.startsWith('%%')) continue;
+      const hdr = MERMAID_HEADER_RE.exec(t);
+      if (hdr) {
+        foundHeader = true;
+        const dirRaw = (hdr[1] ?? 'TD').toUpperCase();
+        if (
+          dirRaw === 'TD' ||
+          dirRaw === 'TB' ||
+          dirRaw === 'BT' ||
+          dirRaw === 'RL' ||
+          dirRaw === 'LR'
+        ) {
+          direction = dirRaw;
+        }
+        break;
+      }
+      break;
+    }
+
+    if (!foundHeader) {
+      warnings.push('Mermaid header ("flowchart" or "graph") was not found.');
+    }
+
+    const statements = splitMermaidStatements(rawLines);
+    const drafts = new Map<string, MermaidNodeDraft>();
+    const draftOrder: MermaidNodeDraft[] = [];
+    const connectors: ConnectorSceneNode[] = [];
+    const subgraphStack: string[] = [];
+    let hasSubgraphs = false;
+    let colorSeq = 0;
+
+    const ensureNode = (rawToken: string): MermaidNodeDraft | null => {
+      const parsed = parseNodeToken(rawToken);
+      if (!parsed) return null;
+
+      const currentZone =
+        subgraphStack.length > 0 ? subgraphStack[subgraphStack.length - 1] : undefined;
+      let draft = drafts.get(parsed.rawId);
+      if (!draft) {
+        const assignedColor =
+          parsed.color ??
+          (draftOrder.length === 0
+            ? 'yellow'
+            : COLOR_ROTATION[colorSeq++ % COLOR_ROTATION.length]);
+        const defaultRole: CardRole = draftOrder.length === 0 ? 'root' : 'concept';
+        const labelLines = (parsed.label ?? parsed.rawId).split('\n');
+        const mainLabel = labelLines[0] || parsed.rawId;
+        const subLabel =
+          labelLines.length > 1 ? labelLines.slice(1).join('\n') : undefined;
+
+        draft = {
+          rawId: parsed.rawId,
+          nodeId: sanitizeMermaidId(parsed.rawId),
+          label: mainLabel,
+          subtitle: subLabel,
+          role: parsed.role ?? defaultRole,
+          shape: parsed.shape ?? 'rounded',
+          color: assignedColor,
+          zone: currentZone,
+          explicitStyled: Boolean(parsed.color),
+        };
+        drafts.set(parsed.rawId, draft);
+        draftOrder.push(draft);
+      } else {
+        if (parsed.declared && parsed.label) {
+          const labelLines = parsed.label.split('\n');
+          draft.label = labelLines[0] || draft.label;
+          if (labelLines.length > 1) {
+            draft.subtitle = labelLines.slice(1).join('\n');
+          }
+        }
+        if (parsed.shape) draft.shape = parsed.shape;
+        if (parsed.role) draft.role = parsed.role;
+        if (parsed.color && !draft.explicitStyled) {
+          draft.color = parsed.color;
+          draft.explicitStyled = true;
+        }
+        if (!draft.zone && currentZone) {
+          draft.zone = currentZone;
+        }
+      }
+      return draft;
+    };
+
+    for (let sIdx = 0; sIdx < statements.length; sIdx++) {
+      const stmt = statements[sIdx];
+      if (sIdx === 0 && MERMAID_HEADER_RE.test(stmt)) continue;
+      if (/^(?:classDef|class|style|linkStyle|click|direction|accTitle|accDescr)\b/i.test(stmt)) {
+        continue;
+      }
+
+      if (/^end$/i.test(stmt)) {
+        subgraphStack.pop();
+        continue;
+      }
+
+      const subMatch = SUBGRAPH_RE.exec(stmt);
+      if (subMatch) {
+        hasSubgraphs = true;
+        const rawZoneTitle = subMatch[2] ?? subMatch[3] ?? subMatch[1] ?? 'Group';
+        subgraphStack.push(unquoteMermaidLabel(rawZoneTitle) || 'Group');
+        continue;
+      }
+
+      // Parse chains like `A[One] -->|go| B[Two] -.-> C` and ampersands `A & B --> C`
+      const firstEdge = findNextEdgeOperator(stmt, 0);
+      if (!firstEdge) {
+        // Standalone node declaration or `A & B`
+        for (const part of stmt.split(/\s+&\s+/)) {
+          ensureNode(part);
+        }
+        continue;
+      }
+
+      const segments: string[] = [firstEdge.leftSegment];
+      const edgesMeta: Array<{ dashed: boolean; label?: string }> = [
+        { dashed: firstEdge.dashed, label: firstEdge.label },
+      ];
+      let cursor = firstEdge.rightStart;
+
+      while (cursor < stmt.length) {
+        const nextEdge = findNextEdgeOperator(stmt, cursor);
+        if (!nextEdge) {
+          segments.push(stmt.slice(cursor).trim());
+          break;
+        }
+        segments.push(nextEdge.leftSegment);
+        edgesMeta.push({ dashed: nextEdge.dashed, label: nextEdge.label });
+        cursor = nextEdge.rightStart;
+      }
+
+      const segmentDraftLists: MermaidNodeDraft[][] = segments.map((seg) => {
+        const items: MermaidNodeDraft[] = [];
+        for (const tokenPart of seg.split(/\s+&\s+/)) {
+          const d = ensureNode(tokenPart);
+          if (d) items.push(d);
+        }
+        return items;
+      });
+
+      for (let eIdx = 0; eIdx < edgesMeta.length; eIdx++) {
+        const fromList = segmentDraftLists[eIdx] ?? [];
+        const toList = segmentDraftLists[eIdx + 1] ?? [];
+        const meta = edgesMeta[eIdx];
+        for (const fromDraft of fromList) {
+          for (const toDraft of toList) {
+            connectors.push(
+              createConnectorNode({
+                id: `mm-edge-${connectors.length + 1}`,
+                fromId: fromDraft.nodeId,
+                toId: toDraft.nodeId,
+                label: meta.label,
+                style: meta.dashed ? 'dashed' : 'solid',
+                color: meta.dashed ? 'orange' : 'cyan',
+              })
+            );
+          }
+        }
+      }
+    }
+
+    const cardNodes: SceneNode[] = draftOrder.map((d) =>
+      createCardNode({
+        id: d.nodeId,
+        role: d.role,
+        label: d.label,
+        subtitle: d.subtitle,
+        color: d.color,
+        shape: d.shape,
+        zone: d.zone,
+      })
+    );
+
+    const chosenLayout: LayoutMode = hasSubgraphs
+      ? 'concept-graph'
+      : direction === 'LR' || direction === 'RL'
+      ? 'flow-horizontal'
+      : 'flow-vertical';
+
+    return {
+      scene: {
+        ...base,
+        title,
+        layoutMode: chosenLayout,
+        nodes: [...cardNodes, ...connectors],
+      },
+      warnings,
+    };
+  }
+  const mermaidScriptCodec: SceneTextCodec = {
+    id: 'mermaid',
+    label: 'Mermaid Flowchart',
+    hintTitle: 'Native Mermaid Flowchart / Graph Import',
+    hintLines: [
+      'flowchart LR / flowchart TD',
+      'A[Client] -->|HTTPS| B{API Gateway} -.-> C[(Database)]',
+      'subgraph Core ... end',
+    ],
+    syntaxRules: [
+      'Header line: `flowchart TD` (vertical), `flowchart LR` (horizontal), or `graph TD` / `graph LR`',
+      'Node shapes: `[Rounded Label]`, `{Diamond}`, `((Circle))`, `([Pill])`, `[(Database)]`, `>Note]`',
+      'Connectors: `-->`, `-.->` (dashed), `==>`, with `-->|Label|` or `-- Label -->`, plus chained edges',
+      'Subgraphs: `subgraph Group Name ... end` map directly to grouped concept zones',
+    ],
+    example: [
+      'flowchart LR',
+      '  U([User]) -->|HTTPS| G{Gateway}',
+      '  subgraph Backend Core',
+      '    G -->|Auth| S[Service]',
+      '    S -.->|Cache| R[(Redis)]',
+      '  end',
+    ].join('\n'),
+    parse: parseMermaidToScene,
+    serialize(scene) {
+      const dir = scene.layoutMode === 'flow-vertical' ? 'TD' : 'LR';
+      const lines = [`flowchart ${dir}`];
+      if (scene.title) {
+        lines.push(`  %% title: ${scene.title}`);
+      }
+      const idAlias = new Map<string, string>();
+      let seq = 1;
+      for (const node of scene.nodes) {
+        if (node.type === 'connector') continue;
+        const alias = `N${seq++}`;
+        idAlias.set(node.id, alias);
+        const label = node.name.replace(/"/g, "'");
+        lines.push(`  ${alias}["${label}"]`);
+      }
+      for (const node of scene.nodes) {
+        if (node.type !== 'connector' || !node.fromId || !node.toId) continue;
+        const a = idAlias.get(node.fromId);
+        const b = idAlias.get(node.toId);
+        if (!a || !b) continue;
+        const arrow = node.style === 'dashed' ? '-.->' : '-->';
+        const lbl = node.label ? `|${node.label}|` : '';
+        lines.push(`  ${a} ${arrow}${lbl} ${b}`);
+      }
+      return lines.join('\n');
+    },
+  };
+  return { isMermaidScript, parseMermaidToScene };
 })();
 
 // --- Module: src/plugins/codecs/scriptParser.ts ---
@@ -5965,6 +6769,9 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
     script: string,
     base: LessonScene
   ): { scene: LessonScene; warnings: string[] } {
+    if (isMermaidScript(script)) {
+      return parseMermaidToScene(script, base);
+    }
     const warnings: string[] = [];
     const lines = stripMarkdownFence(script).replace(/\r\n/g, '\n').split('\n');
 
@@ -6972,9 +7779,15 @@ const { parseScriptToScene, serializeNodeLines, serializeConnectorLines, graphSc
 })();
 
 // --- Module: src/plugins/layouts/shared.ts ---
-const { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicBezier, createPositionedConnectorFromPoints, buildConnectorNode, computeConnectorBowMap, indexNodesRecursively, finalizeLayout, pointHitsAnyObstacle, countPolylineCollisions, collectObstaclesForConnector, routeObstacleAwareConnector } = (() => {
+const { isOverlaySceneNode, splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicBezier, createPositionedConnectorFromPoints, buildConnectorNode, computeConnectorBowMap, indexNodesRecursively, finalizeLayout, pointHitsAnyObstacle, countPolylineCollisions, collectObstaclesForConnector, routeObstacleAwareConnector } = (() => {
+  function isOverlaySceneNode(node: SceneNode): boolean {
+    if (!isCustomSceneNode(node)) return false;
+    return Boolean(sceneNodeRegistry.get(resolveCustomNodeKind(node))?.isOverlay);
+  }
   function splitSceneNodes(nodes: SceneNode[]): SplitSceneNodes {
-    const vertices = nodes.filter((n) => n.type !== 'connector');
+    const vertices = nodes.filter(
+      (n) => n.type !== 'connector' && !isOverlaySceneNode(n)
+    );
     const ownerVertexIdMap = new Map<string, string>();
     const registerOwner = (node: SceneNode, topId: string) => {
       ownerVertexIdMap.set(node.id, topId);
@@ -7995,7 +8808,7 @@ const { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicB
     }
     return bestNode;
   }
-  return { splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicBezier, createPositionedConnectorFromPoints, buildConnectorNode, computeConnectorBowMap, indexNodesRecursively, finalizeLayout, pointHitsAnyObstacle, countPolylineCollisions, collectObstaclesForConnector, routeObstacleAwareConnector };
+  return { isOverlaySceneNode, splitSceneNodes, makePositionedNode, clipPointToNodeBorder, sampleCubicBezier, createPositionedConnectorFromPoints, buildConnectorNode, computeConnectorBowMap, indexNodesRecursively, finalizeLayout, pointHitsAnyObstacle, countPolylineCollisions, collectObstaclesForConnector, routeObstacleAwareConnector };
 })();
 
 // --- Module: src/plugins/layouts/dagreFlow.ts ---
@@ -13165,6 +13978,7 @@ const { svgSequenceTarExporterPlugin } = (() => {
     sceneNodeRegistry.register(sketchNodePlugin, { override: true });
     sceneNodeRegistry.register(codeNodePlugin, { override: true });
     sceneNodeRegistry.register(chartNodePlugin, { override: true });
+    sceneNodeRegistry.register(annotateNodePlugin, { override: true });
 
     // Register layouts
     layoutRegistry.register(flowHorizontalPlugin, { override: true });
@@ -13299,7 +14113,7 @@ const { createProjectFromScene, cloneProject } = (() => {
 })();
 
 // --- Module: src/engine/layout/textMeasure.ts ---
-const { estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode, positionGroupChildren } = (() => {
+const { isMonospaceFont, estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode, positionGroupChildren } = (() => {
   const BOARD_FONT_FAMILY =
     "'Segoe Print', 'KaiTi', 'STKaiti', 'LXGW WenKai', 'Microsoft YaHei', cursive";
   let cachedMeasureCtx: CanvasRenderingContext2D | null = null;
@@ -13332,6 +14146,10 @@ const { estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode
   ]);
   const WIDE_LOWER_ASCII = new Set(['m', 'w']);
   const WIDE_UPPER_ASCII = new Set(['M', 'W', '@', '%', '&']);
+  const MONOSPACE_FONT_RE = /(?:mono|consolas|courier|menlo|jetbrains)/i;
+  function isMonospaceFont(font: string): boolean {
+    return MONOSPACE_FONT_RE.test(font);
+  }
   /**
    * 估算单字符在无浏览器 Canvas 上下文时的排版前进宽度，用于修复等宽近似导致的 ASCII 间距失真。
    */
@@ -13339,9 +14157,13 @@ const { estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode
     ch: string,
     fontSize: number,
     boldBoost = 1.0,
+    isMonospace = false
   ): number {
+    if (isMonospace) {
+      return (isWideChar(ch) ? 1.05 : 0.615) * fontSize * boldBoost;
+    }
     if (ch === ' ') {
-      return fontSize * 0.33;
+      return fontSize * 0.42;
     }
     if (isWideChar(ch)) {
       return fontSize * 1.02 * boldBoost;
@@ -13374,9 +14196,10 @@ const { estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode
     const fontSize = parseFontSize(font);
     const boldBoost =
       font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
+    const mono = isMonospaceFont(font);
     let total = 0;
     for (const ch of text) {
-      total += estimateCharAdvanceWidth(ch, fontSize, boldBoost);
+      total += estimateCharAdvanceWidth(ch, fontSize, boldBoost, mono);
     }
     return total;
   }
@@ -13850,22 +14673,160 @@ const { estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode
     }
     return undefined;
   }
-  return { estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode, positionGroupChildren };
+  return { isMonospaceFont, estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode, positionGroupChildren };
 })();
 
 // --- Module: src/engine/layout/diagramLayout.ts ---
 const { computeDiagramLayout } = (() => {
+  function getNodeSearchLabels(node: SceneNode): string[] {
+    const labels: string[] = [];
+    if (node.name) labels.push(node.name);
+    if (isCardGroupNode(node)) {
+      const summary = getCardSummary(node);
+      if (summary.label) labels.push(summary.label);
+    }
+    return labels;
+  }
+  function findOverlayTarget(
+    overlayNode: CustomSceneNode,
+    computed: ComputedLayout
+  ): PositionedSceneNode | undefined {
+    const props = overlayNode.props ?? {};
+    const rawTarget =
+      (typeof props.target === 'string' && props.target) ||
+      (typeof props.for === 'string' && props.for) ||
+      (typeof props.on === 'string' && props.on) ||
+      (typeof props.ref === 'string' && props.ref) ||
+      '';
+    const trimmed = rawTarget.trim();
+    if (!trimmed) return undefined;
+
+    const strippedId = trimmed.startsWith('#') ? trimmed.slice(1).trim() : trimmed;
+    const direct = computed.nodeMap.get(strippedId) ?? computed.nodeMap.get(trimmed);
+    if (direct) return direct;
+
+    const allNodes = Array.from(computed.nodeMap.values()).filter(
+      (p) => p.node.type !== 'connector' && !isOverlaySceneNode(p.node)
+    );
+    for (const cand of allNodes) {
+      if (getNodeSearchLabels(cand.node).some((lbl) => lbl === trimmed)) {
+        return cand;
+      }
+    }
+    const lower = trimmed.toLowerCase();
+    for (const cand of allNodes) {
+      if (
+        getNodeSearchLabels(cand.node).some(
+          (lbl) => lbl.trim().toLowerCase() === lower
+        )
+      ) {
+        return cand;
+      }
+    }
+    return undefined;
+  }
+  function expandBounds(bounds: Rect, other: Rect): Rect {
+    const minX = Math.min(bounds.x, other.x);
+    const minY = Math.min(bounds.y, other.y);
+    const maxX = Math.max(bounds.x + bounds.width, other.x + other.width);
+    const maxY = Math.max(bounds.y + bounds.height, other.y + other.height);
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }
   function computeDiagramLayout(
     scene: LessonScene,
     measureFn?: MeasureTextFn
   ): ComputedLayout {
     const layoutPlugin = layoutRegistry.getOrDefault(scene.layoutMode);
     const presentation = presentationRegistry.getOrDefault(scene.theme);
-    return layoutPlugin.compute(scene, {
-      measureNode: (node) =>
-        measureSceneNode(node, measureFn, undefined, presentation.fontFamily),
+    const measureNode = (node: SceneNode) =>
+      measureSceneNode(node, measureFn, undefined, presentation.fontFamily);
+
+    const overlayNodes = scene.nodes.filter((n): n is CustomSceneNode =>
+      isCustomSceneNode(n) && isOverlaySceneNode(n)
+    );
+    const baseScene =
+      overlayNodes.length > 0
+        ? { ...scene, nodes: scene.nodes.filter((n) => !isOverlaySceneNode(n)) }
+        : scene;
+
+    const computed = layoutPlugin.compute(baseScene, {
+      measureNode,
       positionGroupChildren,
     });
+
+    if (overlayNodes.length === 0) {
+      return computed;
+    }
+
+    let nextBounds = { ...computed.bounds };
+    for (const overlayNode of overlayNodes) {
+      const kind = resolveCustomNodeKind(overlayNode);
+      const plugin = sceneNodeRegistry.get(kind);
+      const target = findOverlayTarget(overlayNode, computed);
+      const measured = measureNode(overlayNode);
+
+      const fallbackCx =
+        overlayNode.offset?.x !== undefined && overlayNode.offset.x !== 0
+          ? overlayNode.offset.x
+          : nextBounds.x + nextBounds.width / 2;
+      const fallbackCy =
+        overlayNode.offset?.y !== undefined && overlayNode.offset.y !== 0
+          ? overlayNode.offset.y
+          : nextBounds.y + nextBounds.height / 2;
+
+      const cx = target ? target.cx + (overlayNode.offset?.x ?? 0) : fallbackCx;
+      const cy = target ? target.cy + (overlayNode.offset?.y ?? 0) : fallbackCy;
+      const width = target ? Math.max(48, target.width) : measured.width;
+      const height = target ? Math.max(36, target.height) : measured.height;
+
+      const existingPayload =
+        measured.type === 'custom' && measured.payload
+          ? (measured.payload as Record<string, unknown>)
+          : {};
+      const payload = { ...existingPayload, resolvedTargetId: target?.id };
+
+      const positionedOverlay: PositionedSceneNode = {
+        id: overlayNode.id,
+        node: overlayNode,
+        cx,
+        cy,
+        width,
+        height,
+        measured:
+          measured.type === 'custom'
+            ? { ...measured, payload }
+            : {
+                type: 'custom',
+                kind: plugin?.id ?? kind,
+                width,
+                height,
+                payload,
+              },
+      };
+
+      computed.nodes.push(positionedOverlay);
+      computed.nodeMap.set(overlayNode.id, positionedOverlay);
+
+      const rawPad = overlayNode.props?.pad;
+      const pad =
+        typeof rawPad === 'number' && Number.isFinite(rawPad) ? rawPad : 14;
+      nextBounds = expandBounds(nextBounds, {
+        x: cx - width / 2 - pad - 12,
+        y: cy - height / 2 - pad - 24,
+        width: width + (pad + 12) * 2,
+        height: height + (pad + 24) * 2,
+      });
+    }
+
+    return {
+      ...computed,
+      bounds: nextBounds,
+    };
   }
   return { computeDiagramLayout };
 })();
@@ -14147,7 +15108,12 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
     if (!mCtx || typeof document === 'undefined') {
       const boldBoost =
         font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
-      const advanceWidth = estimateCharAdvanceWidth(char, fontSize, boldBoost);
+      const advanceWidth = estimateCharAdvanceWidth(
+        char,
+        fontSize,
+        boldBoost,
+        isMonospaceFont(font)
+      );
       const padX = Math.ceil(fontSize * 0.24);
       const width = Math.max(8, advanceWidth + padX * 2);
       const height = Math.max(12, fontSize * 1.48);
@@ -14614,10 +15580,16 @@ const { compileTimeline } = (() => {
     const layoutPlugin = layoutRegistry.getOrDefault(scene.layoutMode);
     const presentation = presentationRegistry.getOrDefault(scene.theme);
     const boardFontFamily = presentation.fontFamily;
+    const overlayNodeIds = new Set(
+      scene.nodes.filter(isOverlaySceneNode).map((n) => n.id)
+    );
     const rawSteps =
       scene.customSteps && scene.customSteps.length > 0
         ? scene.customSteps
-        : layoutPlugin.deriveSteps?.(scene) ?? deriveTeachingSteps(scene);
+        : layoutPlugin.deriveSteps &&
+          layoutPlugin.deriveSteps !== deriveTeachingSteps
+        ? layoutPlugin.deriveSteps(scene)
+        : deriveTeachingSteps(scene, overlayNodeIds);
 
     const zoneByTitle = new Map(layout.zones.map((g) => [g.title, g]));
     const drawnZones = new Set<string>();
@@ -14634,6 +15606,7 @@ const { compileTimeline } = (() => {
       let itemCursor = drawStartMs;
       const items: CompiledItem[] = [];
       const stepRects: Rect[] = [];
+      let currentNodeId: string | undefined;
 
       const pushStroke = (stroke: StrokePath, gapAfterMs = 45) => {
         const dur = strokeDurationMs(stroke);
@@ -14646,6 +15619,8 @@ const { compileTimeline } = (() => {
           stroke,
           startPoint: samplePointAlongStroke(stroke, 0),
           endPoint: samplePointAlongStroke(stroke, 1),
+          stepIndex,
+          nodeId: currentNodeId,
         };
         items.push(item);
         allItems.push(item);
@@ -14678,6 +15653,8 @@ const { compileTimeline } = (() => {
               stroke: fs,
               startPoint: samplePointAlongStroke(fs, 0),
               endPoint: samplePointAlongStroke(fs, 1),
+              stepIndex,
+              nodeId: zoneBox.id,
             };
             items.push(frameItem);
             allItems.push(frameItem);
@@ -14701,6 +15678,8 @@ const { compileTimeline } = (() => {
             82,
             { isGroupTitle: true }
           );
+          titleItem.stepIndex = stepIndex;
+          titleItem.nodeId = zoneBox.id;
           items.push(titleItem);
           allItems.push(titleItem);
           itemCursor = titleItem.endMs + 95;
@@ -14715,136 +15694,168 @@ const { compileTimeline } = (() => {
 
       const compilePositionedNode = (curr: PositionedSceneNode, insideCard = false) => {
         if (curr.node.visible === false) return;
-
-        if (curr.node.type === 'shape') {
-          const strokes = generateShapeStrokes(curr);
-          strokes.forEach((s, idx) => {
-            pushStroke(s, idx === strokes.length - 1 ? 65 : 34);
-          });
-          return;
-        }
-
-        if (curr.node.type === 'connector') {
-          const cStrokes = generateConnectorStrokes(curr, curr.node.color);
-          cStrokes.forEach((cs, idx) => {
-            pushStroke(cs, idx === cStrokes.length - 1 ? 65 : 32);
-          });
-
-          if (curr.node.label && curr.labelPoint) {
-            const edgeFont = `400 14px ${boardFontFamily}`;
-            const labelItem = compileTextLineItem(
-              `edge-label-${curr.id}`,
-              curr.node.label,
-              curr.labelPoint.x - 100,
-              200,
-              curr.labelPoint.y - 2,
-              'center',
-              0,
-              edgeFont,
-              14,
-              curr.node.color,
-              scene.theme,
-              itemCursor,
-              82,
-              { isEdgeLabel: true }
-            );
-            items.push(labelItem);
-            allItems.push(labelItem);
-            itemCursor = labelItem.endMs + 95;
-          }
-          return;
-        }
-
-        if (curr.node.type === 'text') {
-          if (curr.measured.type !== 'text') return;
-          const m = curr.measured;
-          const weight = curr.node.fontWeight ?? 400;
-          const lineFont = `${weight} ${m.fontSize}px ${boardFontFamily}`;
-          const boxLeftX = curr.cx - curr.width / 2;
-          const msPerChar = m.fontSize >= 20 ? 122 : 88;
-          const textColor: ChalkColor =
-            insideCard && presentation.palette.preferNeutralCardTitle
-              ? 'white'
-              : curr.node.color;
-          let yCursor = curr.cy - m.height / 2;
-
-          m.lines.forEach((line, lineIdx) => {
-            const lineCy = yCursor + m.lineHeight / 2;
-            const lineIndent = lineIdx === 0 ? m.indentPx : 0;
-            const tItem = compileTextLineItem(
-              `${curr.id}-line-${lineIdx}`,
-              line,
-              boxLeftX,
-              curr.width,
-              lineCy,
-              m.align,
-              lineIndent,
-              lineFont,
-              m.fontSize,
-              textColor,
-              scene.theme,
-              itemCursor,
-              msPerChar
-            );
-            items.push(tItem);
-            allItems.push(tItem);
-            itemCursor = tItem.endMs + 40;
-            yCursor += m.lineHeight;
-          });
-          return;
-        }
-
-        if (curr.node.type === 'group') {
-          const nextInsideCard = insideCard || curr.node.meta?.isCard === true;
-          for (const child of curr.children ?? []) {
-            compilePositionedNode(child, nextInsideCard);
-          }
-          return;
-        }
-
-        if (isCustomSceneNode(curr.node)) {
-          const kind =
-            curr.measured.type === 'custom'
-              ? curr.measured.kind
-              : resolveCustomNodeKind(curr.node);
-          const plugin = sceneNodeRegistry.get(kind);
-          if (plugin?.compile) {
-            let customTextSeq = 0;
-            const nodeColor = curr.node.color;
-            plugin.compile(curr, {
-              theme: scene.theme,
-              fontFamily: boardFontFamily,
-              pushStroke,
-              pushTextLine: (input) => {
-                const fontSize = input.fontSize ?? 18;
-                const weight = input.fontWeight ?? 400;
-                const lineFontFamily = input.fontFamily ?? boardFontFamily;
-                const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
-                const tItem = compileTextLineItem(
-                  input.id ?? `${curr.id}-text-${customTextSeq++}`,
-                  input.text,
-                  input.boxLeftX,
-                  input.boxWidth,
-                  input.centerY,
-                  input.align ?? 'center',
-                  input.indentPx ?? 0,
-                  lineFont,
-                  fontSize,
-                  input.color ?? nodeColor,
-                  scene.theme,
-                  itemCursor,
-                  input.msPerChar ?? (fontSize >= 20 ? 122 : 88)
-                );
-                items.push(tItem);
-                allItems.push(tItem);
-                itemCursor = tItem.endMs + (input.gapAfterMs ?? 40);
-              },
+        const prevNodeId = currentNodeId;
+        currentNodeId = curr.id;
+        try {
+          if (curr.node.type === 'shape') {
+            const strokes = generateShapeStrokes(curr);
+            strokes.forEach((s, idx) => {
+              pushStroke(s, idx === strokes.length - 1 ? 65 : 34);
             });
             return;
           }
-          for (const child of curr.children ?? []) {
-            compilePositionedNode(child);
+
+          if (curr.node.type === 'connector') {
+            const cStrokes = generateConnectorStrokes(curr, curr.node.color);
+            cStrokes.forEach((cs, idx) => {
+              pushStroke(cs, idx === cStrokes.length - 1 ? 65 : 32);
+            });
+
+            if (curr.node.label && curr.labelPoint) {
+              const edgeFont = `400 14px ${boardFontFamily}`;
+              const labelItem = compileTextLineItem(
+                `edge-label-${curr.id}`,
+                curr.node.label,
+                curr.labelPoint.x - 100,
+                200,
+                curr.labelPoint.y - 2,
+                'center',
+                0,
+                edgeFont,
+                14,
+                curr.node.color,
+                scene.theme,
+                itemCursor,
+                82,
+                { isEdgeLabel: true }
+              );
+              labelItem.stepIndex = stepIndex;
+              labelItem.nodeId = curr.id;
+              items.push(labelItem);
+              allItems.push(labelItem);
+              itemCursor = labelItem.endMs + 95;
+            }
+            return;
           }
+
+          if (curr.node.type === 'text') {
+            if (curr.measured.type !== 'text') return;
+            const m = curr.measured;
+            const weight = curr.node.fontWeight ?? 400;
+            const lineFont = `${weight} ${m.fontSize}px ${boardFontFamily}`;
+            const boxLeftX = curr.cx - curr.width / 2;
+            const msPerChar = m.fontSize >= 20 ? 122 : 88;
+            const textColor: ChalkColor =
+              insideCard && presentation.palette.preferNeutralCardTitle
+                ? 'white'
+                : curr.node.color;
+            let yCursor = curr.cy - m.height / 2;
+
+            m.lines.forEach((line, lineIdx) => {
+              const lineCy = yCursor + m.lineHeight / 2;
+              const lineIndent = lineIdx === 0 ? m.indentPx : 0;
+              const tItem = compileTextLineItem(
+                `${curr.id}-line-${lineIdx}`,
+                line,
+                boxLeftX,
+                curr.width,
+                lineCy,
+                m.align,
+                lineIndent,
+                lineFont,
+                m.fontSize,
+                textColor,
+                scene.theme,
+                itemCursor,
+                msPerChar
+              );
+              tItem.stepIndex = stepIndex;
+              tItem.nodeId = curr.id;
+              items.push(tItem);
+              allItems.push(tItem);
+              itemCursor = tItem.endMs + 40;
+              yCursor += m.lineHeight;
+            });
+            return;
+          }
+
+          if (curr.node.type === 'group') {
+            const nextInsideCard = insideCard || curr.node.meta?.isCard === true;
+            for (const child of curr.children ?? []) {
+              compilePositionedNode(child, nextInsideCard);
+            }
+            return;
+          }
+
+          if (isCustomSceneNode(curr.node)) {
+            const kind =
+              curr.measured.type === 'custom'
+                ? curr.measured.kind
+                : resolveCustomNodeKind(curr.node);
+            const plugin = sceneNodeRegistry.get(kind);
+            if (plugin?.compile) {
+              let customTextSeq = 0;
+              const nodeColor = curr.node.color;
+              plugin.compile(curr, {
+                theme: scene.theme,
+                fontFamily: boardFontFamily,
+                pushStroke,
+                pushTextLine: (input) => {
+                  const fontSize = input.fontSize ?? 18;
+                  const weight = input.fontWeight ?? 400;
+                  const lineFontFamily = input.fontFamily ?? boardFontFamily;
+                  const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
+                  const tItem = compileTextLineItem(
+                    input.id ?? `${curr.id}-text-${customTextSeq++}`,
+                    input.text,
+                    input.boxLeftX,
+                    input.boxWidth,
+                    input.centerY,
+                    input.align ?? 'center',
+                    input.indentPx ?? 0,
+                    lineFont,
+                    fontSize,
+                    input.color ?? nodeColor,
+                    scene.theme,
+                    itemCursor,
+                    input.msPerChar ?? (fontSize >= 20 ? 122 : 88)
+                  );
+                  tItem.stepIndex = stepIndex;
+                  tItem.nodeId = curr.id;
+                  items.push(tItem);
+                  allItems.push(tItem);
+                  itemCursor = tItem.endMs + (input.gapAfterMs ?? 40);
+                },
+              });
+              return;
+            }
+            for (const child of curr.children ?? []) {
+              compilePositionedNode(child);
+            }
+          }
+        } finally {
+          currentNodeId = prevNodeId;
+        }
+      };
+
+      const focusNodeSet = new Set<string>(step.nodeIds);
+      const collectSubtreeIds = (p: PositionedSceneNode) => {
+        focusNodeSet.add(p.id);
+        const resolvedTargetId =
+          p.measured.type === 'custom' && p.measured.payload
+            ? (p.measured.payload as Record<string, unknown>).resolvedTargetId
+            : undefined;
+        if (typeof resolvedTargetId === 'string') {
+          focusNodeSet.add(resolvedTargetId);
+          const targetNode = layout.nodeMap.get(resolvedTargetId);
+          if (targetNode) {
+            for (const child of targetNode.children ?? []) {
+              collectSubtreeIds(child);
+            }
+          }
+        }
+        for (const child of p.children ?? []) {
+          collectSubtreeIds(child);
         }
       };
 
@@ -14852,6 +15863,7 @@ const { compileTimeline } = (() => {
       for (const nodeId of step.nodeIds) {
         const pNode = layout.nodeMap.get(nodeId);
         if (!pNode || pNode.node.visible === false) continue;
+        collectSubtreeIds(pNode);
 
         if (
           pNode.node.type === 'connector' &&
@@ -14883,6 +15895,19 @@ const { compileTimeline } = (() => {
         compilePositionedNode(pNode);
       }
 
+      // Keep any enclosing zone frame bright while nodes in that zone are focused
+      for (const fId of Array.from(focusNodeSet)) {
+        const pNode = layout.nodeMap.get(fId);
+        if (!pNode || pNode.node.type === 'connector') continue;
+        const rawZone = pNode.node.meta?.zone;
+        const zoneTitle =
+          typeof rawZone === 'string' && rawZone.trim() ? rawZone.trim() : '核心概念';
+        const zoneBox = zoneByTitle.get(zoneTitle);
+        if (zoneBox) {
+          focusNodeSet.add(zoneBox.id);
+        }
+      }
+
       const drawEndMs =
         items.length > 0 ? items[items.length - 1].endMs : drawStartMs + 200;
       const pauseMs = step.pauseMs ?? 420;
@@ -14905,6 +15930,7 @@ const { compileTimeline } = (() => {
         items,
         focusBounds,
         cumulativeBounds,
+        focusNodeIds: Array.from(focusNodeSet),
       });
 
       cursorMs = endMs;
@@ -14921,6 +15947,7 @@ const { compileTimeline } = (() => {
       totalDurationMs,
       layout,
       fullBounds: layout.bounds,
+      spotlight: scene.spotlight === true,
     };
   }
   return { compileTimeline };
@@ -14986,6 +16013,74 @@ const { evaluateTimelineAt } = (() => {
       velocity: 0,
     };
   }
+  function computeSpotlightItemOpacities(
+    timeline: CompiledTimeline,
+    tMs: number,
+    activeStepIndex: number
+  ): Map<string, number> | undefined {
+    if (!timeline.spotlight || timeline.steps.length <= 1) {
+      return undefined;
+    }
+
+    const dimFloor = 0.26;
+    const fadeMs = 260;
+    const outroFadeMs = 420;
+    const focusSets = timeline.steps.map(
+      (s) => new Set(s.focusNodeIds ?? s.step.nodeIds)
+    );
+    const lastStepIdx = timeline.steps.length - 1;
+    const inOutro = tMs >= timeline.outroStartMs;
+    const outroU = inOutro
+      ? easeInOut(Math.min(1, (tMs - timeline.outroStartMs) / outroFadeMs))
+      : 0;
+
+    const currStep = timeline.steps[activeStepIndex];
+    const stepFadeU = currStep
+      ? easeInOut(Math.min(1, Math.max(0, tMs - currStep.startMs) / fadeMs))
+      : 1;
+
+    const map = new Map<string, number>();
+
+    for (const item of timeline.allItems) {
+      if (inOutro) {
+        const lastFocused = item.nodeId
+          ? focusSets[lastStepIdx].has(item.nodeId)
+          : item.stepIndex === lastStepIdx;
+        const base = lastFocused ? 1 : dimFloor;
+        map.set(item.id, base + (1 - base) * outroU);
+        continue;
+      }
+
+      if (activeStepIndex === 0) {
+        map.set(item.id, 1);
+        continue;
+      }
+
+      if (item.stepIndex === activeStepIndex) {
+        map.set(item.id, 1);
+        continue;
+      }
+
+      const prevFocused = item.nodeId
+        ? focusSets[activeStepIndex - 1].has(item.nodeId)
+        : item.stepIndex === activeStepIndex - 1;
+      const currFocused = item.nodeId
+        ? focusSets[activeStepIndex].has(item.nodeId)
+        : item.stepIndex === activeStepIndex;
+
+      if (prevFocused && currFocused) {
+        map.set(item.id, 1);
+      } else if (!prevFocused && !currFocused) {
+        map.set(item.id, dimFloor);
+      } else if (prevFocused && !currFocused) {
+        map.set(item.id, 1 - (1 - dimFloor) * stepFadeU);
+      } else {
+        map.set(item.id, dimFloor + (1 - dimFloor) * stepFadeU);
+      }
+    }
+
+    return map;
+  }
   function evaluateTimelineAt(
     timeline: CompiledTimeline,
     rawTMs: number
@@ -15000,6 +16095,19 @@ const { evaluateTimelineAt } = (() => {
         break;
       }
     }
+
+    const itemOpacity = computeSpotlightItemOpacities(
+      timeline,
+      tMs,
+      activeStepIndex
+    );
+    const finish = (pen: TimelineEvalState['pen']): TimelineEvalState => ({
+      tMs,
+      activeStepIndex,
+      itemProgress,
+      ...(itemOpacity ? { itemOpacity } : {}),
+      pen,
+    });
 
     const allItems = timeline.allItems;
     let activeItemIdx = -1;
@@ -15019,22 +16127,17 @@ const { evaluateTimelineAt } = (() => {
 
     // Default hidden pen if empty timeline
     if (allItems.length === 0) {
-      return {
-        tMs,
-        activeStepIndex: 0,
-        itemProgress,
-        pen: {
-          visible: false,
-          worldX: 0,
-          worldY: 0,
-          penDown: false,
-          lift: 0,
-          color: 'white',
-          velocity: 0,
-          seed: 0,
-          alpha: 0,
-        },
-      };
+      return finish({
+        visible: false,
+        worldX: 0,
+        worldY: 0,
+        penDown: false,
+        lift: 0,
+        color: 'white',
+        velocity: 0,
+        seed: 0,
+        alpha: 0,
+      });
     }
 
     // Case 1: Actively drawing an item
@@ -15044,64 +16147,49 @@ const { evaluateTimelineAt } = (() => {
 
       if (item.kind === 'text-line') {
         const tip = evaluatePenForTextLine(item, tMs);
-        return {
-          tMs,
-          activeStepIndex,
-          itemProgress,
-          pen: {
-            visible: true,
-            worldX: tip.x,
-            worldY: tip.y,
-            penDown: tip.penDown,
-            lift: tip.lift,
-            color: item.color,
-            velocity: tip.velocity,
-            seed: Math.floor(tMs / 35),
-            alpha: 1,
-          },
-        };
+        return finish({
+          visible: true,
+          worldX: tip.x,
+          worldY: tip.y,
+          penDown: tip.penDown,
+          lift: tip.lift,
+          color: item.color,
+          velocity: tip.velocity,
+          seed: Math.floor(tMs / 35),
+          alpha: 1,
+        });
       }
 
       const pt = samplePointAlongStroke(item.stroke, p);
       const vel = Math.sin(p * Math.PI) * 0.65 + 0.35;
-      return {
-        tMs,
-        activeStepIndex,
-        itemProgress,
-        pen: {
-          visible: true,
-          worldX: pt.x,
-          worldY: pt.y,
-          penDown: true,
-          lift: 0,
-          color: item.color,
-          velocity: vel,
-          seed: Math.floor(tMs / 35),
-          alpha: 1,
-        },
-      };
+      return finish({
+        visible: true,
+        worldX: pt.x,
+        worldY: pt.y,
+        penDown: true,
+        lift: 0,
+        color: item.color,
+        velocity: vel,
+        seed: Math.floor(tMs / 35),
+        alpha: 1,
+      });
     }
 
     // Case 2: Before very first item starts (lead-in)
     const firstItem = allItems[0];
     if (tMs < firstItem.startMs) {
       const u = easeInOut(tMs / Math.max(1, firstItem.startMs));
-      return {
-        tMs,
-        activeStepIndex: 0,
-        itemProgress,
-        pen: {
-          visible: true,
-          worldX: firstItem.startPoint.x + (1 - u) * 28,
-          worldY: firstItem.startPoint.y + (1 - u) * 24,
-          penDown: false,
-          lift: (1 - u) * 14,
-          color: firstItem.color,
-          velocity: 0.15,
-          seed: 1,
-          alpha: u,
-        },
-      };
+      return finish({
+        visible: true,
+        worldX: firstItem.startPoint.x + (1 - u) * 28,
+        worldY: firstItem.startPoint.y + (1 - u) * 24,
+        penDown: false,
+        lift: (1 - u) * 14,
+        color: firstItem.color,
+        velocity: 0.15,
+        seed: 1,
+        alpha: u,
+      });
     }
 
     // Case 3: Outro after all drawing completed
@@ -15110,22 +16198,17 @@ const { evaluateTimelineAt } = (() => {
       const sinceEnd = tMs - lastItem.endMs;
       const retreatU = easeInOut(Math.min(1, sinceEnd / 550));
       const alpha = Math.max(0, 1 - retreatU);
-      return {
-        tMs,
-        activeStepIndex,
-        itemProgress,
-        pen: {
-          visible: alpha > 0.02,
-          worldX: lastItem.endPoint.x + retreatU * 48,
-          worldY: lastItem.endPoint.y + retreatU * 40,
-          penDown: false,
-          lift: 8 + retreatU * 18,
-          color: lastItem.color,
-          velocity: 0,
-          seed: 0,
-          alpha,
-        },
-      };
+      return finish({
+        visible: alpha > 0.02,
+        worldX: lastItem.endPoint.x + retreatU * 48,
+        worldY: lastItem.endPoint.y + retreatU * 40,
+        penDown: false,
+        lift: 8 + retreatU * 18,
+        color: lastItem.color,
+        velocity: 0,
+        seed: 0,
+        alpha,
+      });
     }
 
     // Case 4: Pen-up travel arc between previous completed item and next upcoming item
@@ -15146,22 +16229,17 @@ const { evaluateTimelineAt } = (() => {
     const moveStart = nextItem.startMs - moveWindow;
 
     if (tMs < moveStart) {
-      return {
-        tMs,
-        activeStepIndex,
-        itemProgress,
-        pen: {
-          visible: true,
-          worldX: prevItem.endPoint.x + 8,
-          worldY: prevItem.endPoint.y + 8,
-          penDown: false,
-          lift: 10,
-          color: nextItem.color,
-          velocity: 0,
-          seed: 0,
-          alpha: 0.92,
-        },
-      };
+      return finish({
+        visible: true,
+        worldX: prevItem.endPoint.x + 8,
+        worldY: prevItem.endPoint.y + 8,
+        penDown: false,
+        lift: 10,
+        color: nextItem.color,
+        velocity: 0,
+        seed: 0,
+        alpha: 0.92,
+      });
     }
 
     const u = easeInOut((tMs - moveStart) / Math.max(1, moveWindow));
@@ -15173,22 +16251,17 @@ const { evaluateTimelineAt } = (() => {
     const startX = gapSpan > 360 ? prevItem.endPoint.x + 8 : prevItem.endPoint.x;
     const startY = gapSpan > 360 ? prevItem.endPoint.y + 8 : prevItem.endPoint.y;
 
-    return {
-      tMs,
-      activeStepIndex,
-      itemProgress,
-      pen: {
-        visible: true,
-        worldX: startX + (nextItem.startPoint.x - startX) * u,
-        worldY: startY + (nextItem.startPoint.y - startY) * u,
-        penDown: false,
-        lift: Math.sin(rawU * Math.PI) * maxLift,
-        color: nextItem.color,
-        velocity: 0.2,
-        seed: 0,
-        alpha: 1,
-      },
-    };
+    return finish({
+      visible: true,
+      worldX: startX + (nextItem.startPoint.x - startX) * u,
+      worldY: startY + (nextItem.startPoint.y - startY) * u,
+      penDown: false,
+      lift: Math.sin(rawU * Math.PI) * maxLift,
+      color: nextItem.color,
+      velocity: 0.2,
+      seed: 0,
+      alpha: 1,
+    });
   }
   return { evaluateTimelineAt };
 })();
@@ -15540,6 +16613,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
     'transition',
     'transitionduration',
     'transition-duration',
+    'spotlight',
   ]);
   function unquote(val: string): string {
     const trimmed = val.trim();
@@ -15818,6 +16892,13 @@ const { parseProjectScript, generateScriptSpec } = (() => {
         ...(parsedTransDur !== undefined ? { durationMs: parsedTransDur } : {}),
       };
 
+      const rawSpotlight = (meta.spotlight ?? '').trim().toLowerCase();
+      const spotlight =
+        rawSpotlight === 'true' ||
+        rawSpotlight === '1' ||
+        rawSpotlight === 'on' ||
+        rawSpotlight === 'yes';
+
       const initialTitle =
         meta.title ??
         section.explicitTitle ??
@@ -15833,6 +16914,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
         handStyle,
         nodes: [],
         transitionOut: transitionConfig,
+        ...(spotlight ? { spotlight: true } : {}),
       };
 
       const layoutPlugin = layoutRegistry.getOrDefault(layoutMode);
@@ -15851,15 +16933,19 @@ const { parseProjectScript, generateScriptSpec } = (() => {
       }
 
       // Preserve explicit scene metadata title unless body explicitly declared `# Title`
+      const resolvedLayoutMode = meta.layout
+        ? layoutMode
+        : parsed.scene.layoutMode;
       const finalScene: LessonScene = {
         ...parsed.scene,
         id: baseScene.id,
         theme,
-        layoutMode,
+        layoutMode: resolvedLayoutMode,
         cameraMode,
         aspectRatio,
         handStyle,
         transitionOut: transitionConfig,
+        ...(spotlight ? { spotlight: true } : {}),
       };
       return finalScene;
     });
@@ -15958,6 +17044,9 @@ const { parseProjectScript, generateScriptSpec } = (() => {
       lines.push(`layout: ${scene.layoutMode}`);
       lines.push(`camera: ${scene.cameraMode}`);
       lines.push(`hand: ${scene.handStyle}`);
+      if (scene.spotlight) {
+        lines.push('spotlight: true');
+      }
       if (idx < project.scenes.length - 1 || scene.transitionOut?.type) {
         lines.push(
           `transition: ${scene.transitionOut?.type ?? 'chalkboard-eraser'}`
@@ -16031,7 +17120,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
       '',
       '- Optional top frontmatter (`--- ... ---`): `title`, `aspectRatio` (`16:9` | `9:16`), `subtitles` (`auto` | `off`).',
       '- Divide scenes with `=== scene ===` (or `=== scene: Scene Title ===`).',
-      '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
+      '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`, `spotlight`: `true` | `false`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
       '',
       '## 2. Currently Registered Plugins (Valid IDs)',
       '',
@@ -16215,7 +17304,8 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
     progress: number,
     baseFillOpacity: number,
     palette: ThemePalette,
-    allowShadow: boolean
+    allowShadow: boolean,
+    dimAlpha = 1
   ): void {
     if (!stroke.fillOpacity || stroke.fillOpacity <= 0 || stroke.points.length < 3) {
       return;
@@ -16227,7 +17317,7 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
       : allowShadow
       ? 0.22
       : baseFillOpacity;
-    const alpha = effectiveBaseOpacity * stroke.fillOpacity * fillReveal;
+    const alpha = effectiveBaseOpacity * stroke.fillOpacity * fillReveal * dimAlpha;
     if (alpha <= 0.005) return;
 
     const tracePath = () => {
@@ -16242,7 +17332,7 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
     if (isSurfaceCard && palette.cardShadow) {
       ctx.save();
       ctx.translate(palette.cardShadow.dx, palette.cardShadow.dy);
-      ctx.globalAlpha = fillReveal;
+      ctx.globalAlpha = fillReveal * dimAlpha;
       ctx.fillStyle = palette.cardShadow.color;
       tracePath();
       ctx.fill();
@@ -16304,6 +17394,11 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
       if (item.kind !== 'group-frame') continue;
       const p = evalState.itemProgress.get(item.id) ?? 0;
       if (p <= 0) continue;
+      const itemAlpha = evalState.itemOpacity?.get(item.id) ?? 1;
+      const strokeToDraw =
+        itemAlpha < 0.999
+          ? { ...item.stroke, opacity: item.stroke.opacity * itemAlpha }
+          : item.stroke;
       const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
       drawStrokeInteriorFill(
         ctx,
@@ -16312,9 +17407,10 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
         p,
         zoneFillOpacity,
         palette,
-        false
+        false,
+        itemAlpha
       );
-      presentation.drawStroke(ctx, item.stroke, p);
+      presentation.drawStroke(ctx, strokeToDraw, p);
     }
 
     // Pass B: Strokes (edges + node shapes)
@@ -16322,6 +17418,11 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
       if (item.kind !== 'stroke') continue;
       const p = evalState.itemProgress.get(item.id) ?? 0;
       if (p <= 0) continue;
+      const itemAlpha = evalState.itemOpacity?.get(item.id) ?? 1;
+      const strokeToDraw =
+        itemAlpha < 0.999
+          ? { ...item.stroke, opacity: item.stroke.opacity * itemAlpha }
+          : item.stroke;
       const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
       drawStrokeInteriorFill(
         ctx,
@@ -16330,9 +17431,10 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
         p,
         cardFillOpacity,
         palette,
-        true
+        true,
+        itemAlpha
       );
-      presentation.drawStroke(ctx, item.stroke, p);
+      presentation.drawStroke(ctx, strokeToDraw, p);
     }
 
     // Pass C: Text lines (edge label pills, group titles, node titles & subtitles)
@@ -16340,10 +17442,11 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
       if (item.kind !== 'text-line') continue;
       const lineProgress = evalState.itemProgress.get(item.id) ?? 0;
       if (lineProgress <= 0) continue;
+      const itemAlpha = evalState.itemOpacity?.get(item.id) ?? 1;
 
       if (item.isEdgeLabel || item.isGroupTitle) {
         ctx.save();
-        ctx.globalAlpha = Math.min(1, lineProgress * 3.5);
+        ctx.globalAlpha = Math.min(1, lineProgress * 3.5) * itemAlpha;
         ctx.fillStyle = palette.labelPillBg;
         ctx.strokeStyle = palette.labelPillBorder;
         ctx.lineWidth = 1;
@@ -16356,6 +17459,10 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
         ctx.restore();
       }
 
+      if (itemAlpha < 0.999) {
+        ctx.save();
+        ctx.globalAlpha *= itemAlpha;
+      }
       for (const span of item.spans) {
         let charP = 0;
         if (evalState.tMs >= span.endMs) {
@@ -16374,6 +17481,9 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
           charP,
           scratch
         );
+      }
+      if (itemAlpha < 0.999) {
+        ctx.restore();
       }
     }
 
@@ -16658,6 +17768,9 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
     for (const item of timeline.allItems) {
       const p = evalState.itemProgress.get(item.id) ?? 0;
       if (p <= 0) continue;
+      const rawOpacity = evalState.itemOpacity?.get(item.id);
+      const opacityProp =
+        rawOpacity !== undefined && rawOpacity < 0.999 ? { opacity: rawOpacity } : {};
 
       if (item.kind === 'group-frame') {
         groupFrames.push({
@@ -16665,6 +17778,7 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
           color: item.color,
           colorHex: resolveColorHex(scene.theme, item.color),
           progress: p,
+          ...opacityProp,
           stroke: item.stroke,
         });
       } else if (item.kind === 'stroke') {
@@ -16673,6 +17787,7 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
           color: item.color,
           colorHex: resolveColorHex(scene.theme, item.color),
           progress: p,
+          ...opacityProp,
           stroke: item.stroke,
         });
       } else if (item.kind === 'text-line') {
@@ -16714,6 +17829,7 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
           bgWidth: item.bgWidth,
           bgHeight: item.bgHeight,
           progress: p,
+          ...opacityProp,
           spans,
         });
       }
@@ -17169,9 +18285,13 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
         palette,
         false
       );
-      if (fillSvg) parts.push(fillSvg);
       const svg = renderStrokeSvg(gf.stroke, gf.colorHex, gf.progress, theme);
-      if (svg) parts.push(svg);
+      const combined = `${fillSvg}${svg}`;
+      if (!combined) continue;
+      const op = gf.opacity ?? 1;
+      parts.push(
+        op < 0.999 ? `<g opacity="${op.toFixed(3)}">${combined}</g>` : combined
+      );
     }
 
     const cardFillOpacity = palette.cardFillOpacity ?? 0.085;
@@ -17184,9 +18304,13 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
         palette,
         true
       );
-      if (fillSvg) parts.push(fillSvg);
       const svg = renderStrokeSvg(st.stroke, st.colorHex, st.progress, theme);
-      if (svg) parts.push(svg);
+      const combined = `${fillSvg}${svg}`;
+      if (!combined) continue;
+      const op = st.opacity ?? 1;
+      parts.push(
+        op < 0.999 ? `<g opacity="${op.toFixed(3)}">${combined}</g>` : combined
+      );
     }
 
     const maskDefs: string[] = [];
@@ -17194,6 +18318,10 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
     let maskSeq = 0;
 
     for (const line of snap.textLines) {
+      const lineOp = line.opacity ?? 1;
+      if (lineOp < 0.999) {
+        textEls.push(`<g opacity="${lineOp.toFixed(3)}">`);
+      }
       if (line.isEdgeLabel || line.isGroupTitle) {
         const pillAlpha = Math.min(1, line.progress * 3.5).toFixed(3);
         const rx = (line.centerX - line.bgWidth / 2).toFixed(2);
@@ -17219,6 +18347,7 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
       const escFont = escapeXml(
         extractFontFamilyFromCssFont(line.font, snap.fontFamily)
       );
+      const isMonoLine = /(?:mono|consolas|courier|menlo|jetbrains)/i.test(line.font);
 
       let i = 0;
       while (i < line.spans.length) {
@@ -17249,13 +18378,25 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
             const runRight = last.boxX + last.width - last.padX;
             const midX = ((runLeft + runRight) / 2).toFixed(2);
             const ty = (first.boxY + first.height * 0.52).toFixed(2);
-            textEls.push(
-              `<text x="${midX}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${first.fontSize.toFixed(
-                1
-              )}" font-weight="${boldWeight}" text-anchor="middle" dominant-baseline="central">${escapeXml(
-                runText
-              )}</text>`
-            );
+            if (isMonoLine) {
+              textEls.push(
+                `<text x="${runLeft.toFixed(
+                  2
+                )}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${first.fontSize.toFixed(
+                  1
+                )}" font-weight="${boldWeight}" text-anchor="start" dominant-baseline="central">${escapeXml(
+                  runText
+                )}</text>`
+              );
+            } else {
+              textEls.push(
+                `<text x="${midX}" y="${ty}" fill="${escColor}" font-family="${escFont}" font-size="${first.fontSize.toFixed(
+                  1
+                )}" font-weight="${boldWeight}" text-anchor="middle" dominant-baseline="central">${escapeXml(
+                  runText
+                )}</text>`
+              );
+            }
             i = j + 1;
             continue;
           }
@@ -17323,6 +18464,9 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
           }
         }
         i++;
+      }
+      if (lineOp < 0.999) {
+        textEls.push('</g>');
       }
     }
 

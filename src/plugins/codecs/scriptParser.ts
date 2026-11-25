@@ -23,6 +23,7 @@ import {
 } from '../../model/scene';
 import { SceneTextCodec } from '../contracts';
 import { shapeRegistry } from '../registry';
+import { isMermaidScript, parseMermaidToScene } from './mermaidCodec';
 import {
   extractTrailingMetaBlock,
   formatMetaString,
@@ -449,6 +450,9 @@ export function parseScriptToScene(
   script: string,
   base: LessonScene
 ): { scene: LessonScene; warnings: string[] } {
+  if (isMermaidScript(script)) {
+    return parseMermaidToScene(script, base);
+  }
   const warnings: string[] = [];
   const lines = stripMarkdownFence(script).replace(/\r\n/g, '\n').split('\n');
 

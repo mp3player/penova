@@ -389,6 +389,7 @@ export interface EvaluatedTextLineSnapshot {
   bgWidth: number;
   bgHeight: number;
   progress: number;
+  opacity?: number;
   spans: EvaluatedGlyphSnapshot[];
 }
 
@@ -397,6 +398,7 @@ export interface EvaluatedStrokeSnapshot {
   color: ChalkColor;
   colorHex: string;
   progress: number;
+  opacity?: number;
   stroke: StrokePath;
 }
 
@@ -405,6 +407,7 @@ export interface EvaluatedGroupFrameSnapshot {
   color: ChalkColor;
   colorHex: string;
   progress: number;
+  opacity?: number;
   stroke: StrokePath;
 }
 
@@ -522,6 +525,7 @@ export interface SceneNodePlugin {
   defaultProps?: Record<string, string | number | boolean>;
   snippet?: string;
   propFields?: readonly PropFieldDescriptor[];
+  isOverlay?: boolean;
   compose?(node: CustomSceneNode): SceneNode;
   measure?(
     node: CustomSceneNode,

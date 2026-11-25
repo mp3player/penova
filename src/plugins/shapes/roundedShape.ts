@@ -2,7 +2,6 @@ import { hashString, mulberry32 } from '../../sdk/random';
 import {
   buildRoundedRectPoints,
   buildStrokePath,
-  StrokePath,
 } from '../../sdk/strokePath';
 import { ShapePlugin } from '../contracts';
 import { clipRayToRect } from './clipHelpers';
@@ -27,10 +26,8 @@ export const roundedShapePlugin: ShapePlugin = {
     const y = cy - height / 2;
     const rand = mulberry32(hashString(`shape:${id}`));
     const baseWidth = emphasized ? 3.3 : 2.6;
-    const strokes: StrokePath[] = [];
-
     const primaryPts = buildRoundedRectPoints(x, y, width, height, 14, rand, 4);
-    strokes.push(
+    return [
       buildStrokePath(`${id}-box-1`, primaryPts, {
         width: baseWidth,
         color,
@@ -39,30 +36,7 @@ export const roundedShapePlugin: ShapePlugin = {
         surfaceShadow: true,
         dashed,
         speedFactor: 1.12,
-      })
-    );
-
-    if (emphasized) {
-      const accentPts = buildRoundedRectPoints(
-        x - 3.5,
-        y - 3.5,
-        width + 7,
-        height + 7,
-        16,
-        rand,
-        3
-      );
-      strokes.push(
-        buildStrokePath(`${id}-box-2`, accentPts, {
-          width: 1.8,
-          color,
-          opacity: 0.52,
-          dashed,
-          speedFactor: 1.4,
-        })
-      );
-    }
-
-    return strokes;
+      }),
+    ];
   },
 };

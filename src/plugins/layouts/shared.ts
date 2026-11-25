@@ -1,7 +1,9 @@
 import {
   ConnectorSceneNode,
+  isCustomSceneNode,
   Point,
   Rect,
+  resolveCustomNodeKind,
   SceneNode,
 } from '../../model/scene';
 import {
@@ -21,8 +23,15 @@ export interface SplitSceneNodes {
   unboundConnectors: ConnectorSceneNode[];
 }
 
+export function isOverlaySceneNode(node: SceneNode): boolean {
+  if (!isCustomSceneNode(node)) return false;
+  return Boolean(sceneNodeRegistry.get(resolveCustomNodeKind(node))?.isOverlay);
+}
+
 export function splitSceneNodes(nodes: SceneNode[]): SplitSceneNodes {
-  const vertices = nodes.filter((n) => n.type !== 'connector');
+  const vertices = nodes.filter(
+    (n) => n.type !== 'connector' && !isOverlaySceneNode(n)
+  );
   const ownerVertexIdMap = new Map<string, string>();
   const registerOwner = (node: SceneNode, topId: string) => {
     ownerVertexIdMap.set(node.id, topId);

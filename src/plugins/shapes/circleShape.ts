@@ -1,6 +1,6 @@
 import { Point } from '../../model/scene';
 import { hashString, mulberry32 } from '../../sdk/random';
-import { buildStrokePath, StrokePath } from '../../sdk/strokePath';
+import { buildStrokePath } from '../../sdk/strokePath';
 import { ShapePlugin } from '../contracts';
 import { clipRayToEllipse } from './clipHelpers';
 
@@ -30,7 +30,6 @@ export const circleShapePlugin: ShapePlugin = {
     const { id, cx, cy, width, height, color, emphasized, dashed } = input;
     const rand = mulberry32(hashString(`shape:${id}`));
     const baseWidth = emphasized ? 3.3 : 2.6;
-    const strokes: StrokePath[] = [];
 
     const rx = width / 2;
     const ry = height / 2;
@@ -54,7 +53,7 @@ export const circleShapePlugin: ShapePlugin = {
       });
     }
 
-    strokes.push(
+    return [
       buildStrokePath(`${id}-circle-1`, pts, {
         width: baseWidth,
         color,
@@ -63,30 +62,7 @@ export const circleShapePlugin: ShapePlugin = {
         surfaceShadow: true,
         dashed,
         speedFactor: 1.1,
-      })
-    );
-
-    if (emphasized) {
-      const pts2: Point[] = [];
-      for (let i = 0; i <= 34; i++) {
-        const t = i / 34;
-        const ang = startAngle + 0.35 + Math.PI * 1.92 * t;
-        pts2.push({
-          x: cx + Math.cos(ang) * (rx + 2.5 + (rand() - 0.5) * 3),
-          y: cy + Math.sin(ang) * (ry + 2.5 + (rand() - 0.5) * 3),
-        });
-      }
-      strokes.push(
-        buildStrokePath(`${id}-circle-2`, pts2, {
-          width: 1.9,
-          color,
-          opacity: 0.55,
-          dashed,
-          speedFactor: 1.35,
-        })
-      );
-    }
-
-    return strokes;
+      }),
+    ];
   },
 };

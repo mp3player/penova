@@ -161,6 +161,7 @@ export interface LessonScene {
   nodes: SceneNode[];
   customSteps?: TeachingStep[];
   transitionOut?: SceneTransitionConfig;
+  spotlight?: boolean;
 }
 
 export function cloneSceneNode(node: SceneNode): SceneNode {
@@ -373,7 +374,10 @@ export function clearAllOffsets(nodes: SceneNode[]): SceneNode[] {
  * starts from root / zero-in-degree vertices, advancing via BFS + topological readiness
  * so each new step draws incoming bound connectors together with the newly revealed node.
  */
-export function deriveTeachingSteps(scene: LessonScene): TeachingStep[] {
+export function deriveTeachingSteps(
+  scene: LessonScene,
+  overlayNodeIds?: ReadonlySet<string>
+): TeachingStep[] {
   if (scene.customSteps && scene.customSteps.length > 0) {
     return scene.customSteps;
   }
@@ -401,8 +405,15 @@ export function deriveTeachingSteps(scene: LessonScene): TeachingStep[] {
     ownerTopId.has(n.fromId!) &&
     ownerTopId.has(n.toId!);
 
+  const isOverlayVertex = (n: SceneNode): boolean =>
+    overlayNodeIds
+      ? overlayNodeIds.has(n.id)
+      : isCustomSceneNode(n) && resolveCustomNodeKind(n) === 'annotate';
+
   const boundConnectors = scene.nodes.filter(isBoundConnector);
-  const vertices = scene.nodes.filter((n) => !isBoundConnector(n));
+  const allVertices = scene.nodes.filter((n) => !isBoundConnector(n));
+  const vertices = allVertices.filter((n) => !isOverlayVertex(n));
+  const overlayVertices = allVertices.filter((n) => isOverlayVertex(n));
 
   const nodeMap = new Map<string, SceneNode>();
   const orderIndex = new Map<string, number>();
@@ -543,6 +554,20 @@ export function deriveTeachingSteps(scene: LessonScene): TeachingStep[] {
         nodeIds: leftoverConnectors.map((c) => c.id),
       });
     }
+  }
+
+  for (const overlayNode of overlayVertices) {
+    const rawPause = overlayNode.meta?.pause;
+    const pauseMs =
+      typeof rawPause === 'number' && Number.isFinite(rawPause) && rawPause >= 0
+        ? Math.round(rawPause)
+        : undefined;
+    steps.push({
+      id: `step-${steps.length + 1}-${overlayNode.id}`,
+      title: overlayNode.name || '标注',
+      nodeIds: [overlayNode.id],
+      ...(pauseMs !== undefined ? { pauseMs } : {}),
+    });
   }
 
   return steps;

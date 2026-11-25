@@ -1,4 +1,4 @@
-import { CustomSceneNode, isCustomSceneNode } from '../../model/scene';
+import { ChalkColor, CustomSceneNode, isCustomSceneNode } from '../../model/scene';
 import { defineProps, prop } from '../../sdk/propSchema';
 import { hashString, mulberry32 } from '../../sdk/random';
 import {
@@ -10,6 +10,50 @@ import { SceneNodePlugin } from '../contracts';
 import { clipRayToRect } from '../shapes/clipHelpers';
 
 const CODE_MONO_FONT = '"JetBrains Mono", "SF Mono", "Consolas", monospace';
+const VALID_CHALK_COLORS: readonly ChalkColor[] = [
+  'white',
+  'yellow',
+  'cyan',
+  'pink',
+  'green',
+  'orange',
+];
+
+function resolveHighlightColor(raw: string | undefined): ChalkColor {
+  const val = (raw ?? '').trim().toLowerCase();
+  return (VALID_CHALK_COLORS as readonly string[]).includes(val)
+    ? (val as ChalkColor)
+    : 'yellow';
+}
+
+export function parseHighlightLineSet(
+  raw: string | undefined,
+  totalLines: number
+): Set<number> {
+  const out = new Set<number>();
+  const text = (raw ?? '').trim();
+  if (!text || totalLines <= 0) return out;
+
+  for (const token of text.split(/[\s,;]+/)) {
+    if (!token) continue;
+    const rangeMatch = /^(\d+)\s*[-–—]\s*(\d+)$/.exec(token);
+    if (rangeMatch) {
+      const a = Number(rangeMatch[1]);
+      const b = Number(rangeMatch[2]);
+      const lo = Math.max(1, Math.min(a, b));
+      const hi = Math.min(totalLines, Math.max(a, b));
+      for (let lineNo = lo; lineNo <= hi; lineNo++) {
+        out.add(lineNo - 1);
+      }
+      continue;
+    }
+    const single = Number(token);
+    if (Number.isInteger(single) && single >= 1 && single <= totalLines) {
+      out.add(single - 1);
+    }
+  }
+  return out;
+}
 
 const codeProps = defineProps({
   title: prop.string({
@@ -27,6 +71,17 @@ const codeProps = defineProps({
     step: 10,
     aliases: ['w'],
     description: 'Explicit window width',
+  }),
+  highlight: prop.string({
+    default: '',
+    aliases: ['highlightLine', 'hl'],
+    description: '1-based lines or ranges to highlight (e.g. "2" or "2,4-5")',
+  }),
+  highlightColor: prop.string({
+    default: 'yellow',
+    format: 'color',
+    aliases: ['hlColor'],
+    description: 'Marker highlight color',
   }),
 });
 
@@ -81,7 +136,7 @@ export const codeNodePlugin: SceneNodePlugin = {
     const width =
       explicitW !== undefined
         ? explicitW
-        : Math.max(230, Math.min(540, Math.ceil(widest)));
+        : Math.max(240, Math.min(640, Math.ceil(widest)));
     const height = Math.max(96, 48 + lines.length * 22 + 14);
     return { width, height, payload: { title, lines } };
   },
@@ -187,14 +242,23 @@ export const codeNodePlugin: SceneNodePlugin = {
       gapAfterMs: 28,
     });
 
-    // 5. Progressive code lines
+    const highlightedSet = parseHighlightLineSet(
+      codeProps.readField(node.props, 'highlight'),
+      lines.length
+    );
+    const hlColor = resolveHighlightColor(
+      codeProps.readField(node.props, 'highlightColor')
+    );
+
+    // 5. Progressive code lines (with optional hand-drawn highlighter sweep)
     lines.forEach((line, idx) => {
+      const cy = y + 48 + idx * 22;
       helpers.pushTextLine({
         id: `${positioned.id}-code-${idx}`,
         text: line,
         boxLeftX: x + 18,
         boxWidth: Math.max(120, positioned.width - 36),
-        centerY: y + 48 + idx * 22,
+        centerY: cy,
         align: 'left',
         fontSize: 13.5,
         fontWeight: 400,
@@ -203,6 +267,36 @@ export const codeNodePlugin: SceneNodePlugin = {
         msPerChar: 28,
         gapAfterMs: 24,
       });
+
+      if (highlightedSet.has(idx)) {
+        const usableW = Math.max(120, positioned.width - 36);
+        const approxLineW = Math.min(usableW, Math.max(64, line.length * 8.3 + 12));
+        const hlStartX = x + 16;
+        const hlEndX = Math.min(x + positioned.width - 14, hlStartX + approxLineW);
+        const hlOpacity =
+          helpers.theme === 'whiteboard' || helpers.theme === 'letter-paper'
+            ? 0.34
+            : 0.28;
+        helpers.pushStroke(
+          buildStrokePath(
+            `${positioned.id}-hl-${idx}`,
+            sketchSegment(
+              { x: hlStartX, y: cy + 0.5 },
+              { x: hlEndX, y: cy - 0.5 },
+              rand,
+              0.85,
+              20
+            ),
+            {
+              width: 17,
+              color: hlColor,
+              opacity: hlOpacity,
+              speedFactor: 1.55,
+            }
+          ),
+          28
+        );
+      }
     });
   },
 };

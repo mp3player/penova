@@ -37,13 +37,16 @@ Default choices if unspecified: `aspectRatio: 16:9`, `subtitles: auto`, `hand: h
 Write a `.penova.md` file with optional project frontmatter followed by `=== scene ===` blocks:
 
 1. **Diagram scenes** (`flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, `freeform`):
+   - Optional scene metadata: `spotlight: true` dims previously drawn steps while keeping the active node (and any annotated target) at full brightness, then restores everything during the outro.
+   - Supports direct **Mermaid flowcharts** (`flowchart LR` / `flowchart TD` / `graph TD` / `subgraph` / `-.->` / chained edges) inside a scene body via auto-detection.
    - Cards: `[root|step|concept|highlight|note] Label | Optional Subtitle {color, shape: rounded|circle|cloud|underline|diamond|none, icon: <iconName>, group, say: "...", pause: <ms>}`
    - Atomic text / shapes: `[text] Content {color, size, bold, align, x, y}`, `[shape:<id>] Name {color, fit, dashed, w, h}`
    - Built-in visual widget & custom plugin nodes:
      - `[node:icon] Name {color, icon: <iconName>, size: 30}`
      - `[node:sketch] Name {color, icon: <iconName>, svg: "<path d...>", title: "Caption", w, h}`
-     - `[node:code] Name {color, title: "file.ts", lines: "line1\\nline2", w}`
+     - `[node:code] Name {color, title: "file.ts", lines: "line1\\nline2", highlight: "2,4-5", highlightColor: yellow, w}`
      - `[node:chart] Name {color, title: "Metrics", values: "20,50,100", labels: "A,B,C", highlight: 2}`
+     - `[node:annotate] Name {style: circle|cross|highlight|underline|check, target: "Target Label or #id", label: "Callout", color: pink}` (zero-displacement overlay emphasis)
      - Built-in icon names: `browser`, `server`, `database`, `globe`, `lock`, `handshake`, `cpu`, `brain`, `spark`, `code`, `puzzle`, `user`, `document`, `rocket`, `lightbulb`, `cat`, `chart`, `gear`, `check`, `layers`
      - Generic custom plugin: `[node:<kind>] Name {color, <prop>: <val>, say: "..."}`
    - Composite groups: `[group] Name {color, arrange: card|stack|free, gap}` + 2-space indented children

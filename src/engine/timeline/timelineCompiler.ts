@@ -14,6 +14,7 @@ import {
   presentationRegistry,
   sceneNodeRegistry,
 } from '../../plugins/registry';
+import { isOverlaySceneNode } from '../../plugins/layouts/shared';
 import { ComputedLayout, PositionedSceneNode } from '../layout/diagramLayout';
 import { resolveColorHex } from '../render/themes';
 import {
@@ -186,10 +187,16 @@ export function compileTimeline(
   const layoutPlugin = layoutRegistry.getOrDefault(scene.layoutMode);
   const presentation = presentationRegistry.getOrDefault(scene.theme);
   const boardFontFamily = presentation.fontFamily;
+  const overlayNodeIds = new Set(
+    scene.nodes.filter(isOverlaySceneNode).map((n) => n.id)
+  );
   const rawSteps =
     scene.customSteps && scene.customSteps.length > 0
       ? scene.customSteps
-      : layoutPlugin.deriveSteps?.(scene) ?? deriveTeachingSteps(scene);
+      : layoutPlugin.deriveSteps &&
+        layoutPlugin.deriveSteps !== deriveTeachingSteps
+      ? layoutPlugin.deriveSteps(scene)
+      : deriveTeachingSteps(scene, overlayNodeIds);
 
   const zoneByTitle = new Map(layout.zones.map((g) => [g.title, g]));
   const drawnZones = new Set<string>();
@@ -206,6 +213,7 @@ export function compileTimeline(
     let itemCursor = drawStartMs;
     const items: CompiledItem[] = [];
     const stepRects: Rect[] = [];
+    let currentNodeId: string | undefined;
 
     const pushStroke = (stroke: StrokePath, gapAfterMs = 45) => {
       const dur = strokeDurationMs(stroke);
@@ -218,6 +226,8 @@ export function compileTimeline(
         stroke,
         startPoint: samplePointAlongStroke(stroke, 0),
         endPoint: samplePointAlongStroke(stroke, 1),
+        stepIndex,
+        nodeId: currentNodeId,
       };
       items.push(item);
       allItems.push(item);
@@ -250,6 +260,8 @@ export function compileTimeline(
             stroke: fs,
             startPoint: samplePointAlongStroke(fs, 0),
             endPoint: samplePointAlongStroke(fs, 1),
+            stepIndex,
+            nodeId: zoneBox.id,
           };
           items.push(frameItem);
           allItems.push(frameItem);
@@ -273,6 +285,8 @@ export function compileTimeline(
           82,
           { isGroupTitle: true }
         );
+        titleItem.stepIndex = stepIndex;
+        titleItem.nodeId = zoneBox.id;
         items.push(titleItem);
         allItems.push(titleItem);
         itemCursor = titleItem.endMs + 95;
@@ -287,136 +301,168 @@ export function compileTimeline(
 
     const compilePositionedNode = (curr: PositionedSceneNode, insideCard = false) => {
       if (curr.node.visible === false) return;
-
-      if (curr.node.type === 'shape') {
-        const strokes = generateShapeStrokes(curr);
-        strokes.forEach((s, idx) => {
-          pushStroke(s, idx === strokes.length - 1 ? 65 : 34);
-        });
-        return;
-      }
-
-      if (curr.node.type === 'connector') {
-        const cStrokes = generateConnectorStrokes(curr, curr.node.color);
-        cStrokes.forEach((cs, idx) => {
-          pushStroke(cs, idx === cStrokes.length - 1 ? 65 : 32);
-        });
-
-        if (curr.node.label && curr.labelPoint) {
-          const edgeFont = `400 14px ${boardFontFamily}`;
-          const labelItem = compileTextLineItem(
-            `edge-label-${curr.id}`,
-            curr.node.label,
-            curr.labelPoint.x - 100,
-            200,
-            curr.labelPoint.y - 2,
-            'center',
-            0,
-            edgeFont,
-            14,
-            curr.node.color,
-            scene.theme,
-            itemCursor,
-            82,
-            { isEdgeLabel: true }
-          );
-          items.push(labelItem);
-          allItems.push(labelItem);
-          itemCursor = labelItem.endMs + 95;
-        }
-        return;
-      }
-
-      if (curr.node.type === 'text') {
-        if (curr.measured.type !== 'text') return;
-        const m = curr.measured;
-        const weight = curr.node.fontWeight ?? 400;
-        const lineFont = `${weight} ${m.fontSize}px ${boardFontFamily}`;
-        const boxLeftX = curr.cx - curr.width / 2;
-        const msPerChar = m.fontSize >= 20 ? 122 : 88;
-        const textColor: ChalkColor =
-          insideCard && presentation.palette.preferNeutralCardTitle
-            ? 'white'
-            : curr.node.color;
-        let yCursor = curr.cy - m.height / 2;
-
-        m.lines.forEach((line, lineIdx) => {
-          const lineCy = yCursor + m.lineHeight / 2;
-          const lineIndent = lineIdx === 0 ? m.indentPx : 0;
-          const tItem = compileTextLineItem(
-            `${curr.id}-line-${lineIdx}`,
-            line,
-            boxLeftX,
-            curr.width,
-            lineCy,
-            m.align,
-            lineIndent,
-            lineFont,
-            m.fontSize,
-            textColor,
-            scene.theme,
-            itemCursor,
-            msPerChar
-          );
-          items.push(tItem);
-          allItems.push(tItem);
-          itemCursor = tItem.endMs + 40;
-          yCursor += m.lineHeight;
-        });
-        return;
-      }
-
-      if (curr.node.type === 'group') {
-        const nextInsideCard = insideCard || curr.node.meta?.isCard === true;
-        for (const child of curr.children ?? []) {
-          compilePositionedNode(child, nextInsideCard);
-        }
-        return;
-      }
-
-      if (isCustomSceneNode(curr.node)) {
-        const kind =
-          curr.measured.type === 'custom'
-            ? curr.measured.kind
-            : resolveCustomNodeKind(curr.node);
-        const plugin = sceneNodeRegistry.get(kind);
-        if (plugin?.compile) {
-          let customTextSeq = 0;
-          const nodeColor = curr.node.color;
-          plugin.compile(curr, {
-            theme: scene.theme,
-            fontFamily: boardFontFamily,
-            pushStroke,
-            pushTextLine: (input) => {
-              const fontSize = input.fontSize ?? 18;
-              const weight = input.fontWeight ?? 400;
-              const lineFontFamily = input.fontFamily ?? boardFontFamily;
-              const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
-              const tItem = compileTextLineItem(
-                input.id ?? `${curr.id}-text-${customTextSeq++}`,
-                input.text,
-                input.boxLeftX,
-                input.boxWidth,
-                input.centerY,
-                input.align ?? 'center',
-                input.indentPx ?? 0,
-                lineFont,
-                fontSize,
-                input.color ?? nodeColor,
-                scene.theme,
-                itemCursor,
-                input.msPerChar ?? (fontSize >= 20 ? 122 : 88)
-              );
-              items.push(tItem);
-              allItems.push(tItem);
-              itemCursor = tItem.endMs + (input.gapAfterMs ?? 40);
-            },
+      const prevNodeId = currentNodeId;
+      currentNodeId = curr.id;
+      try {
+        if (curr.node.type === 'shape') {
+          const strokes = generateShapeStrokes(curr);
+          strokes.forEach((s, idx) => {
+            pushStroke(s, idx === strokes.length - 1 ? 65 : 34);
           });
           return;
         }
-        for (const child of curr.children ?? []) {
-          compilePositionedNode(child);
+
+        if (curr.node.type === 'connector') {
+          const cStrokes = generateConnectorStrokes(curr, curr.node.color);
+          cStrokes.forEach((cs, idx) => {
+            pushStroke(cs, idx === cStrokes.length - 1 ? 65 : 32);
+          });
+
+          if (curr.node.label && curr.labelPoint) {
+            const edgeFont = `400 14px ${boardFontFamily}`;
+            const labelItem = compileTextLineItem(
+              `edge-label-${curr.id}`,
+              curr.node.label,
+              curr.labelPoint.x - 100,
+              200,
+              curr.labelPoint.y - 2,
+              'center',
+              0,
+              edgeFont,
+              14,
+              curr.node.color,
+              scene.theme,
+              itemCursor,
+              82,
+              { isEdgeLabel: true }
+            );
+            labelItem.stepIndex = stepIndex;
+            labelItem.nodeId = curr.id;
+            items.push(labelItem);
+            allItems.push(labelItem);
+            itemCursor = labelItem.endMs + 95;
+          }
+          return;
         }
+
+        if (curr.node.type === 'text') {
+          if (curr.measured.type !== 'text') return;
+          const m = curr.measured;
+          const weight = curr.node.fontWeight ?? 400;
+          const lineFont = `${weight} ${m.fontSize}px ${boardFontFamily}`;
+          const boxLeftX = curr.cx - curr.width / 2;
+          const msPerChar = m.fontSize >= 20 ? 122 : 88;
+          const textColor: ChalkColor =
+            insideCard && presentation.palette.preferNeutralCardTitle
+              ? 'white'
+              : curr.node.color;
+          let yCursor = curr.cy - m.height / 2;
+
+          m.lines.forEach((line, lineIdx) => {
+            const lineCy = yCursor + m.lineHeight / 2;
+            const lineIndent = lineIdx === 0 ? m.indentPx : 0;
+            const tItem = compileTextLineItem(
+              `${curr.id}-line-${lineIdx}`,
+              line,
+              boxLeftX,
+              curr.width,
+              lineCy,
+              m.align,
+              lineIndent,
+              lineFont,
+              m.fontSize,
+              textColor,
+              scene.theme,
+              itemCursor,
+              msPerChar
+            );
+            tItem.stepIndex = stepIndex;
+            tItem.nodeId = curr.id;
+            items.push(tItem);
+            allItems.push(tItem);
+            itemCursor = tItem.endMs + 40;
+            yCursor += m.lineHeight;
+          });
+          return;
+        }
+
+        if (curr.node.type === 'group') {
+          const nextInsideCard = insideCard || curr.node.meta?.isCard === true;
+          for (const child of curr.children ?? []) {
+            compilePositionedNode(child, nextInsideCard);
+          }
+          return;
+        }
+
+        if (isCustomSceneNode(curr.node)) {
+          const kind =
+            curr.measured.type === 'custom'
+              ? curr.measured.kind
+              : resolveCustomNodeKind(curr.node);
+          const plugin = sceneNodeRegistry.get(kind);
+          if (plugin?.compile) {
+            let customTextSeq = 0;
+            const nodeColor = curr.node.color;
+            plugin.compile(curr, {
+              theme: scene.theme,
+              fontFamily: boardFontFamily,
+              pushStroke,
+              pushTextLine: (input) => {
+                const fontSize = input.fontSize ?? 18;
+                const weight = input.fontWeight ?? 400;
+                const lineFontFamily = input.fontFamily ?? boardFontFamily;
+                const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
+                const tItem = compileTextLineItem(
+                  input.id ?? `${curr.id}-text-${customTextSeq++}`,
+                  input.text,
+                  input.boxLeftX,
+                  input.boxWidth,
+                  input.centerY,
+                  input.align ?? 'center',
+                  input.indentPx ?? 0,
+                  lineFont,
+                  fontSize,
+                  input.color ?? nodeColor,
+                  scene.theme,
+                  itemCursor,
+                  input.msPerChar ?? (fontSize >= 20 ? 122 : 88)
+                );
+                tItem.stepIndex = stepIndex;
+                tItem.nodeId = curr.id;
+                items.push(tItem);
+                allItems.push(tItem);
+                itemCursor = tItem.endMs + (input.gapAfterMs ?? 40);
+              },
+            });
+            return;
+          }
+          for (const child of curr.children ?? []) {
+            compilePositionedNode(child);
+          }
+        }
+      } finally {
+        currentNodeId = prevNodeId;
+      }
+    };
+
+    const focusNodeSet = new Set<string>(step.nodeIds);
+    const collectSubtreeIds = (p: PositionedSceneNode) => {
+      focusNodeSet.add(p.id);
+      const resolvedTargetId =
+        p.measured.type === 'custom' && p.measured.payload
+          ? (p.measured.payload as Record<string, unknown>).resolvedTargetId
+          : undefined;
+      if (typeof resolvedTargetId === 'string') {
+        focusNodeSet.add(resolvedTargetId);
+        const targetNode = layout.nodeMap.get(resolvedTargetId);
+        if (targetNode) {
+          for (const child of targetNode.children ?? []) {
+            collectSubtreeIds(child);
+          }
+        }
+      }
+      for (const child of p.children ?? []) {
+        collectSubtreeIds(child);
       }
     };
 
@@ -424,6 +470,7 @@ export function compileTimeline(
     for (const nodeId of step.nodeIds) {
       const pNode = layout.nodeMap.get(nodeId);
       if (!pNode || pNode.node.visible === false) continue;
+      collectSubtreeIds(pNode);
 
       if (
         pNode.node.type === 'connector' &&
@@ -455,6 +502,19 @@ export function compileTimeline(
       compilePositionedNode(pNode);
     }
 
+    // Keep any enclosing zone frame bright while nodes in that zone are focused
+    for (const fId of Array.from(focusNodeSet)) {
+      const pNode = layout.nodeMap.get(fId);
+      if (!pNode || pNode.node.type === 'connector') continue;
+      const rawZone = pNode.node.meta?.zone;
+      const zoneTitle =
+        typeof rawZone === 'string' && rawZone.trim() ? rawZone.trim() : '核心概念';
+      const zoneBox = zoneByTitle.get(zoneTitle);
+      if (zoneBox) {
+        focusNodeSet.add(zoneBox.id);
+      }
+    }
+
     const drawEndMs =
       items.length > 0 ? items[items.length - 1].endMs : drawStartMs + 200;
     const pauseMs = step.pauseMs ?? 420;
@@ -477,6 +537,7 @@ export function compileTimeline(
       items,
       focusBounds,
       cumulativeBounds,
+      focusNodeIds: Array.from(focusNodeSet),
     });
 
     cursorMs = endMs;
@@ -493,5 +554,6 @@ export function compileTimeline(
     totalDurationMs,
     layout,
     fullBounds: layout.bounds,
+    spotlight: scene.spotlight === true,
   };
 }

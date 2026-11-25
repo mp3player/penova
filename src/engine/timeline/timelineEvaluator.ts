@@ -66,6 +66,75 @@ function evaluatePenForTextLine(
   };
 }
 
+function computeSpotlightItemOpacities(
+  timeline: CompiledTimeline,
+  tMs: number,
+  activeStepIndex: number
+): Map<string, number> | undefined {
+  if (!timeline.spotlight || timeline.steps.length <= 1) {
+    return undefined;
+  }
+
+  const dimFloor = 0.26;
+  const fadeMs = 260;
+  const outroFadeMs = 420;
+  const focusSets = timeline.steps.map(
+    (s) => new Set(s.focusNodeIds ?? s.step.nodeIds)
+  );
+  const lastStepIdx = timeline.steps.length - 1;
+  const inOutro = tMs >= timeline.outroStartMs;
+  const outroU = inOutro
+    ? easeInOut(Math.min(1, (tMs - timeline.outroStartMs) / outroFadeMs))
+    : 0;
+
+  const currStep = timeline.steps[activeStepIndex];
+  const stepFadeU = currStep
+    ? easeInOut(Math.min(1, Math.max(0, tMs - currStep.startMs) / fadeMs))
+    : 1;
+
+  const map = new Map<string, number>();
+
+  for (const item of timeline.allItems) {
+    if (inOutro) {
+      const lastFocused = item.nodeId
+        ? focusSets[lastStepIdx].has(item.nodeId)
+        : item.stepIndex === lastStepIdx;
+      const base = lastFocused ? 1 : dimFloor;
+      map.set(item.id, base + (1 - base) * outroU);
+      continue;
+    }
+
+    if (activeStepIndex === 0) {
+      map.set(item.id, 1);
+      continue;
+    }
+
+    if (item.stepIndex === activeStepIndex) {
+      map.set(item.id, 1);
+      continue;
+    }
+
+    const prevFocused = item.nodeId
+      ? focusSets[activeStepIndex - 1].has(item.nodeId)
+      : item.stepIndex === activeStepIndex - 1;
+    const currFocused = item.nodeId
+      ? focusSets[activeStepIndex].has(item.nodeId)
+      : item.stepIndex === activeStepIndex;
+
+    if (prevFocused && currFocused) {
+      map.set(item.id, 1);
+    } else if (!prevFocused && !currFocused) {
+      map.set(item.id, dimFloor);
+    } else if (prevFocused && !currFocused) {
+      map.set(item.id, 1 - (1 - dimFloor) * stepFadeU);
+    } else {
+      map.set(item.id, dimFloor + (1 - dimFloor) * stepFadeU);
+    }
+  }
+
+  return map;
+}
+
 export function evaluateTimelineAt(
   timeline: CompiledTimeline,
   rawTMs: number
@@ -80,6 +149,19 @@ export function evaluateTimelineAt(
       break;
     }
   }
+
+  const itemOpacity = computeSpotlightItemOpacities(
+    timeline,
+    tMs,
+    activeStepIndex
+  );
+  const finish = (pen: TimelineEvalState['pen']): TimelineEvalState => ({
+    tMs,
+    activeStepIndex,
+    itemProgress,
+    ...(itemOpacity ? { itemOpacity } : {}),
+    pen,
+  });
 
   const allItems = timeline.allItems;
   let activeItemIdx = -1;
@@ -99,22 +181,17 @@ export function evaluateTimelineAt(
 
   // Default hidden pen if empty timeline
   if (allItems.length === 0) {
-    return {
-      tMs,
-      activeStepIndex: 0,
-      itemProgress,
-      pen: {
-        visible: false,
-        worldX: 0,
-        worldY: 0,
-        penDown: false,
-        lift: 0,
-        color: 'white',
-        velocity: 0,
-        seed: 0,
-        alpha: 0,
-      },
-    };
+    return finish({
+      visible: false,
+      worldX: 0,
+      worldY: 0,
+      penDown: false,
+      lift: 0,
+      color: 'white',
+      velocity: 0,
+      seed: 0,
+      alpha: 0,
+    });
   }
 
   // Case 1: Actively drawing an item
@@ -124,64 +201,49 @@ export function evaluateTimelineAt(
 
     if (item.kind === 'text-line') {
       const tip = evaluatePenForTextLine(item, tMs);
-      return {
-        tMs,
-        activeStepIndex,
-        itemProgress,
-        pen: {
-          visible: true,
-          worldX: tip.x,
-          worldY: tip.y,
-          penDown: tip.penDown,
-          lift: tip.lift,
-          color: item.color,
-          velocity: tip.velocity,
-          seed: Math.floor(tMs / 35),
-          alpha: 1,
-        },
-      };
+      return finish({
+        visible: true,
+        worldX: tip.x,
+        worldY: tip.y,
+        penDown: tip.penDown,
+        lift: tip.lift,
+        color: item.color,
+        velocity: tip.velocity,
+        seed: Math.floor(tMs / 35),
+        alpha: 1,
+      });
     }
 
     const pt = samplePointAlongStroke(item.stroke, p);
     const vel = Math.sin(p * Math.PI) * 0.65 + 0.35;
-    return {
-      tMs,
-      activeStepIndex,
-      itemProgress,
-      pen: {
-        visible: true,
-        worldX: pt.x,
-        worldY: pt.y,
-        penDown: true,
-        lift: 0,
-        color: item.color,
-        velocity: vel,
-        seed: Math.floor(tMs / 35),
-        alpha: 1,
-      },
-    };
+    return finish({
+      visible: true,
+      worldX: pt.x,
+      worldY: pt.y,
+      penDown: true,
+      lift: 0,
+      color: item.color,
+      velocity: vel,
+      seed: Math.floor(tMs / 35),
+      alpha: 1,
+    });
   }
 
   // Case 2: Before very first item starts (lead-in)
   const firstItem = allItems[0];
   if (tMs < firstItem.startMs) {
     const u = easeInOut(tMs / Math.max(1, firstItem.startMs));
-    return {
-      tMs,
-      activeStepIndex: 0,
-      itemProgress,
-      pen: {
-        visible: true,
-        worldX: firstItem.startPoint.x + (1 - u) * 28,
-        worldY: firstItem.startPoint.y + (1 - u) * 24,
-        penDown: false,
-        lift: (1 - u) * 14,
-        color: firstItem.color,
-        velocity: 0.15,
-        seed: 1,
-        alpha: u,
-      },
-    };
+    return finish({
+      visible: true,
+      worldX: firstItem.startPoint.x + (1 - u) * 28,
+      worldY: firstItem.startPoint.y + (1 - u) * 24,
+      penDown: false,
+      lift: (1 - u) * 14,
+      color: firstItem.color,
+      velocity: 0.15,
+      seed: 1,
+      alpha: u,
+    });
   }
 
   // Case 3: Outro after all drawing completed
@@ -190,22 +252,17 @@ export function evaluateTimelineAt(
     const sinceEnd = tMs - lastItem.endMs;
     const retreatU = easeInOut(Math.min(1, sinceEnd / 550));
     const alpha = Math.max(0, 1 - retreatU);
-    return {
-      tMs,
-      activeStepIndex,
-      itemProgress,
-      pen: {
-        visible: alpha > 0.02,
-        worldX: lastItem.endPoint.x + retreatU * 48,
-        worldY: lastItem.endPoint.y + retreatU * 40,
-        penDown: false,
-        lift: 8 + retreatU * 18,
-        color: lastItem.color,
-        velocity: 0,
-        seed: 0,
-        alpha,
-      },
-    };
+    return finish({
+      visible: alpha > 0.02,
+      worldX: lastItem.endPoint.x + retreatU * 48,
+      worldY: lastItem.endPoint.y + retreatU * 40,
+      penDown: false,
+      lift: 8 + retreatU * 18,
+      color: lastItem.color,
+      velocity: 0,
+      seed: 0,
+      alpha,
+    });
   }
 
   // Case 4: Pen-up travel arc between previous completed item and next upcoming item
@@ -226,22 +283,17 @@ export function evaluateTimelineAt(
   const moveStart = nextItem.startMs - moveWindow;
 
   if (tMs < moveStart) {
-    return {
-      tMs,
-      activeStepIndex,
-      itemProgress,
-      pen: {
-        visible: true,
-        worldX: prevItem.endPoint.x + 8,
-        worldY: prevItem.endPoint.y + 8,
-        penDown: false,
-        lift: 10,
-        color: nextItem.color,
-        velocity: 0,
-        seed: 0,
-        alpha: 0.92,
-      },
-    };
+    return finish({
+      visible: true,
+      worldX: prevItem.endPoint.x + 8,
+      worldY: prevItem.endPoint.y + 8,
+      penDown: false,
+      lift: 10,
+      color: nextItem.color,
+      velocity: 0,
+      seed: 0,
+      alpha: 0.92,
+    });
   }
 
   const u = easeInOut((tMs - moveStart) / Math.max(1, moveWindow));
@@ -253,20 +305,15 @@ export function evaluateTimelineAt(
   const startX = gapSpan > 360 ? prevItem.endPoint.x + 8 : prevItem.endPoint.x;
   const startY = gapSpan > 360 ? prevItem.endPoint.y + 8 : prevItem.endPoint.y;
 
-  return {
-    tMs,
-    activeStepIndex,
-    itemProgress,
-    pen: {
-      visible: true,
-      worldX: startX + (nextItem.startPoint.x - startX) * u,
-      worldY: startY + (nextItem.startPoint.y - startY) * u,
-      penDown: false,
-      lift: Math.sin(rawU * Math.PI) * maxLift,
-      color: nextItem.color,
-      velocity: 0.2,
-      seed: 0,
-      alpha: 1,
-    },
-  };
+  return finish({
+    visible: true,
+    worldX: startX + (nextItem.startPoint.x - startX) * u,
+    worldY: startY + (nextItem.startPoint.y - startY) * u,
+    penDown: false,
+    lift: Math.sin(rawU * Math.PI) * maxLift,
+    color: nextItem.color,
+    velocity: 0.2,
+    seed: 0,
+    alpha: 1,
+  });
 }
