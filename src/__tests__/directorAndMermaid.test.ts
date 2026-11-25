@@ -3,6 +3,11 @@ import '../plugins';
 import { computeDiagramLayout } from '../engine/layout/diagramLayout';
 import { defaultMeasureText } from '../engine/layout/textMeasure';
 import {
+  buildStrokeCornerTimeTable,
+  buildStrokePath,
+  evaluateStrokeProgress,
+} from '../sdk/strokePath';
+import {
   compileTimeline,
   evaluateTimelineAt,
 } from '../engine/timeline/timelineEngine';
@@ -289,5 +294,115 @@ flowchart LR
     expect(svg).toContain('API');
     expect(svg).toContain('Gateway');
     expect(svg).toContain('Redis');
+  });
+});
+
+describe('Stroke Path Dynamics & Configurable Scene Pacing', () => {
+  it('applies fast-in / slow-out stroke progression and respects linear opt-out', () => {
+    const straight = buildStrokePath(
+      's1',
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 200, y: 0 },
+      ],
+      { width: 3, color: 'white' }
+    );
+
+    const earlyNat = evaluateStrokeProgress(straight, 0.25, { endDecel: 0.65 });
+    const lateNat = evaluateStrokeProgress(straight, 0.85, { endDecel: 0.65 });
+    expect(earlyNat.progress).toBeGreaterThan(0.3);
+    expect(earlyNat.velocity).toBeGreaterThan(lateNat.velocity);
+
+    const lin = evaluateStrokeProgress(straight, 0.25, { endDecel: 0 });
+    expect(lin.progress).toBeCloseTo(0.25, 4);
+    expect(lin.velocity).toBe(1);
+
+    const crispStroke = buildStrokePath(
+      's2',
+      [
+        { x: 0, y: 0 },
+        { x: 200, y: 0 },
+      ],
+      { width: 17, color: 'yellow', easing: 'linear' }
+    );
+    expect(
+      evaluateStrokeProgress(crispStroke, 0.25, { endDecel: 0.85 }).progress
+    ).toBeCloseTo(0.25, 4);
+  });
+
+  it('slows pen speed around sharp corners when cornerSlowdown is enabled', () => {
+    const corner = buildStrokePath(
+      'c1',
+      [
+        { x: 0, y: 0 },
+        { x: 50, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 50 },
+        { x: 100, y: 100 },
+      ],
+      { width: 3, color: 'cyan' }
+    );
+    const cumTime = buildStrokeCornerTimeTable(corner, 0.72);
+    expect(cumTime).toBeDefined();
+
+    const midStraight = evaluateStrokeProgress(corner, 0.1, {
+      endDecel: 0,
+      cornerSlowdown: 0.72,
+      cumTime,
+    });
+    const atBend = evaluateStrokeProgress(corner, 0.5, {
+      endDecel: 0,
+      cornerSlowdown: 0.72,
+      cumTime,
+    });
+    expect(atBend.velocity).toBeLessThan(midStraight.velocity);
+  });
+
+  it('orders durations deliberate > natural > crisp, executes 3-beat pen settle, and parses/serializes pacing', () => {
+    const script = `---
+title: Pacing Test
+aspectRatio: 16:9
+---
+
+=== scene ===
+title: Paced Flow
+theme: chalkboard
+layout: flow-horizontal
+pacing: deliberate
+---
+[step#a] Start {color: yellow}
+[step#b] Finish {color: cyan}
+#a -> #b : Next
+`;
+    const parsed = parseProjectScript(script);
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.project.scenes[0].pacing).toBe('deliberate');
+    expect(serializeProjectScript(parsed.project)).toContain('pacing: deliberate');
+    expect(generateScriptSpec()).toContain('pacing');
+
+    const baseScene = parsed.project.scenes[0];
+    const layout = computeDiagramLayout(baseScene);
+    const tlDelib = compileTimeline({ ...baseScene, pacing: 'deliberate' }, layout);
+    const tlNat = compileTimeline({ ...baseScene, pacing: 'natural' }, layout);
+    const tlCrisp = compileTimeline({ ...baseScene, pacing: 'crisp' }, layout);
+
+    expect(tlDelib.totalDurationMs).toBeGreaterThan(tlNat.totalDurationMs);
+    expect(tlNat.totalDurationMs).toBeGreaterThan(tlCrisp.totalDurationMs);
+
+    // Inspect gap between step 0 last item and step 1 first item in natural pacing
+    const step0Last = tlNat.steps[0].items[tlNat.steps[0].items.length - 1];
+    const step1First = tlNat.steps[1].items[0];
+    expect(step1First.startMs - step0Last.endMs).toBeGreaterThan(400);
+
+    // Beat 1: planted at prevItem.endPoint during settleHoldMs
+    const duringHold = evaluateTimelineAt(tlNat, step0Last.endMs + 40);
+    expect(duringHold.pen.worldX).toBeCloseTo(step0Last.endPoint.x, 3);
+    expect(duringHold.pen.worldY).toBeCloseTo(step0Last.endPoint.y, 3);
+    expect(duringHold.pen.velocity).toBe(0);
+
+    // Beat 2: gently retreated aside before travel arc begins
+    const duringRetreat = evaluateTimelineAt(tlNat, step0Last.endMs + 220);
+    expect(duringRetreat.pen.worldX).toBeGreaterThan(step0Last.endPoint.x + 2);
   });
 });

@@ -15,7 +15,10 @@ import {
   sceneNodeRegistry,
 } from '../../plugins/registry';
 import { isOverlaySceneNode } from '../../plugins/layouts/shared';
+import { buildStrokeCornerTimeTable } from '../../sdk/strokePath';
+import { isMonospaceFont } from '../layout/textMeasure';
 import { ComputedLayout, PositionedSceneNode } from '../layout/diagramLayout';
+import { resolveScenePacing } from './pacing';
 import { resolveColorHex } from '../render/themes';
 import {
   generateConnectorStrokes,
@@ -84,7 +87,11 @@ function compileTextLineItem(
   theme: ThemeId,
   startMs: number,
   msPerChar: number,
-  flags?: { isEdgeLabel?: boolean; isGroupTitle?: boolean }
+  flags?: {
+    isEdgeLabel?: boolean;
+    isGroupTitle?: boolean;
+    lastCharSlowdown?: number;
+  }
 ): CompiledTextLineItem {
   const colorHex = resolveColorHex(theme, color);
   const chars = Array.from(text);
@@ -108,6 +115,11 @@ function compileTextLineItem(
   const interCharHopMs = 16;
 
   const nonSpaceCount = chars.filter((c) => c.trim().length > 0).length;
+  let lastNonSpaceIdx = -1;
+  chars.forEach((c, idx) => {
+    if (c.trim().length > 0) lastNonSpaceIdx = idx;
+  });
+  const lastCharMult = flags?.lastCharSlowdown ?? 1;
   const maxLineDuration = flags?.isEdgeLabel ? 1500 : 2600;
   const rawCharMs =
     nonSpaceCount > 0
@@ -126,7 +138,11 @@ function compileTextLineItem(
     }
 
     const strokeFactor = Math.max(0.72, Math.min(1.35, g.segments.length / 4));
-    const charDur = Math.max(58, Math.round(rawCharMs * strokeFactor));
+    const endFactor = idx === lastNonSpaceIdx && lastNonSpaceIdx > 0 ? lastCharMult : 1;
+    const charDur = Math.max(
+      58,
+      Math.round(rawCharMs * strokeFactor * endFactor)
+    );
     const spanStart = tCursor;
     const spanEnd = spanStart + charDur;
     const startTip = getGlyphTipAtProgress(g, boxX, boxY, 0);
@@ -187,6 +203,7 @@ export function compileTimeline(
   const layoutPlugin = layoutRegistry.getOrDefault(scene.layoutMode);
   const presentation = presentationRegistry.getOrDefault(scene.theme);
   const boardFontFamily = presentation.fontFamily;
+  const pacing = resolveScenePacing(scene.pacing);
   const overlayNodeIds = new Set(
     scene.nodes.filter(isOverlaySceneNode).map((n) => n.id)
   );
@@ -208,15 +225,17 @@ export function compileTimeline(
 
   rawSteps.forEach((step, stepIndex) => {
     const startMs = cursorMs;
-    const leadInMs = stepIndex === 0 ? 320 : 440;
+    const leadInMs =
+      stepIndex === 0 ? Math.min(340, pacing.leadInMs) : pacing.leadInMs;
     const drawStartMs = startMs + leadInMs;
     let itemCursor = drawStartMs;
     const items: CompiledItem[] = [];
     const stepRects: Rect[] = [];
     let currentNodeId: string | undefined;
 
-    const pushStroke = (stroke: StrokePath, gapAfterMs = 45) => {
+    const pushStroke = (stroke: StrokePath, gapAfterMs = pacing.innerGapMs) => {
       const dur = strokeDurationMs(stroke);
+      const cumTime = buildStrokeCornerTimeTable(stroke, pacing.cornerSlowdown);
       const item: CompiledStrokeItem = {
         kind: 'stroke',
         id: stroke.id,
@@ -224,6 +243,7 @@ export function compileTimeline(
         endMs: itemCursor + dur,
         color: stroke.color,
         stroke,
+        ...(cumTime ? { cumTime } : {}),
         startPoint: samplePointAlongStroke(stroke, 0),
         endPoint: samplePointAlongStroke(stroke, 1),
         stepIndex,
@@ -250,6 +270,7 @@ export function compileTimeline(
         if (frameStrokes.length > 0) {
           const fs = frameStrokes[0];
           const dur = strokeDurationMs(fs);
+          const cumTime = buildStrokeCornerTimeTable(fs, pacing.cornerSlowdown);
           const frameItem: CompiledGroupFrameItem = {
             kind: 'group-frame',
             id: fs.id,
@@ -258,6 +279,7 @@ export function compileTimeline(
             color: fs.color,
             group: zoneBox,
             stroke: fs,
+            ...(cumTime ? { cumTime } : {}),
             startPoint: samplePointAlongStroke(fs, 0),
             endPoint: samplePointAlongStroke(fs, 1),
             stepIndex,
@@ -265,7 +287,7 @@ export function compileTimeline(
           };
           items.push(frameItem);
           allItems.push(frameItem);
-          itemCursor = frameItem.endMs + 55;
+          itemCursor = frameItem.endMs + pacing.innerGapMs;
         }
 
         const titleFont = `700 16px ${boardFontFamily}`;
@@ -283,13 +305,13 @@ export function compileTimeline(
           scene.theme,
           itemCursor,
           82,
-          { isGroupTitle: true }
+          { isGroupTitle: true, lastCharSlowdown: pacing.lastCharSlowdown }
         );
         titleItem.stepIndex = stepIndex;
         titleItem.nodeId = zoneBox.id;
         items.push(titleItem);
         allItems.push(titleItem);
-        itemCursor = titleItem.endMs + 95;
+        itemCursor = titleItem.endMs + pacing.partGapMs;
         stepRects.push({
           x: zoneBox.x,
           y: zoneBox.y,
@@ -307,15 +329,27 @@ export function compileTimeline(
         if (curr.node.type === 'shape') {
           const strokes = generateShapeStrokes(curr);
           strokes.forEach((s, idx) => {
-            pushStroke(s, idx === strokes.length - 1 ? 65 : 34);
+            pushStroke(
+              s,
+              idx === strokes.length - 1
+                ? pacing.innerGapMs
+                : pacing.sameNodeStrokeMs
+            );
           });
           return;
         }
 
         if (curr.node.type === 'connector') {
           const cStrokes = generateConnectorStrokes(curr, curr.node.color);
+          const hasLabel = Boolean(curr.node.label && curr.labelPoint);
           cStrokes.forEach((cs, idx) => {
-            pushStroke(cs, idx === cStrokes.length - 1 ? 65 : 32);
+            const endGap = hasLabel
+              ? Math.round(pacing.innerGapMs * 0.65)
+              : pacing.partGapMs;
+            pushStroke(
+              cs,
+              idx === cStrokes.length - 1 ? endGap : pacing.sameNodeStrokeMs
+            );
           });
 
           if (curr.node.label && curr.labelPoint) {
@@ -334,13 +368,13 @@ export function compileTimeline(
               scene.theme,
               itemCursor,
               82,
-              { isEdgeLabel: true }
+              { isEdgeLabel: true, lastCharSlowdown: pacing.lastCharSlowdown }
             );
             labelItem.stepIndex = stepIndex;
             labelItem.nodeId = curr.id;
             items.push(labelItem);
             allItems.push(labelItem);
-            itemCursor = labelItem.endMs + 95;
+            itemCursor = labelItem.endMs + pacing.partGapMs;
           }
           return;
         }
@@ -374,13 +408,18 @@ export function compileTimeline(
               textColor,
               scene.theme,
               itemCursor,
-              msPerChar
+              msPerChar,
+              { lastCharSlowdown: pacing.lastCharSlowdown }
             );
             tItem.stepIndex = stepIndex;
             tItem.nodeId = curr.id;
             items.push(tItem);
             allItems.push(tItem);
-            itemCursor = tItem.endMs + 40;
+            itemCursor =
+              tItem.endMs +
+              (lineIdx === m.lines.length - 1
+                ? pacing.innerGapMs
+                : Math.round(pacing.innerGapMs * 0.55));
             yCursor += m.lineHeight;
           });
           return;
@@ -425,13 +464,17 @@ export function compileTimeline(
                   input.color ?? nodeColor,
                   scene.theme,
                   itemCursor,
-                  input.msPerChar ?? (fontSize >= 20 ? 122 : 88)
+                  input.msPerChar ?? (fontSize >= 20 ? 122 : 88),
+                  { lastCharSlowdown: pacing.lastCharSlowdown }
                 );
                 tItem.stepIndex = stepIndex;
                 tItem.nodeId = curr.id;
                 items.push(tItem);
                 allItems.push(tItem);
-                itemCursor = tItem.endMs + (input.gapAfterMs ?? 40);
+                const defaultLineGap = isMonospaceFont(lineFontFamily)
+                  ? pacing.codeLineGapMs
+                  : pacing.innerGapMs;
+                itemCursor = tItem.endMs + (input.gapAfterMs ?? defaultLineGap);
               },
             });
             return;
@@ -517,7 +560,7 @@ export function compileTimeline(
 
     const drawEndMs =
       items.length > 0 ? items[items.length - 1].endMs : drawStartMs + 200;
-    const pauseMs = step.pauseMs ?? 420;
+    const pauseMs = step.pauseMs ?? pacing.stepPauseMs;
     const endMs = drawEndMs + pauseMs;
 
     const focusBounds =
@@ -555,5 +598,6 @@ export function compileTimeline(
     layout,
     fullBounds: layout.bounds,
     spotlight: scene.spotlight === true,
+    pacing,
   };
 }

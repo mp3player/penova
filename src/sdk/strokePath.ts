@@ -1,6 +1,8 @@
 import { ChalkColor, Point } from '../model/scene';
 import { hashString, mulberry32 } from './random';
 
+export type StrokeEasingMode = 'default' | 'linear' | 'crisp';
+
 export interface StrokePath {
   id: string;
   points: Point[];
@@ -11,8 +13,37 @@ export interface StrokePath {
   surfaceShadow?: boolean;
   dashed?: boolean;
   speedFactor?: number;
+  easing?: StrokeEasingMode;
+  cornerCosts?: number[];
   totalLength: number;
   cumLengths: number[];
+}
+
+function computeCornerCosts(points: Point[]): number[] {
+  const n = points.length;
+  if (n < 2) return [];
+  const vertexSharp = new Array<number>(n).fill(0);
+
+  for (let i = 1; i < n - 1; i++) {
+    const dx1 = points[i].x - points[i - 1].x;
+    const dy1 = points[i].y - points[i - 1].y;
+    const dx2 = points[i + 1].x - points[i].x;
+    const dy2 = points[i + 1].y - points[i].y;
+    const l1 = Math.hypot(dx1, dy1);
+    const l2 = Math.hypot(dx2, dy2);
+    if (l1 < 1e-4 || l2 < 1e-4) continue;
+    const dot = (dx1 * dx2 + dy1 * dy2) / (l1 * l2);
+    const clampedDot = Math.max(-1, Math.min(1, dot));
+    const turn = Math.acos(clampedDot);
+    vertexSharp[i] =
+      turn > 0.35 ? Math.min(1, (turn - 0.35) / (Math.PI * 0.65)) : 0;
+  }
+
+  const costs = new Array<number>(n - 1);
+  for (let k = 0; k < n - 1; k++) {
+    costs[k] = 0.5 * vertexSharp[k] + 0.5 * vertexSharp[k + 1];
+  }
+  return costs;
 }
 
 export function buildStrokePath(
@@ -26,6 +57,7 @@ export function buildStrokePath(
     surfaceShadow?: boolean;
     dashed?: boolean;
     speedFactor?: number;
+    easing?: StrokeEasingMode;
   }
 ): StrokePath {
   const safePts =
@@ -53,9 +85,126 @@ export function buildStrokePath(
     surfaceShadow: options.surfaceShadow,
     dashed: options.dashed,
     speedFactor: options.speedFactor ?? 1,
+    easing: options.easing,
+    cornerCosts: computeCornerCosts(safePts),
     totalLength: total,
     cumLengths,
   };
+}
+
+export function buildStrokeCornerTimeTable(
+  stroke: StrokePath,
+  cornerSlowdown: number
+): number[] | undefined {
+  if (
+    cornerSlowdown <= 0.01 ||
+    !stroke.cornerCosts ||
+    stroke.cornerCosts.length === 0 ||
+    stroke.totalLength <= 1e-4
+  ) {
+    return undefined;
+  }
+
+  const cornerPenaltyScale = Math.min(36, stroke.totalLength * 0.18);
+  const rawTimes: number[] = [0];
+  let acc = 0;
+
+  for (let k = 0; k < stroke.cornerCosts.length; k++) {
+    const segLen = Math.max(0, stroke.cumLengths[k + 1] - stroke.cumLengths[k]);
+    const extra = cornerSlowdown * stroke.cornerCosts[k] * cornerPenaltyScale;
+    acc += segLen + extra;
+    rawTimes.push(acc);
+  }
+
+  if (acc <= 1e-4) return undefined;
+  return rawTimes.map((t) => t / acc);
+}
+
+export function evaluateStrokeProgress(
+  stroke: StrokePath,
+  rawU: number,
+  opts?: {
+    endDecel?: number;
+    cornerSlowdown?: number;
+    cumTime?: number[];
+  }
+): { progress: number; velocity: number } {
+  const u = Math.max(0, Math.min(1, rawU));
+  if (u <= 0) return { progress: 0, velocity: 0 };
+  if (u >= 1) return { progress: 1, velocity: 0 };
+
+  const baseDecel = opts?.endDecel ?? 0;
+  const effDecel =
+    stroke.easing === 'linear'
+      ? 0
+      : stroke.easing === 'crisp'
+      ? baseDecel * 0.45
+      : baseDecel;
+  const d = Math.max(0, Math.min(1, effDecel));
+
+  let easedU = u;
+  let velocity = 1;
+  if (d > 1e-4) {
+    const pExp = 1 + 1.45 * d;
+    const oneMinus = 1 - u;
+    const base = 1 - Math.pow(oneMinus, pExp);
+    const dBase = pExp * Math.pow(oneMinus, Math.max(0, pExp - 1));
+    const smooth = u * u * (3 - 2 * u);
+    const dSmooth = 6 * u * (1 - u);
+    const wSmooth = 0.15 * d;
+    easedU = (1 - wSmooth) * base + wSmooth * smooth;
+    const derivU = (1 - wSmooth) * dBase + wSmooth * dSmooth;
+    velocity = Math.max(0.08, Math.min(1, derivU / Math.max(1, pExp)));
+  }
+
+  const cumTime =
+    opts?.cumTime ??
+    ((opts?.cornerSlowdown ?? 0) > 0.01
+      ? buildStrokeCornerTimeTable(stroke, opts!.cornerSlowdown!)
+      : undefined);
+
+  if (
+    cumTime &&
+    cumTime.length === stroke.cumLengths.length &&
+    stroke.totalLength > 1e-4
+  ) {
+    let lo = 0;
+    let hi = cumTime.length - 1;
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cumTime[mid] <= easedU) lo = mid;
+      else hi = mid;
+    }
+    const segTimeFrac = Math.max(1e-5, cumTime[lo + 1] - cumTime[lo]);
+    const localU = Math.max(0, Math.min(1, (easedU - cumTime[lo]) / segTimeFrac));
+    const spatialStart = stroke.cumLengths[lo];
+    const segSpatialLen = stroke.cumLengths[lo + 1] - spatialStart;
+    const segSpatialFrac = segSpatialLen / stroke.totalLength;
+    const cornerScale = Math.max(
+      0.22,
+      Math.min(1.35, segSpatialFrac / segTimeFrac)
+    );
+    return {
+      progress: Math.max(
+        0,
+        Math.min(1, (spatialStart + segSpatialLen * localU) / stroke.totalLength)
+      ),
+      velocity: Math.max(0.08, Math.min(1, velocity * cornerScale)),
+    };
+  }
+
+  return {
+    progress: Math.max(0, Math.min(1, easedU)),
+    velocity,
+  };
+}
+
+export function easeGlyphProgress(rawU: number, endDecel: number): number {
+  const u = Math.max(0, Math.min(1, rawU));
+  if (u <= 0 || u >= 1) return u;
+  const d = Math.max(0, Math.min(1, endDecel));
+  if (d <= 1e-4) return u;
+  return 1 - Math.pow(1 - u, 1 + 0.75 * d);
 }
 
 export function samplePointAlongStroke(

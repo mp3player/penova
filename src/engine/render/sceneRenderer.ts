@@ -2,7 +2,7 @@ import '../../plugins';
 import { LessonScene, Point } from '../../model/scene';
 import { CameraPenHint, ThemePalette } from '../../plugins/contracts';
 import { presentationRegistry } from '../../plugins/registry';
-import { StrokePath } from '../../sdk/strokePath';
+import { easeGlyphProgress, StrokePath } from '../../sdk/strokePath';
 import { CameraState, evaluateCameraAt } from '../camera/cameraDirector';
 import { drawProgressiveGlyph } from '../sketch/textStrokes';
 import { CompiledTimeline, evaluateTimelineAt } from '../timeline/timelineEngine';
@@ -239,14 +239,16 @@ export function renderSceneFrame(
       ctx.save();
       ctx.globalAlpha *= itemAlpha;
     }
+    const glyphDecel = timeline.pacing?.endDecel ?? 0;
     for (const span of item.spans) {
       let charP = 0;
       if (evalState.tMs >= span.endMs) {
         charP = 1;
       } else if (evalState.tMs > span.startMs) {
-        charP =
+        const rawCharP =
           (evalState.tMs - span.startMs) /
           Math.max(1, span.endMs - span.startMs);
+        charP = easeGlyphProgress(rawCharP, glyphDecel);
       }
       if (charP <= 0) continue;
       drawProgressiveGlyph(

@@ -1,4 +1,10 @@
-import { ChalkColor, Point, Rect, TeachingStep } from '../../model/scene';
+import {
+  ChalkColor,
+  Point,
+  Rect,
+  ScenePacingConfig,
+  TeachingStep,
+} from '../../model/scene';
 import { ComputedLayout, GroupBox } from '../layout/diagramLayout';
 import { StrokePath } from '../sketch/handDrawnGeometry';
 import { GlyphStrokeData } from '../sketch/textStrokes';
@@ -21,6 +27,7 @@ export interface CompiledStrokeItem {
   endMs: number;
   color: ChalkColor;
   stroke: StrokePath;
+  cumTime?: number[];
   startPoint: Point;
   endPoint: Point;
   stepIndex?: number;
@@ -35,6 +42,7 @@ export interface CompiledGroupFrameItem {
   color: ChalkColor;
   group: GroupBox;
   stroke: StrokePath;
+  cumTime?: number[];
   startPoint: Point;
   endPoint: Point;
   stepIndex?: number;
@@ -88,6 +96,7 @@ export interface CompiledTimeline {
   layout: ComputedLayout;
   fullBounds: Rect;
   spotlight?: boolean;
+  pacing?: ScenePacingConfig;
 }
 
 export interface PenState {

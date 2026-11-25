@@ -1,5 +1,10 @@
+import {
+  easeGlyphProgress,
+  evaluateStrokeProgress,
+} from '../../sdk/strokePath';
 import { samplePointAlongStroke } from '../sketch/handDrawnGeometry';
 import { getGlyphTipAtProgress } from '../sketch/textStrokes';
+import { PACING_PRESETS } from './pacing';
 import {
   CompiledTextLineItem,
   CompiledTimeline,
@@ -13,7 +18,8 @@ function easeInOut(t: number): number {
 
 function evaluatePenForTextLine(
   item: CompiledTextLineItem,
-  tMs: number
+  tMs: number,
+  endDecel = 0
 ): { x: number; y: number; penDown: boolean; lift: number; velocity: number } {
   if (item.spans.length === 0) {
     return {
@@ -29,15 +35,16 @@ function evaluatePenForTextLine(
     const span = item.spans[i];
     if (tMs <= span.endMs) {
       if (tMs >= span.startMs) {
-        const p =
+        const rawP =
           (tMs - span.startMs) / Math.max(1, span.endMs - span.startMs);
+        const p = easeGlyphProgress(rawP, endDecel);
         const pt = getGlyphTipAtProgress(span.glyph, span.boxX, span.boxY, p);
         return {
           x: pt.x,
           y: pt.y,
           penDown: true,
           lift: 0,
-          velocity: 0.9,
+          velocity: Math.max(0.25, 0.9 - rawP * 0.4 * endDecel),
         };
       }
       // Hop between previous char end and current char start
@@ -163,8 +170,10 @@ export function evaluateTimelineAt(
     pen,
   });
 
+  const pacing = timeline.pacing ?? PACING_PRESETS.natural;
   const allItems = timeline.allItems;
   let activeItemIdx = -1;
+  let activeStrokeVelocity = 0.7;
 
   for (let i = 0; i < allItems.length; i++) {
     const item = allItems[i];
@@ -173,8 +182,18 @@ export function evaluateTimelineAt(
     } else if (tMs <= item.startMs) {
       itemProgress.set(item.id, 0);
     } else {
-      const p = (tMs - item.startMs) / Math.max(1, item.endMs - item.startMs);
-      itemProgress.set(item.id, p);
+      const rawU = (tMs - item.startMs) / Math.max(1, item.endMs - item.startMs);
+      if (item.kind === 'text-line') {
+        itemProgress.set(item.id, rawU);
+      } else {
+        const evaluated = evaluateStrokeProgress(item.stroke, rawU, {
+          endDecel: pacing.endDecel,
+          cornerSlowdown: pacing.cornerSlowdown,
+          cumTime: item.cumTime,
+        });
+        itemProgress.set(item.id, evaluated.progress);
+        activeStrokeVelocity = evaluated.velocity;
+      }
       activeItemIdx = i;
     }
   }
@@ -200,7 +219,7 @@ export function evaluateTimelineAt(
     const p = itemProgress.get(item.id) ?? 0;
 
     if (item.kind === 'text-line') {
-      const tip = evaluatePenForTextLine(item, tMs);
+      const tip = evaluatePenForTextLine(item, tMs, pacing.endDecel);
       return finish({
         visible: true,
         worldX: tip.x,
@@ -215,7 +234,6 @@ export function evaluateTimelineAt(
     }
 
     const pt = samplePointAlongStroke(item.stroke, p);
-    const vel = Math.sin(p * Math.PI) * 0.65 + 0.35;
     return finish({
       visible: true,
       worldX: pt.x,
@@ -223,7 +241,7 @@ export function evaluateTimelineAt(
       penDown: true,
       lift: 0,
       color: item.color,
-      velocity: vel,
+      velocity: activeStrokeVelocity,
       seed: Math.floor(tMs / 35),
       alpha: 1,
     });
@@ -265,7 +283,7 @@ export function evaluateTimelineAt(
     });
   }
 
-  // Case 4: Pen-up travel arc between previous completed item and next upcoming item
+  // Case 4: Pen-up gap — 3-beat settle (hold -> retreat -> travel arc)
   let prevIdx = 0;
   for (let i = 0; i < allItems.length; i++) {
     if (allItems[i].endMs <= tMs) {
@@ -279,20 +297,65 @@ export function evaluateTimelineAt(
   const gapSpan = Math.max(1, nextItem.startMs - prevItem.endMs);
   const rawU = (tMs - prevItem.endMs) / gapSpan;
 
-  const moveWindow = Math.min(gapSpan, 360);
+  const settleEnd =
+    pacing.settleHoldMs > 0
+      ? Math.min(
+          nextItem.startMs,
+          prevItem.endMs + Math.min(pacing.settleHoldMs, gapSpan * 0.38)
+        )
+      : prevItem.endMs;
+  const moveWindow = Math.min(Math.max(0, nextItem.startMs - settleEnd), 360);
   const moveStart = nextItem.startMs - moveWindow;
 
-  if (tMs < moveStart) {
+  if (pacing.settleHoldMs > 0 && tMs < settleEnd) {
+    const settleDur = Math.max(1, settleEnd - prevItem.endMs);
+    const holdU = Math.max(0, Math.min(1, (tMs - prevItem.endMs) / settleDur));
     return finish({
       visible: true,
-      worldX: prevItem.endPoint.x + 8,
-      worldY: prevItem.endPoint.y + 8,
+      worldX: prevItem.endPoint.x,
+      worldY: prevItem.endPoint.y,
       penDown: false,
-      lift: 10,
+      lift: holdU * 4.5,
+      color: prevItem.color,
+      velocity: 0,
+      seed: 0,
+      alpha: 0.98,
+    });
+  }
+
+  const retreatX = prevItem.endPoint.x + pacing.retreatOffsetPx;
+  const retreatY =
+    prevItem.endPoint.y + Math.round(pacing.retreatOffsetPx * 0.85);
+
+  if (tMs < moveStart) {
+    if (pacing.settleHoldMs <= 0) {
+      return finish({
+        visible: true,
+        worldX: retreatX,
+        worldY: retreatY,
+        penDown: false,
+        lift: 10,
+        color: nextItem.color,
+        velocity: 0,
+        seed: 0,
+        alpha: pacing.restAlpha,
+      });
+    }
+    const retreatWindow = Math.max(
+      1,
+      Math.min(180, Math.max(1, moveStart - settleEnd))
+    );
+    const ru = easeInOut(Math.min(1, (tMs - settleEnd) / retreatWindow));
+    return finish({
+      visible: true,
+      worldX: prevItem.endPoint.x + (retreatX - prevItem.endPoint.x) * ru,
+      worldY: prevItem.endPoint.y + (retreatY - prevItem.endPoint.y) * ru,
+      penDown: false,
+      lift: 4.5 + ru * 7.5,
       color: nextItem.color,
       velocity: 0,
       seed: 0,
-      alpha: 0.92,
+      alpha: 0.98 + (pacing.restAlpha - 0.98) * ru,
     });
   }
 
@@ -302,8 +365,10 @@ export function evaluateTimelineAt(
     nextItem.startPoint.y - prevItem.endPoint.y
   );
   const maxLift = Math.min(24, Math.max(6, dist * 0.06));
-  const startX = gapSpan > 360 ? prevItem.endPoint.x + 8 : prevItem.endPoint.x;
-  const startY = gapSpan > 360 ? prevItem.endPoint.y + 8 : prevItem.endPoint.y;
+  const hadRetreat =
+    moveStart > settleEnd + 20 || (pacing.settleHoldMs <= 0 && gapSpan > 360);
+  const startX = hadRetreat ? retreatX : prevItem.endPoint.x;
+  const startY = hadRetreat ? retreatY : prevItem.endPoint.y;
 
   return finish({
     visible: true,
@@ -314,6 +379,6 @@ export function evaluateTimelineAt(
     color: nextItem.color,
     velocity: 0.2,
     seed: 0,
-    alpha: 1,
+    alpha: hadRetreat ? pacing.restAlpha + (1 - pacing.restAlpha) * u : 1,
   });
 }

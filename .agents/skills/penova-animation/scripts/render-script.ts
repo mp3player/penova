@@ -154,6 +154,25 @@ interface SceneTransitionConfig {
   durationMs?: number;
 }
 
+type PacingPreset = 'natural' | 'crisp' | 'deliberate' | 'linear';
+
+interface ScenePacingConfig {
+  endDecel: number;
+  cornerSlowdown: number;
+  sameNodeStrokeMs: number;
+  innerGapMs: number;
+  codeLineGapMs: number;
+  partGapMs: number;
+  stepPauseMs: number;
+  leadInMs: number;
+  lastCharSlowdown: number;
+  settleHoldMs: number;
+  retreatOffsetPx: number;
+  restAlpha: number;
+}
+
+type ScenePacingOption = PacingPreset | Partial<ScenePacingConfig>;
+
 interface LessonScene {
   id: string;
   title: string;
@@ -166,6 +185,7 @@ interface LessonScene {
   customSteps?: TeachingStep[];
   transitionOut?: SceneTransitionConfig;
   spotlight?: boolean;
+  pacing?: ScenePacingOption;
 }
 
 // --- Types: src/sdk/propSchema.ts ---
@@ -263,6 +283,8 @@ interface DefinedPropSchema<S extends PropSpecMap> {
 
 // --- Types: src/sdk/strokePath.ts ---
 
+type StrokeEasingMode = 'default' | 'linear' | 'crisp';
+
 interface StrokePath {
   id: string;
   points: Point[];
@@ -273,6 +295,8 @@ interface StrokePath {
   surfaceShadow?: boolean;
   dashed?: boolean;
   speedFactor?: number;
+  easing?: StrokeEasingMode;
+  cornerCosts?: number[];
   totalLength: number;
   cumLengths: number[];
 }
@@ -1138,6 +1162,7 @@ interface CompiledStrokeItem {
   endMs: number;
   color: ChalkColor;
   stroke: StrokePath;
+  cumTime?: number[];
   startPoint: Point;
   endPoint: Point;
   stepIndex?: number;
@@ -1152,6 +1177,7 @@ interface CompiledGroupFrameItem {
   color: ChalkColor;
   group: GroupBox;
   stroke: StrokePath;
+  cumTime?: number[];
   startPoint: Point;
   endPoint: Point;
   stepIndex?: number;
@@ -1205,6 +1231,7 @@ interface CompiledTimeline {
   layout: ComputedLayout;
   fullBounds: Rect;
   spotlight?: boolean;
+  pacing?: ScenePacingConfig;
 }
 
 interface PenState {
@@ -2033,7 +2060,33 @@ const { hashString, hash2D, mulberry32 } = (() => {
 })();
 
 // --- Module: src/sdk/strokePath.ts ---
-const { buildStrokePath, samplePointAlongStroke, sketchSegment, sketchPolyline, buildRoundedRectPoints } = (() => {
+const { buildStrokePath, buildStrokeCornerTimeTable, evaluateStrokeProgress, easeGlyphProgress, samplePointAlongStroke, sketchSegment, sketchPolyline, buildRoundedRectPoints } = (() => {
+  function computeCornerCosts(points: Point[]): number[] {
+    const n = points.length;
+    if (n < 2) return [];
+    const vertexSharp = new Array<number>(n).fill(0);
+
+    for (let i = 1; i < n - 1; i++) {
+      const dx1 = points[i].x - points[i - 1].x;
+      const dy1 = points[i].y - points[i - 1].y;
+      const dx2 = points[i + 1].x - points[i].x;
+      const dy2 = points[i + 1].y - points[i].y;
+      const l1 = Math.hypot(dx1, dy1);
+      const l2 = Math.hypot(dx2, dy2);
+      if (l1 < 1e-4 || l2 < 1e-4) continue;
+      const dot = (dx1 * dx2 + dy1 * dy2) / (l1 * l2);
+      const clampedDot = Math.max(-1, Math.min(1, dot));
+      const turn = Math.acos(clampedDot);
+      vertexSharp[i] =
+        turn > 0.35 ? Math.min(1, (turn - 0.35) / (Math.PI * 0.65)) : 0;
+    }
+
+    const costs = new Array<number>(n - 1);
+    for (let k = 0; k < n - 1; k++) {
+      costs[k] = 0.5 * vertexSharp[k] + 0.5 * vertexSharp[k + 1];
+    }
+    return costs;
+  }
   function buildStrokePath(
     id: string,
     points: Point[],
@@ -2045,6 +2098,7 @@ const { buildStrokePath, samplePointAlongStroke, sketchSegment, sketchPolyline, 
       surfaceShadow?: boolean;
       dashed?: boolean;
       speedFactor?: number;
+      easing?: StrokeEasingMode;
     }
   ): StrokePath {
     const safePts =
@@ -2072,9 +2126,123 @@ const { buildStrokePath, samplePointAlongStroke, sketchSegment, sketchPolyline, 
       surfaceShadow: options.surfaceShadow,
       dashed: options.dashed,
       speedFactor: options.speedFactor ?? 1,
+      easing: options.easing,
+      cornerCosts: computeCornerCosts(safePts),
       totalLength: total,
       cumLengths,
     };
+  }
+  function buildStrokeCornerTimeTable(
+    stroke: StrokePath,
+    cornerSlowdown: number
+  ): number[] | undefined {
+    if (
+      cornerSlowdown <= 0.01 ||
+      !stroke.cornerCosts ||
+      stroke.cornerCosts.length === 0 ||
+      stroke.totalLength <= 1e-4
+    ) {
+      return undefined;
+    }
+
+    const cornerPenaltyScale = Math.min(36, stroke.totalLength * 0.18);
+    const rawTimes: number[] = [0];
+    let acc = 0;
+
+    for (let k = 0; k < stroke.cornerCosts.length; k++) {
+      const segLen = Math.max(0, stroke.cumLengths[k + 1] - stroke.cumLengths[k]);
+      const extra = cornerSlowdown * stroke.cornerCosts[k] * cornerPenaltyScale;
+      acc += segLen + extra;
+      rawTimes.push(acc);
+    }
+
+    if (acc <= 1e-4) return undefined;
+    return rawTimes.map((t) => t / acc);
+  }
+  function evaluateStrokeProgress(
+    stroke: StrokePath,
+    rawU: number,
+    opts?: {
+      endDecel?: number;
+      cornerSlowdown?: number;
+      cumTime?: number[];
+    }
+  ): { progress: number; velocity: number } {
+    const u = Math.max(0, Math.min(1, rawU));
+    if (u <= 0) return { progress: 0, velocity: 0 };
+    if (u >= 1) return { progress: 1, velocity: 0 };
+
+    const baseDecel = opts?.endDecel ?? 0;
+    const effDecel =
+      stroke.easing === 'linear'
+        ? 0
+        : stroke.easing === 'crisp'
+        ? baseDecel * 0.45
+        : baseDecel;
+    const d = Math.max(0, Math.min(1, effDecel));
+
+    let easedU = u;
+    let velocity = 1;
+    if (d > 1e-4) {
+      const pExp = 1 + 1.45 * d;
+      const oneMinus = 1 - u;
+      const base = 1 - Math.pow(oneMinus, pExp);
+      const dBase = pExp * Math.pow(oneMinus, Math.max(0, pExp - 1));
+      const smooth = u * u * (3 - 2 * u);
+      const dSmooth = 6 * u * (1 - u);
+      const wSmooth = 0.15 * d;
+      easedU = (1 - wSmooth) * base + wSmooth * smooth;
+      const derivU = (1 - wSmooth) * dBase + wSmooth * dSmooth;
+      velocity = Math.max(0.08, Math.min(1, derivU / Math.max(1, pExp)));
+    }
+
+    const cumTime =
+      opts?.cumTime ??
+      ((opts?.cornerSlowdown ?? 0) > 0.01
+        ? buildStrokeCornerTimeTable(stroke, opts!.cornerSlowdown!)
+        : undefined);
+
+    if (
+      cumTime &&
+      cumTime.length === stroke.cumLengths.length &&
+      stroke.totalLength > 1e-4
+    ) {
+      let lo = 0;
+      let hi = cumTime.length - 1;
+      while (lo + 1 < hi) {
+        const mid = (lo + hi) >> 1;
+        if (cumTime[mid] <= easedU) lo = mid;
+        else hi = mid;
+      }
+      const segTimeFrac = Math.max(1e-5, cumTime[lo + 1] - cumTime[lo]);
+      const localU = Math.max(0, Math.min(1, (easedU - cumTime[lo]) / segTimeFrac));
+      const spatialStart = stroke.cumLengths[lo];
+      const segSpatialLen = stroke.cumLengths[lo + 1] - spatialStart;
+      const segSpatialFrac = segSpatialLen / stroke.totalLength;
+      const cornerScale = Math.max(
+        0.22,
+        Math.min(1.35, segSpatialFrac / segTimeFrac)
+      );
+      return {
+        progress: Math.max(
+          0,
+          Math.min(1, (spatialStart + segSpatialLen * localU) / stroke.totalLength)
+        ),
+        velocity: Math.max(0.08, Math.min(1, velocity * cornerScale)),
+      };
+    }
+
+    return {
+      progress: Math.max(0, Math.min(1, easedU)),
+      velocity,
+    };
+  }
+  function easeGlyphProgress(rawU: number, endDecel: number): number {
+    const u = Math.max(0, Math.min(1, rawU));
+    if (u <= 0 || u >= 1) return u;
+    const d = Math.max(0, Math.min(1, endDecel));
+    if (d <= 1e-4) return u;
+    return 1 - Math.pow(1 - u, 1 + 0.75 * d);
   }
   function samplePointAlongStroke(
     stroke: StrokePath,
@@ -2195,7 +2363,7 @@ const { buildStrokePath, samplePointAlongStroke, sketchSegment, sketchPolyline, 
     }
     return out;
   }
-  return { buildStrokePath, samplePointAlongStroke, sketchSegment, sketchPolyline, buildRoundedRectPoints };
+  return { buildStrokePath, buildStrokeCornerTimeTable, evaluateStrokeProgress, easeGlyphProgress, samplePointAlongStroke, sketchSegment, sketchPolyline, buildRoundedRectPoints };
 })();
 
 // --- Module: src/plugins/registry.ts ---
@@ -4358,7 +4526,6 @@ const { codeNodePlugin } = (() => {
           fontFamily: CODE_MONO_FONT,
           color: 'white',
           msPerChar: 28,
-          gapAfterMs: 24,
         });
 
         if (highlightedSet.has(idx)) {
@@ -4385,6 +4552,7 @@ const { codeNodePlugin } = (() => {
                 color: hlColor,
                 opacity: hlOpacity,
                 speedFactor: 1.55,
+                easing: 'crisp',
               }
             ),
             28
@@ -15421,6 +15589,93 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
   return { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph };
 })();
 
+// --- Module: src/engine/timeline/pacing.ts ---
+const { PACING_PRESETS, isPacingPreset, resolveScenePacing } = (() => {
+  const PACING_PRESETS: Record<PacingPreset, ScenePacingConfig> = {
+    natural: {
+      endDecel: 0.65,
+      cornerSlowdown: 0.45,
+      sameNodeStrokeMs: 55,
+      innerGapMs: 135,
+      codeLineGapMs: 110,
+      partGapMs: 250,
+      stepPauseMs: 560,
+      leadInMs: 420,
+      lastCharSlowdown: 1.22,
+      settleHoldMs: 135,
+      retreatOffsetPx: 20,
+      restAlpha: 0.68,
+    },
+    crisp: {
+      endDecel: 0.35,
+      cornerSlowdown: 0.22,
+      sameNodeStrokeMs: 36,
+      innerGapMs: 80,
+      codeLineGapMs: 55,
+      partGapMs: 150,
+      stepPauseMs: 380,
+      leadInMs: 320,
+      lastCharSlowdown: 1.1,
+      settleHoldMs: 80,
+      retreatOffsetPx: 14,
+      restAlpha: 0.78,
+    },
+    deliberate: {
+      endDecel: 0.85,
+      cornerSlowdown: 0.72,
+      sameNodeStrokeMs: 85,
+      innerGapMs: 185,
+      codeLineGapMs: 160,
+      partGapMs: 340,
+      stepPauseMs: 740,
+      leadInMs: 500,
+      lastCharSlowdown: 1.32,
+      settleHoldMs: 180,
+      retreatOffsetPx: 24,
+      restAlpha: 0.58,
+    },
+    linear: {
+      endDecel: 0,
+      cornerSlowdown: 0,
+      sameNodeStrokeMs: 34,
+      innerGapMs: 65,
+      codeLineGapMs: 24,
+      partGapMs: 95,
+      stepPauseMs: 420,
+      leadInMs: 440,
+      lastCharSlowdown: 1.0,
+      settleHoldMs: 0,
+      retreatOffsetPx: 8,
+      restAlpha: 0.92,
+    },
+  };
+  function isPacingPreset(raw: string): raw is PacingPreset {
+    return (
+      raw === 'natural' ||
+      raw === 'crisp' ||
+      raw === 'deliberate' ||
+      raw === 'linear'
+    );
+  }
+  function resolveScenePacing(
+    option?: ScenePacingOption
+  ): ScenePacingConfig {
+    if (!option) {
+      return PACING_PRESETS.natural;
+    }
+    if (typeof option === 'string') {
+      return isPacingPreset(option)
+        ? PACING_PRESETS[option]
+        : PACING_PRESETS.natural;
+    }
+    return {
+      ...PACING_PRESETS.natural,
+      ...option,
+    };
+  }
+  return { PACING_PRESETS, isPacingPreset, resolveScenePacing };
+})();
+
 // --- Module: src/engine/render/themes.ts ---
 const { resolveColorHex } = (() => {
   function getThemePalette(theme: ThemeId): ThemePalette {
@@ -15479,7 +15734,11 @@ const { compileTimeline } = (() => {
     theme: ThemeId,
     startMs: number,
     msPerChar: number,
-    flags?: { isEdgeLabel?: boolean; isGroupTitle?: boolean }
+    flags?: {
+      isEdgeLabel?: boolean;
+      isGroupTitle?: boolean;
+      lastCharSlowdown?: number;
+    }
   ): CompiledTextLineItem {
     const colorHex = resolveColorHex(theme, color);
     const chars = Array.from(text);
@@ -15503,6 +15762,11 @@ const { compileTimeline } = (() => {
     const interCharHopMs = 16;
 
     const nonSpaceCount = chars.filter((c) => c.trim().length > 0).length;
+    let lastNonSpaceIdx = -1;
+    chars.forEach((c, idx) => {
+      if (c.trim().length > 0) lastNonSpaceIdx = idx;
+    });
+    const lastCharMult = flags?.lastCharSlowdown ?? 1;
     const maxLineDuration = flags?.isEdgeLabel ? 1500 : 2600;
     const rawCharMs =
       nonSpaceCount > 0
@@ -15521,7 +15785,11 @@ const { compileTimeline } = (() => {
       }
 
       const strokeFactor = Math.max(0.72, Math.min(1.35, g.segments.length / 4));
-      const charDur = Math.max(58, Math.round(rawCharMs * strokeFactor));
+      const endFactor = idx === lastNonSpaceIdx && lastNonSpaceIdx > 0 ? lastCharMult : 1;
+      const charDur = Math.max(
+        58,
+        Math.round(rawCharMs * strokeFactor * endFactor)
+      );
       const spanStart = tCursor;
       const spanEnd = spanStart + charDur;
       const startTip = getGlyphTipAtProgress(g, boxX, boxY, 0);
@@ -15580,6 +15848,7 @@ const { compileTimeline } = (() => {
     const layoutPlugin = layoutRegistry.getOrDefault(scene.layoutMode);
     const presentation = presentationRegistry.getOrDefault(scene.theme);
     const boardFontFamily = presentation.fontFamily;
+    const pacing = resolveScenePacing(scene.pacing);
     const overlayNodeIds = new Set(
       scene.nodes.filter(isOverlaySceneNode).map((n) => n.id)
     );
@@ -15601,15 +15870,17 @@ const { compileTimeline } = (() => {
 
     rawSteps.forEach((step, stepIndex) => {
       const startMs = cursorMs;
-      const leadInMs = stepIndex === 0 ? 320 : 440;
+      const leadInMs =
+        stepIndex === 0 ? Math.min(340, pacing.leadInMs) : pacing.leadInMs;
       const drawStartMs = startMs + leadInMs;
       let itemCursor = drawStartMs;
       const items: CompiledItem[] = [];
       const stepRects: Rect[] = [];
       let currentNodeId: string | undefined;
 
-      const pushStroke = (stroke: StrokePath, gapAfterMs = 45) => {
+      const pushStroke = (stroke: StrokePath, gapAfterMs = pacing.innerGapMs) => {
         const dur = strokeDurationMs(stroke);
+        const cumTime = buildStrokeCornerTimeTable(stroke, pacing.cornerSlowdown);
         const item: CompiledStrokeItem = {
           kind: 'stroke',
           id: stroke.id,
@@ -15617,6 +15888,7 @@ const { compileTimeline } = (() => {
           endMs: itemCursor + dur,
           color: stroke.color,
           stroke,
+          ...(cumTime ? { cumTime } : {}),
           startPoint: samplePointAlongStroke(stroke, 0),
           endPoint: samplePointAlongStroke(stroke, 1),
           stepIndex,
@@ -15643,6 +15915,7 @@ const { compileTimeline } = (() => {
           if (frameStrokes.length > 0) {
             const fs = frameStrokes[0];
             const dur = strokeDurationMs(fs);
+            const cumTime = buildStrokeCornerTimeTable(fs, pacing.cornerSlowdown);
             const frameItem: CompiledGroupFrameItem = {
               kind: 'group-frame',
               id: fs.id,
@@ -15651,6 +15924,7 @@ const { compileTimeline } = (() => {
               color: fs.color,
               group: zoneBox,
               stroke: fs,
+              ...(cumTime ? { cumTime } : {}),
               startPoint: samplePointAlongStroke(fs, 0),
               endPoint: samplePointAlongStroke(fs, 1),
               stepIndex,
@@ -15658,7 +15932,7 @@ const { compileTimeline } = (() => {
             };
             items.push(frameItem);
             allItems.push(frameItem);
-            itemCursor = frameItem.endMs + 55;
+            itemCursor = frameItem.endMs + pacing.innerGapMs;
           }
 
           const titleFont = `700 16px ${boardFontFamily}`;
@@ -15676,13 +15950,13 @@ const { compileTimeline } = (() => {
             scene.theme,
             itemCursor,
             82,
-            { isGroupTitle: true }
+            { isGroupTitle: true, lastCharSlowdown: pacing.lastCharSlowdown }
           );
           titleItem.stepIndex = stepIndex;
           titleItem.nodeId = zoneBox.id;
           items.push(titleItem);
           allItems.push(titleItem);
-          itemCursor = titleItem.endMs + 95;
+          itemCursor = titleItem.endMs + pacing.partGapMs;
           stepRects.push({
             x: zoneBox.x,
             y: zoneBox.y,
@@ -15700,15 +15974,27 @@ const { compileTimeline } = (() => {
           if (curr.node.type === 'shape') {
             const strokes = generateShapeStrokes(curr);
             strokes.forEach((s, idx) => {
-              pushStroke(s, idx === strokes.length - 1 ? 65 : 34);
+              pushStroke(
+                s,
+                idx === strokes.length - 1
+                  ? pacing.innerGapMs
+                  : pacing.sameNodeStrokeMs
+              );
             });
             return;
           }
 
           if (curr.node.type === 'connector') {
             const cStrokes = generateConnectorStrokes(curr, curr.node.color);
+            const hasLabel = Boolean(curr.node.label && curr.labelPoint);
             cStrokes.forEach((cs, idx) => {
-              pushStroke(cs, idx === cStrokes.length - 1 ? 65 : 32);
+              const endGap = hasLabel
+                ? Math.round(pacing.innerGapMs * 0.65)
+                : pacing.partGapMs;
+              pushStroke(
+                cs,
+                idx === cStrokes.length - 1 ? endGap : pacing.sameNodeStrokeMs
+              );
             });
 
             if (curr.node.label && curr.labelPoint) {
@@ -15727,13 +16013,13 @@ const { compileTimeline } = (() => {
                 scene.theme,
                 itemCursor,
                 82,
-                { isEdgeLabel: true }
+                { isEdgeLabel: true, lastCharSlowdown: pacing.lastCharSlowdown }
               );
               labelItem.stepIndex = stepIndex;
               labelItem.nodeId = curr.id;
               items.push(labelItem);
               allItems.push(labelItem);
-              itemCursor = labelItem.endMs + 95;
+              itemCursor = labelItem.endMs + pacing.partGapMs;
             }
             return;
           }
@@ -15767,13 +16053,18 @@ const { compileTimeline } = (() => {
                 textColor,
                 scene.theme,
                 itemCursor,
-                msPerChar
+                msPerChar,
+                { lastCharSlowdown: pacing.lastCharSlowdown }
               );
               tItem.stepIndex = stepIndex;
               tItem.nodeId = curr.id;
               items.push(tItem);
               allItems.push(tItem);
-              itemCursor = tItem.endMs + 40;
+              itemCursor =
+                tItem.endMs +
+                (lineIdx === m.lines.length - 1
+                  ? pacing.innerGapMs
+                  : Math.round(pacing.innerGapMs * 0.55));
               yCursor += m.lineHeight;
             });
             return;
@@ -15818,13 +16109,17 @@ const { compileTimeline } = (() => {
                     input.color ?? nodeColor,
                     scene.theme,
                     itemCursor,
-                    input.msPerChar ?? (fontSize >= 20 ? 122 : 88)
+                    input.msPerChar ?? (fontSize >= 20 ? 122 : 88),
+                    { lastCharSlowdown: pacing.lastCharSlowdown }
                   );
                   tItem.stepIndex = stepIndex;
                   tItem.nodeId = curr.id;
                   items.push(tItem);
                   allItems.push(tItem);
-                  itemCursor = tItem.endMs + (input.gapAfterMs ?? 40);
+                  const defaultLineGap = isMonospaceFont(lineFontFamily)
+                    ? pacing.codeLineGapMs
+                    : pacing.innerGapMs;
+                  itemCursor = tItem.endMs + (input.gapAfterMs ?? defaultLineGap);
                 },
               });
               return;
@@ -15910,7 +16205,7 @@ const { compileTimeline } = (() => {
 
       const drawEndMs =
         items.length > 0 ? items[items.length - 1].endMs : drawStartMs + 200;
-      const pauseMs = step.pauseMs ?? 420;
+      const pauseMs = step.pauseMs ?? pacing.stepPauseMs;
       const endMs = drawEndMs + pauseMs;
 
       const focusBounds =
@@ -15948,6 +16243,7 @@ const { compileTimeline } = (() => {
       layout,
       fullBounds: layout.bounds,
       spotlight: scene.spotlight === true,
+      pacing,
     };
   }
   return { compileTimeline };
@@ -15961,7 +16257,8 @@ const { evaluateTimelineAt } = (() => {
   }
   function evaluatePenForTextLine(
     item: CompiledTextLineItem,
-    tMs: number
+    tMs: number,
+    endDecel = 0
   ): { x: number; y: number; penDown: boolean; lift: number; velocity: number } {
     if (item.spans.length === 0) {
       return {
@@ -15977,15 +16274,16 @@ const { evaluateTimelineAt } = (() => {
       const span = item.spans[i];
       if (tMs <= span.endMs) {
         if (tMs >= span.startMs) {
-          const p =
+          const rawP =
             (tMs - span.startMs) / Math.max(1, span.endMs - span.startMs);
+          const p = easeGlyphProgress(rawP, endDecel);
           const pt = getGlyphTipAtProgress(span.glyph, span.boxX, span.boxY, p);
           return {
             x: pt.x,
             y: pt.y,
             penDown: true,
             lift: 0,
-            velocity: 0.9,
+            velocity: Math.max(0.25, 0.9 - rawP * 0.4 * endDecel),
           };
         }
         // Hop between previous char end and current char start
@@ -16109,8 +16407,10 @@ const { evaluateTimelineAt } = (() => {
       pen,
     });
 
+    const pacing = timeline.pacing ?? PACING_PRESETS.natural;
     const allItems = timeline.allItems;
     let activeItemIdx = -1;
+    let activeStrokeVelocity = 0.7;
 
     for (let i = 0; i < allItems.length; i++) {
       const item = allItems[i];
@@ -16119,8 +16419,18 @@ const { evaluateTimelineAt } = (() => {
       } else if (tMs <= item.startMs) {
         itemProgress.set(item.id, 0);
       } else {
-        const p = (tMs - item.startMs) / Math.max(1, item.endMs - item.startMs);
-        itemProgress.set(item.id, p);
+        const rawU = (tMs - item.startMs) / Math.max(1, item.endMs - item.startMs);
+        if (item.kind === 'text-line') {
+          itemProgress.set(item.id, rawU);
+        } else {
+          const evaluated = evaluateStrokeProgress(item.stroke, rawU, {
+            endDecel: pacing.endDecel,
+            cornerSlowdown: pacing.cornerSlowdown,
+            cumTime: item.cumTime,
+          });
+          itemProgress.set(item.id, evaluated.progress);
+          activeStrokeVelocity = evaluated.velocity;
+        }
         activeItemIdx = i;
       }
     }
@@ -16146,7 +16456,7 @@ const { evaluateTimelineAt } = (() => {
       const p = itemProgress.get(item.id) ?? 0;
 
       if (item.kind === 'text-line') {
-        const tip = evaluatePenForTextLine(item, tMs);
+        const tip = evaluatePenForTextLine(item, tMs, pacing.endDecel);
         return finish({
           visible: true,
           worldX: tip.x,
@@ -16161,7 +16471,6 @@ const { evaluateTimelineAt } = (() => {
       }
 
       const pt = samplePointAlongStroke(item.stroke, p);
-      const vel = Math.sin(p * Math.PI) * 0.65 + 0.35;
       return finish({
         visible: true,
         worldX: pt.x,
@@ -16169,7 +16478,7 @@ const { evaluateTimelineAt } = (() => {
         penDown: true,
         lift: 0,
         color: item.color,
-        velocity: vel,
+        velocity: activeStrokeVelocity,
         seed: Math.floor(tMs / 35),
         alpha: 1,
       });
@@ -16211,7 +16520,7 @@ const { evaluateTimelineAt } = (() => {
       });
     }
 
-    // Case 4: Pen-up travel arc between previous completed item and next upcoming item
+    // Case 4: Pen-up gap — 3-beat settle (hold -> retreat -> travel arc)
     let prevIdx = 0;
     for (let i = 0; i < allItems.length; i++) {
       if (allItems[i].endMs <= tMs) {
@@ -16225,20 +16534,65 @@ const { evaluateTimelineAt } = (() => {
     const gapSpan = Math.max(1, nextItem.startMs - prevItem.endMs);
     const rawU = (tMs - prevItem.endMs) / gapSpan;
 
-    const moveWindow = Math.min(gapSpan, 360);
+    const settleEnd =
+      pacing.settleHoldMs > 0
+        ? Math.min(
+            nextItem.startMs,
+            prevItem.endMs + Math.min(pacing.settleHoldMs, gapSpan * 0.38)
+          )
+        : prevItem.endMs;
+    const moveWindow = Math.min(Math.max(0, nextItem.startMs - settleEnd), 360);
     const moveStart = nextItem.startMs - moveWindow;
 
-    if (tMs < moveStart) {
+    if (pacing.settleHoldMs > 0 && tMs < settleEnd) {
+      const settleDur = Math.max(1, settleEnd - prevItem.endMs);
+      const holdU = Math.max(0, Math.min(1, (tMs - prevItem.endMs) / settleDur));
       return finish({
         visible: true,
-        worldX: prevItem.endPoint.x + 8,
-        worldY: prevItem.endPoint.y + 8,
+        worldX: prevItem.endPoint.x,
+        worldY: prevItem.endPoint.y,
         penDown: false,
-        lift: 10,
+        lift: holdU * 4.5,
+        color: prevItem.color,
+        velocity: 0,
+        seed: 0,
+        alpha: 0.98,
+      });
+    }
+
+    const retreatX = prevItem.endPoint.x + pacing.retreatOffsetPx;
+    const retreatY =
+      prevItem.endPoint.y + Math.round(pacing.retreatOffsetPx * 0.85);
+
+    if (tMs < moveStart) {
+      if (pacing.settleHoldMs <= 0) {
+        return finish({
+          visible: true,
+          worldX: retreatX,
+          worldY: retreatY,
+          penDown: false,
+          lift: 10,
+          color: nextItem.color,
+          velocity: 0,
+          seed: 0,
+          alpha: pacing.restAlpha,
+        });
+      }
+      const retreatWindow = Math.max(
+        1,
+        Math.min(180, Math.max(1, moveStart - settleEnd))
+      );
+      const ru = easeInOut(Math.min(1, (tMs - settleEnd) / retreatWindow));
+      return finish({
+        visible: true,
+        worldX: prevItem.endPoint.x + (retreatX - prevItem.endPoint.x) * ru,
+        worldY: prevItem.endPoint.y + (retreatY - prevItem.endPoint.y) * ru,
+        penDown: false,
+        lift: 4.5 + ru * 7.5,
         color: nextItem.color,
         velocity: 0,
         seed: 0,
-        alpha: 0.92,
+        alpha: 0.98 + (pacing.restAlpha - 0.98) * ru,
       });
     }
 
@@ -16248,8 +16602,10 @@ const { evaluateTimelineAt } = (() => {
       nextItem.startPoint.y - prevItem.endPoint.y
     );
     const maxLift = Math.min(24, Math.max(6, dist * 0.06));
-    const startX = gapSpan > 360 ? prevItem.endPoint.x + 8 : prevItem.endPoint.x;
-    const startY = gapSpan > 360 ? prevItem.endPoint.y + 8 : prevItem.endPoint.y;
+    const hadRetreat =
+      moveStart > settleEnd + 20 || (pacing.settleHoldMs <= 0 && gapSpan > 360);
+    const startX = hadRetreat ? retreatX : prevItem.endPoint.x;
+    const startY = hadRetreat ? retreatY : prevItem.endPoint.y;
 
     return finish({
       visible: true,
@@ -16260,7 +16616,7 @@ const { evaluateTimelineAt } = (() => {
       color: nextItem.color,
       velocity: 0.2,
       seed: 0,
-      alpha: 1,
+      alpha: hadRetreat ? pacing.restAlpha + (1 - pacing.restAlpha) * u : 1,
     });
   }
   return { evaluateTimelineAt };
@@ -16614,6 +16970,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
     'transitionduration',
     'transition-duration',
     'spotlight',
+    'pacing',
   ]);
   function unquote(val: string): string {
     const trimmed = val.trim();
@@ -16899,6 +17256,18 @@ const { parseProjectScript, generateScriptSpec } = (() => {
         rawSpotlight === 'on' ||
         rawSpotlight === 'yes';
 
+      const rawPacing = (meta.pacing ?? '').trim().toLowerCase();
+      let pacing: PacingPreset | undefined;
+      if (rawPacing) {
+        if (isPacingPreset(rawPacing)) {
+          pacing = rawPacing;
+        } else {
+          warnings.push(
+            `Scene ${idx + 1}: unknown pacing "${rawPacing}", defaulting to "natural"`
+          );
+        }
+      }
+
       const initialTitle =
         meta.title ??
         section.explicitTitle ??
@@ -16915,6 +17284,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
         nodes: [],
         transitionOut: transitionConfig,
         ...(spotlight ? { spotlight: true } : {}),
+        ...(pacing ? { pacing } : {}),
       };
 
       const layoutPlugin = layoutRegistry.getOrDefault(layoutMode);
@@ -16946,6 +17316,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
         handStyle,
         transitionOut: transitionConfig,
         ...(spotlight ? { spotlight: true } : {}),
+        ...(pacing ? { pacing } : {}),
       };
       return finalScene;
     });
@@ -17047,6 +17418,9 @@ const { parseProjectScript, generateScriptSpec } = (() => {
       if (scene.spotlight) {
         lines.push('spotlight: true');
       }
+      if (typeof scene.pacing === 'string') {
+        lines.push(`pacing: ${scene.pacing}`);
+      }
       if (idx < project.scenes.length - 1 || scene.transitionOut?.type) {
         lines.push(
           `transition: ${scene.transitionOut?.type ?? 'chalkboard-eraser'}`
@@ -17120,7 +17494,7 @@ const { parseProjectScript, generateScriptSpec } = (() => {
       '',
       '- Optional top frontmatter (`--- ... ---`): `title`, `aspectRatio` (`16:9` | `9:16`), `subtitles` (`auto` | `off`).',
       '- Divide scenes with `=== scene ===` (or `=== scene: Scene Title ===`).',
-      '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`, `spotlight`: `true` | `false`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
+      '- Each scene starts with optional `key: value` metadata lines (`title`, `theme`, `layout`, `camera`, `hand`, `transition`, `spotlight`: `true` | `false`, `pacing`: `natural` | `crisp` | `deliberate` | `linear`), terminated by `---`, followed by the scene body formatted for that `layout`’s `textCodec`.',
       '',
       '## 2. Currently Registered Plugins (Valid IDs)',
       '',
@@ -17463,14 +17837,16 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
         ctx.save();
         ctx.globalAlpha *= itemAlpha;
       }
+      const glyphDecel = timeline.pacing?.endDecel ?? 0;
       for (const span of item.spans) {
         let charP = 0;
         if (evalState.tMs >= span.endMs) {
           charP = 1;
         } else if (evalState.tMs > span.startMs) {
-          charP =
+          const rawCharP =
             (evalState.tMs - span.startMs) /
             Math.max(1, span.endMs - span.startMs);
+          charP = easeGlyphProgress(rawCharP, glyphDecel);
         }
         if (charP <= 0) continue;
         drawProgressiveGlyph(
@@ -17792,14 +18168,16 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
         });
       } else if (item.kind === 'text-line') {
         const spans: EvaluatedGlyphSnapshot[] = [];
+        const glyphDecel = timeline.pacing?.endDecel ?? 0;
         for (const span of item.spans) {
           let charP = 0;
           if (evalState.tMs >= span.endMs) {
             charP = 1;
           } else if (evalState.tMs > span.startMs) {
-            charP =
+            const rawCharP =
               (evalState.tMs - span.startMs) /
               Math.max(1, span.endMs - span.startMs);
+            charP = easeGlyphProgress(rawCharP, glyphDecel);
           }
           if (charP <= 0) continue;
           spans.push({

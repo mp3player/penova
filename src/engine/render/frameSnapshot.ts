@@ -11,7 +11,7 @@ import {
 } from '../../plugins/contracts';
 import { presentationRegistry } from '../../plugins/registry';
 import { hashString, mulberry32 } from '../../sdk/random';
-import { StrokePath } from '../../sdk/strokePath';
+import { easeGlyphProgress, StrokePath } from '../../sdk/strokePath';
 import { getActiveSubtitleAt } from '../subtitle/subtitleEngine';
 import { defaultMeasureText, wrapText } from '../layout/textMeasure';
 import {
@@ -247,14 +247,16 @@ export function evaluateSceneFrameSnapshot(
       });
     } else if (item.kind === 'text-line') {
       const spans: EvaluatedGlyphSnapshot[] = [];
+      const glyphDecel = timeline.pacing?.endDecel ?? 0;
       for (const span of item.spans) {
         let charP = 0;
         if (evalState.tMs >= span.endMs) {
           charP = 1;
         } else if (evalState.tMs > span.startMs) {
-          charP =
+          const rawCharP =
             (evalState.tMs - span.startMs) /
             Math.max(1, span.endMs - span.startMs);
+          charP = easeGlyphProgress(rawCharP, glyphDecel);
         }
         if (charP <= 0) continue;
         spans.push({

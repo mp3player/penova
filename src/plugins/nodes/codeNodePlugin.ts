@@ -265,7 +265,6 @@ export const codeNodePlugin: SceneNodePlugin = {
         fontFamily: CODE_MONO_FONT,
         color: 'white',
         msPerChar: 28,
-        gapAfterMs: 24,
       });
 
       if (highlightedSet.has(idx)) {
@@ -292,6 +291,7 @@ export const codeNodePlugin: SceneNodePlugin = {
               color: hlColor,
               opacity: hlOpacity,
               speedFactor: 1.55,
+              easing: 'crisp',
             }
           ),
           28

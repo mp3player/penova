@@ -150,6 +150,25 @@ export interface SceneTransitionConfig {
   durationMs?: number;
 }
 
+export type PacingPreset = 'natural' | 'crisp' | 'deliberate' | 'linear';
+
+export interface ScenePacingConfig {
+  endDecel: number;
+  cornerSlowdown: number;
+  sameNodeStrokeMs: number;
+  innerGapMs: number;
+  codeLineGapMs: number;
+  partGapMs: number;
+  stepPauseMs: number;
+  leadInMs: number;
+  lastCharSlowdown: number;
+  settleHoldMs: number;
+  retreatOffsetPx: number;
+  restAlpha: number;
+}
+
+export type ScenePacingOption = PacingPreset | Partial<ScenePacingConfig>;
+
 export interface LessonScene {
   id: string;
   title: string;
@@ -162,6 +181,7 @@ export interface LessonScene {
   customSteps?: TeachingStep[];
   transitionOut?: SceneTransitionConfig;
   spotlight?: boolean;
+  pacing?: ScenePacingOption;
 }
 
 export function cloneSceneNode(node: SceneNode): SceneNode {
