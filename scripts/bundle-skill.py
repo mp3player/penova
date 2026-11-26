@@ -316,7 +316,7 @@ function printUsage(): void {
     [
       'Usage (Self-Contained Penova Skill Runner):',
       '  node render-script.ts --spec',
-      '  node render-script.ts <input.penova.md> [output-dir] [--exporter=poster-svg|svg-sequence-tar] [--fps=12]',
+      '  node render-script.ts <input.penova.md> [output-dir] [--exporter=poster-svg|svg-sequence-tar|node-mp4] [--fps=12|24] [--font-dir=<dir>] [--data-dir=<dir>]',
       '  # On Node < 22.6 use: npx tsx render-script.ts ...',
     ].join('\\n')
   );
@@ -347,10 +347,19 @@ async function main(): Promise<void> {
   const exporterId = exporterArg
     ? exporterArg.slice('--exporter='.length)
     : 'poster-svg';
+  const fontDirArg = args.find((a) => a.startsWith('--font-dir='));
+  if (fontDirArg) {
+    process.env.PENOVA_FONT_DIR = resolve(fontDirArg.slice('--font-dir='.length));
+  }
+  const dataDirArg = args.find((a) => a.startsWith('--data-dir='));
+  if (dataDirArg) {
+    process.env.PENOVA_DATA_DIR = resolve(dataDirArg.slice('--data-dir='.length));
+  }
   const fpsArg = args.find((a) => a.startsWith('--fps='));
+  const defaultFps = exporterId === 'node-mp4' ? 24 : 12;
   const fps = fpsArg
-    ? Math.max(1, Number(fpsArg.slice('--fps='.length)) || 12)
-    : 12;
+    ? Math.max(1, Number(fpsArg.slice('--fps='.length)) || defaultFps)
+    : defaultFps;
 
   const scriptText = readFileSync(resolve(inputPath), 'utf8');
   const stem = basename(inputPath).replace(/\\.(penova\\.md|md|txt)$/i, '');

@@ -6,6 +6,10 @@ import {
   drawCachedSurface,
   paintRadialBackdrop,
 } from '../../sdk/surfaceCache';
+import {
+  createOffscreenCanvas,
+  onOffscreenCanvasFactoryChange,
+} from '../../sdk/offscreenCanvas';
 import { hash2D, mulberry32 } from '../../sdk/random';
 import { PresentationPlugin, ThemePalette } from '../contracts';
 
@@ -44,13 +48,15 @@ const palette: ThemePalette = {
 const GRAIN_TILE_SIZE = 128;
 let cachedChalkGrainTile: HTMLCanvasElement | null = null;
 
+onOffscreenCanvasFactoryChange(() => {
+  cachedChalkGrainTile = null;
+});
+
 function getChalkGrainTile(): HTMLCanvasElement | null {
-  if (typeof document === 'undefined') return null;
   if (cachedChalkGrainTile) return cachedChalkGrainTile;
 
-  const tile = document.createElement('canvas');
-  tile.width = GRAIN_TILE_SIZE;
-  tile.height = GRAIN_TILE_SIZE;
+  const tile = createOffscreenCanvas(GRAIN_TILE_SIZE, GRAIN_TILE_SIZE);
+  if (!tile) return null;
   const tCtx = tile.getContext('2d');
   if (!tCtx) return null;
 

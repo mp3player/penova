@@ -9,6 +9,7 @@ import {
   shapeRegistry,
   transitionRegistry,
 } from '../../plugins/registry';
+import { onOffscreenCanvasFactoryChange } from '../../sdk/offscreenCanvas';
 import { computeDiagramLayout } from '../layout/diagramLayout';
 import { CompiledTimeline, compileTimeline } from './timelineEngine';
 
@@ -24,6 +25,7 @@ presentationRegistry.subscribe(clearSceneCompileCache);
 glyphProviderRegistry.subscribe(clearSceneCompileCache);
 sceneNodeRegistry.subscribe(clearSceneCompileCache);
 transitionRegistry.subscribe(clearSceneCompileCache);
+onOffscreenCanvasFactoryChange(clearSceneCompileCache);
 
 export interface CompiledTransitionWindow {
   id: TransitionId;

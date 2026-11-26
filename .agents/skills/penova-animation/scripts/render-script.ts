@@ -178,7 +178,8 @@ type SceneFontPreset =
   | 'kuaile'
   | 'longcang'
   | 'blueprint-hand'
-  | 'wenkai';
+  | 'wenkai'
+  | 'kaiti-stroke';
 
 type ScenePacingOption = PacingPreset | Partial<ScenePacingConfig>;
 
@@ -1065,6 +1066,15 @@ interface DocBlockMeta {
   pause?: number;
 }
 
+// --- Types: src/sdk/offscreenCanvas.ts ---
+
+type OffscreenCanvasFactory = (
+  width: number,
+  height: number
+) => HTMLCanvasElement;
+
+type CanvasPath2DFactory = (svgPath: string) => Path2D;
+
 // --- Types: src/sdk/surfaceCache.ts ---
 
 type SurfacePainter = (
@@ -1072,6 +1082,29 @@ type SurfacePainter = (
   width: number,
   height: number
 ) => void;
+
+// --- Types: src/engine/render/fonts.ts ---
+
+interface SceneFontPresetOption {
+  id: SceneFontPreset;
+  labelEn: string;
+  labelZh: string;
+  fontFamily?: string;
+  loadFamilies: string[];
+}
+
+// --- Types: src/plugins/glyphs/cjkStrokeData.ts ---
+
+interface NodeProcessLike {
+  versions?: { node?: string };
+  env?: Record<string, string | undefined>;
+  cwd: () => string;
+}
+
+interface CjkStrokeLoadOptions {
+  includeOutlines?: boolean;
+  dataDirs?: string[];
+}
 
 // --- Types: src/plugins/glyphs/strokeOrderProvider.ts ---
 
@@ -1093,6 +1126,48 @@ interface ImageHandOptions {
 interface TarEntry {
   name: string;
   data: Uint8Array;
+}
+
+// --- Types: src/plugins/exporters/nodeMp4Exporter.ts ---
+
+interface NodeCanvasInitOptions {
+  fontDirs?: string[];
+  modulePaths?: string[];
+}
+
+interface NodeCanvasRuntimeHandle {
+  createCanvas: (width: number, height: number) => HTMLCanvasElement;
+  release: () => void;
+}
+
+interface NodeCanvasModuleLike {
+  createCanvas: (width: number, height: number) => HTMLCanvasElement;
+  Path2D?: new (svgPath: string) => Path2D;
+  GlobalFonts?: {
+    registerFromPath: (path: string, nameAlias?: string) => boolean;
+  };
+}
+
+interface NodeReadableLike {
+  on(event: string, fn: (chunk: Uint8Array) => void): void;
+}
+
+interface NodeWritableLike {
+  write(chunk: Uint8Array): boolean;
+  end(): void;
+}
+
+interface NodeChildProcessLike {
+  stdin: NodeWritableLike;
+  stderr: NodeReadableLike;
+  kill(signal?: string): void;
+  once(event: string, fn: (...args: unknown[]) => void): void;
+}
+
+interface NodeProcessLike {
+  versions?: { node?: string };
+  env?: Record<string, string | undefined>;
+  cwd: () => string;
 }
 
 // --- Types: src/plugins/exporters/httpBridgeFactory.ts ---
@@ -1137,16 +1212,6 @@ interface LessonProject {
 
 type MeasureTextFn = (text: string, font: string) => number;
 
-// --- Types: src/engine/render/fonts.ts ---
-
-interface SceneFontPresetOption {
-  id: SceneFontPreset;
-  labelEn: string;
-  labelZh: string;
-  fontFamily?: string;
-  loadFamilies: string[];
-}
-
 // --- Types: src/engine/sketch/textStrokes.ts ---
 
 interface GlyphStrokeData {
@@ -1160,6 +1225,8 @@ interface GlyphStrokeData {
   segments: GlyphStrokeSegment[];
   totalLength: number;
   chalkCanvas?: HTMLCanvasElement;
+  strokeCanvases?: HTMLCanvasElement[];
+  perStrokeRevealWidth?: number;
 }
 
 // --- Types: src/engine/timeline/types.ts ---
@@ -10881,18 +10948,78 @@ const { freeformLayoutPlugin } = (() => {
   return { freeformLayoutPlugin };
 })();
 
+// --- Module: src/sdk/offscreenCanvas.ts ---
+const { setPath2DFactory, createPath2D, onOffscreenCanvasFactoryChange, setOffscreenCanvasFactory, hasOffscreenCanvasSupport, createOffscreenCanvas } = (() => {
+  let activeOffscreenCanvasFactory: OffscreenCanvasFactory | null = null;
+  let activePath2DFactory: CanvasPath2DFactory | null = null;
+  const factoryResetListeners = new Set<() => void>();
+  function setPath2DFactory(factory: CanvasPath2DFactory | null): void {
+    activePath2DFactory = factory;
+  }
+  function createPath2D(svgPath: string): Path2D | null {
+    if (activePath2DFactory) {
+      return activePath2DFactory(svgPath);
+    }
+    if (typeof Path2D !== 'undefined') {
+      return new Path2D(svgPath);
+    }
+    return null;
+  }
+  function onOffscreenCanvasFactoryChange(
+    listener: () => void
+  ): () => void {
+    factoryResetListeners.add(listener);
+    return () => {
+      factoryResetListeners.delete(listener);
+    };
+  }
+  function setOffscreenCanvasFactory(
+    factory: OffscreenCanvasFactory | null
+  ): void {
+    activeOffscreenCanvasFactory = factory;
+    for (const listener of factoryResetListeners) {
+      listener();
+    }
+  }
+  function hasOffscreenCanvasSupport(): boolean {
+    return (
+      activeOffscreenCanvasFactory !== null || typeof document !== 'undefined'
+    );
+  }
+  function createOffscreenCanvas(
+    width = 300,
+    height = 150
+  ): HTMLCanvasElement | null {
+    const safeW = Math.max(1, Math.round(width));
+    const safeH = Math.max(1, Math.round(height));
+    if (activeOffscreenCanvasFactory) {
+      return activeOffscreenCanvasFactory(safeW, safeH);
+    }
+    if (typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      canvas.width = safeW;
+      canvas.height = safeH;
+      return canvas;
+    }
+    return null;
+  }
+  return { setPath2DFactory, createPath2D, onOffscreenCanvasFactoryChange, setOffscreenCanvasFactory, hasOffscreenCanvasSupport, createOffscreenCanvas };
+})();
+
 // --- Module: src/sdk/chalkBrush.ts ---
 const { drawPowderyStroke, drawSmoothLineStroke, drawFallingDustParticles } = (() => {
   const dabCache = new Map<string, HTMLCanvasElement>();
+  onOffscreenCanvasFactoryChange(() => {
+    dabCache.clear();
+  });
   function getChalkDab(colorHex: string): HTMLCanvasElement | null {
-    if (typeof document === 'undefined') return null;
+    if (!hasOffscreenCanvasSupport()) return null;
     const cached = dabCache.get(colorHex);
     if (cached) return cached;
 
     const size = 24;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
+    const canvas = createOffscreenCanvas(size, size);
+    if (!canvas) return null;
     const ctx = canvas.getContext('2d');
 
     if (ctx) {
@@ -11079,6 +11206,9 @@ const { drawPowderyStroke, drawSmoothLineStroke, drawFallingDustParticles } = ((
 const { paintRadialBackdrop, drawCachedSurface } = (() => {
   const surfaceCache = new Map<string, HTMLCanvasElement>();
   const MAX_SURFACE_CACHE = 8;
+  onOffscreenCanvasFactoryChange(() => {
+    surfaceCache.clear();
+  });
   function paintRadialBackdrop(
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -11105,7 +11235,7 @@ const { paintRadialBackdrop, drawCachedSurface } = (() => {
     height: number,
     painter: SurfacePainter
   ): void {
-    if (typeof document === 'undefined') {
+    if (!hasOffscreenCanvasSupport()) {
       painter(ctx, width, height);
       return;
     }
@@ -11116,9 +11246,11 @@ const { paintRadialBackdrop, drawCachedSurface } = (() => {
 
     let cached = surfaceCache.get(fullKey);
     if (!cached) {
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
+      const canvas = createOffscreenCanvas(w, h);
+      if (!canvas) {
+        painter(ctx, width, height);
+        return;
+      }
       const cCtx = canvas.getContext('2d');
       if (cCtx) {
         painter(cCtx, w, h);
@@ -11170,13 +11302,14 @@ const { chalkboardPlugin } = (() => {
   };
   const GRAIN_TILE_SIZE = 128;
   let cachedChalkGrainTile: HTMLCanvasElement | null = null;
+  onOffscreenCanvasFactoryChange(() => {
+    cachedChalkGrainTile = null;
+  });
   function getChalkGrainTile(): HTMLCanvasElement | null {
-    if (typeof document === 'undefined') return null;
     if (cachedChalkGrainTile) return cachedChalkGrainTile;
 
-    const tile = document.createElement('canvas');
-    tile.width = GRAIN_TILE_SIZE;
-    tile.height = GRAIN_TILE_SIZE;
+    const tile = createOffscreenCanvas(GRAIN_TILE_SIZE, GRAIN_TILE_SIZE);
+    if (!tile) return null;
     const tCtx = tile.getContext('2d');
     if (!tCtx) return null;
 
@@ -11618,13 +11751,14 @@ const { letterPaperPlugin } = (() => {
   };
   const PAPER_GRAIN_TILE_SIZE = 128;
   let cachedPaperGrainTile: HTMLCanvasElement | null = null;
+  onOffscreenCanvasFactoryChange(() => {
+    cachedPaperGrainTile = null;
+  });
   function getPaperGrainTile(): HTMLCanvasElement | null {
-    if (typeof document === 'undefined') return null;
     if (cachedPaperGrainTile) return cachedPaperGrainTile;
 
-    const tile = document.createElement('canvas');
-    tile.width = PAPER_GRAIN_TILE_SIZE;
-    tile.height = PAPER_GRAIN_TILE_SIZE;
+    const tile = createOffscreenCanvas(PAPER_GRAIN_TILE_SIZE, PAPER_GRAIN_TILE_SIZE);
+    if (!tile) return null;
     const tCtx = tile.getContext('2d');
     if (!tCtx) return null;
 
@@ -11780,6 +11914,353 @@ const { letterPaperPlugin } = (() => {
     },
   };
   return { letterPaperPlugin };
+})();
+
+// --- Module: src/engine/render/fonts.ts ---
+const { isVectorKaitiFont, isSceneFontPreset, resolveSceneFontFamily } = (() => {
+  const VECTOR_KAITI_FONT_TAG = 'Penova KaiTi Stroke';
+  function isVectorKaitiFont(font: string): boolean {
+    return font.includes(VECTOR_KAITI_FONT_TAG);
+  }
+  const SCENE_FONT_PRESETS: readonly SceneFontPresetOption[] = [
+    {
+      id: 'theme-default',
+      labelEn: 'Theme Default',
+      labelZh: '主题默认',
+      loadFamilies: [],
+    },
+    {
+      id: 'xiaolai',
+      labelEn: 'Xiaolai Hand (CN)',
+      labelZh: '小赖手绘 (推荐百搭)',
+      fontFamily: "'Penova Xiaolai', 'Xiaolai', 'Segoe Print', cursive",
+      loadFamilies: ['Penova Xiaolai'],
+    },
+    {
+      id: 'marker',
+      labelEn: 'LXGW Marker (Board)',
+      labelZh: '霞鹜漫黑 (板书粗笔)',
+      fontFamily: "'Penova Marker', 'LXGW Marker Gothic', 'Segoe Print', cursive",
+      loadFamilies: ['Penova Marker'],
+    },
+    {
+      id: 'kuaile',
+      labelEn: 'ZCOOL KuaiLe (Playful)',
+      labelZh: '站酷快乐 (圆润俏皮)',
+      fontFamily: "'Penova KuaiLe', 'ZCOOL KuaiLe', cursive",
+      loadFamilies: ['Penova KuaiLe'],
+    },
+    {
+      id: 'longcang',
+      labelEn: 'Long Cang (Brush)',
+      labelZh: '龙藏手书 (毛笔随性)',
+      fontFamily: "'Penova LongCang', 'Long Cang', cursive",
+      loadFamilies: ['Penova LongCang'],
+    },
+    {
+      id: 'blueprint-hand',
+      labelEn: 'Architects + Xiaolai',
+      labelZh: '建筑师手写 + 小赖',
+      fontFamily:
+        "'Penova Architects', 'Architects Daughter', 'Penova Xiaolai', 'Xiaolai', cursive",
+      loadFamilies: ['Penova Architects', 'Penova Xiaolai'],
+    },
+    {
+      id: 'wenkai',
+      labelEn: 'LXGW WenKai (Classic)',
+      labelZh: '霞鹜文楷 (经典楷书)',
+      fontFamily: "'Penova WenKai', 'LXGW WenKai', 'KaiTi', serif",
+      loadFamilies: ['Penova WenKai'],
+    },
+    {
+      id: 'kaiti-stroke',
+      labelEn: 'Vector KaiTi (True Strokes)',
+      labelZh: '纯矢量楷书 (真·逐笔轮廓)',
+      fontFamily: `'${VECTOR_KAITI_FONT_TAG}', 'Penova WenKai', 'KaiTi', serif`,
+      loadFamilies: ['Penova WenKai'],
+    },
+  ];
+  const FONT_PRESET_MAP = new Map<string, SceneFontPresetOption>(
+    SCENE_FONT_PRESETS.map((p) => [p.id, p])
+  );
+  function isSceneFontPreset(raw: string): raw is SceneFontPreset {
+    return FONT_PRESET_MAP.has(raw);
+  }
+  function getSceneFontPresetOption(
+    preset: SceneFontPreset | undefined
+  ): SceneFontPresetOption {
+    return (
+      (preset ? FONT_PRESET_MAP.get(preset) : undefined) ?? SCENE_FONT_PRESETS[0]
+    );
+  }
+  function resolveSceneFontFamily(
+    scene: Pick<LessonScene, 'theme' | 'font'>,
+    fallbackThemeFont: string
+  ): string {
+    const opt = getSceneFontPresetOption(scene.font);
+    return opt.fontFamily ?? fallbackThemeFont;
+  }
+  return { isVectorKaitiFont, isSceneFontPreset, resolveSceneFontFamily };
+})();
+
+// --- Module: src/plugins/glyphs/cjkStrokeData.ts ---
+const { getCjkStrokeOutlines, computeVectorKaitiTransform, ensureCjkStrokeDataLoaded, cjkStrokeOrderGlyphProvider } = (() => {
+  const dynamicImport = new Function('spec', 'return import(spec)') as (
+    spec: string
+  ) => Promise<Record<string, unknown>>;
+  function getNodeProcess(): NodeProcessLike | undefined {
+    return (globalThis as unknown as { process?: NodeProcessLike }).process;
+  }
+  const cjkMediansMap = new Map<string, number[][]>();
+  const cjkOutlinesMap = new Map<string, string[]>();
+  let mediansLoadPromise: Promise<boolean> | null = null;
+  let outlinesLoadPromise: Promise<boolean> | null = null;
+  function registerCjkStrokeMedians(
+    entries: Record<string, number[][]>
+  ): void {
+    for (const [char, strokes] of Object.entries(entries)) {
+      if (Array.isArray(strokes) && strokes.length > 0) {
+        cjkMediansMap.set(char, strokes);
+      }
+    }
+    glyphProviderRegistry.notifyChanged();
+  }
+  function registerCjkStrokeOutlines(
+    entries: Record<string, string[]>
+  ): void {
+    for (const [char, paths] of Object.entries(entries)) {
+      if (Array.isArray(paths) && paths.length > 0) {
+        cjkOutlinesMap.set(char, paths);
+      }
+    }
+    glyphProviderRegistry.notifyChanged();
+  }
+  function getCjkStrokeMedians(char: string): number[][] | undefined {
+    return cjkMediansMap.get(char);
+  }
+  function getCjkStrokeOutlines(char: string): string[] | undefined {
+    return cjkOutlinesMap.get(char);
+  }
+  function hasCjkMediansLoaded(): boolean {
+    return cjkMediansMap.size > 0;
+  }
+  function hasCjkOutlinesLoaded(): boolean {
+    return cjkOutlinesMap.size > 0;
+  }
+  function computeVectorKaitiTransform(
+    fontSize: number,
+    boxW: number,
+    boxH: number
+  ): { emScale: number; ox: number; oy: number } {
+    const emScale = (fontSize * 0.96) / 1024;
+    const ox = (boxW - 1024 * emScale) * 0.5;
+    const oy = (boxH - 1024 * emScale) * 0.5;
+    return { emScale, ox, oy };
+  }
+  async function loadJsonAsset(
+    filename: string,
+    extraDataDirs: string[] = []
+  ): Promise<unknown | null> {
+    if (typeof window !== 'undefined') {
+      if (typeof fetch !== 'function') return null;
+      try {
+        const resp = await fetch(`/data/${filename}`);
+        if (!resp.ok) return null;
+        return await resp.json();
+      } catch {
+        return null;
+      }
+    }
+
+    const nodeProc = getNodeProcess();
+    if (!nodeProc?.versions?.node) return null;
+
+    try {
+      const fs = (await dynamicImport('node:fs')) as {
+        existsSync: (p: string) => boolean;
+        readFileSync: (p: string, enc: string) => string;
+      };
+      const path = (await dynamicImport('node:path')) as {
+        join: (...parts: string[]) => string;
+      };
+
+      const cwd = nodeProc.cwd();
+      const rawEnvDirs = nodeProc.env?.PENOVA_DATA_DIR ?? '';
+      const envDirs = rawEnvDirs ? rawEnvDirs.split(':').filter(Boolean) : [];
+      const candidateDirs = [
+        ...extraDataDirs,
+        ...envDirs,
+        path.join(cwd, 'public', 'data'),
+        '/opt/data/profiles/operation/skills/penova-animation/data',
+      ];
+
+      for (const dir of candidateDirs) {
+        const candidate = path.join(dir, filename);
+        if (!fs.existsSync(candidate)) continue;
+        return JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+  /**
+   * Lazily load MakeMeAHanzi CJK stroke medians (and optionally vector SVG outlines)
+   * from `/data/*.json` in browser or local/skill data directories in Node.js.
+   * Returns true if new data was loaded into memory during this call.
+   */
+  async function ensureCjkStrokeDataLoaded(
+    options: CjkStrokeLoadOptions = {}
+  ): Promise<boolean> {
+    let loadedAny = false;
+
+    if (!hasCjkMediansLoaded()) {
+      if (!mediansLoadPromise) {
+        mediansLoadPromise = (async () => {
+          const parsed = await loadJsonAsset('cjk-medians.json', options.dataDirs);
+          if (!parsed || typeof parsed !== 'object') {
+            mediansLoadPromise = null;
+            return false;
+          }
+          registerCjkStrokeMedians(parsed as Record<string, number[][]>);
+          return true;
+        })();
+      }
+      if (await mediansLoadPromise) {
+        loadedAny = true;
+      }
+    }
+
+    if (options.includeOutlines && !hasCjkOutlinesLoaded()) {
+      if (!outlinesLoadPromise) {
+        outlinesLoadPromise = (async () => {
+          const parsed = await loadJsonAsset(
+            'cjk-outlines.json',
+            options.dataDirs
+          );
+          if (!parsed || typeof parsed !== 'object') {
+            outlinesLoadPromise = null;
+            return false;
+          }
+          registerCjkStrokeOutlines(parsed as Record<string, string[]>);
+          return true;
+        })();
+      }
+      if (await outlinesLoadPromise) {
+        loadedAny = true;
+      }
+    }
+
+    return loadedAny;
+  }
+  function measureLength(pts: Point[]): number {
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) {
+      len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    }
+    return Math.max(1, len);
+  }
+  function resolveTargetRect(
+    inkBounds: Rect | undefined,
+    boxW: number,
+    boxH: number
+  ): Rect {
+    if (inkBounds) {
+      return {
+        x: inkBounds.x,
+        y: inkBounds.y,
+        width: Math.max(4, inkBounds.width),
+        height: Math.max(4, inkBounds.height),
+      };
+    }
+    const padX = boxW * 0.16;
+    const padY = boxH * 0.16;
+    return {
+      x: padX,
+      y: padY,
+      width: Math.max(6, boxW - padX * 2),
+      height: Math.max(6, boxH - padY * 2),
+    };
+  }
+  const cjkStrokeOrderGlyphProvider: GlyphProviderPlugin = {
+    id: 'cjk-stroke-order',
+    name: 'CJK Stroke Order (MakeMeAHanzi)',
+    priority: 90,
+    resolveStrokes(ctx): GlyphStrokeSegment[] | null {
+      const medians = cjkMediansMap.get(ctx.char);
+      if (!medians || medians.length === 0) {
+        return null;
+      }
+
+      if (isVectorKaitiFont(ctx.font) && cjkOutlinesMap.has(ctx.char)) {
+        const { emScale, ox, oy } = computeVectorKaitiTransform(
+          ctx.fontSize,
+          ctx.boxW,
+          ctx.boxH
+        );
+        return medians.map((flat) => {
+          const pts: Point[] = [];
+          for (let i = 0; i + 1 < flat.length; i += 2) {
+            pts.push({
+              x: ox + flat[i] * emScale,
+              y: oy + flat[i + 1] * emScale,
+            });
+          }
+          return { points: pts, length: measureLength(pts) };
+        });
+      }
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const flat of medians) {
+        for (let i = 0; i + 1 < flat.length; i += 2) {
+          const mx = flat[i];
+          const my = flat[i + 1];
+          if (mx < minX) minX = mx;
+          if (mx > maxX) maxX = mx;
+          if (my < minY) minY = my;
+          if (my > maxY) maxY = my;
+        }
+      }
+
+      if (!Number.isFinite(minX)) return null;
+
+      const spanX = maxX - minX;
+      const spanY = maxY - minY;
+      const target = resolveTargetRect(ctx.inkBounds, ctx.boxW, ctx.boxH);
+
+      const mapX = (mx: number): number => {
+        if (spanX < 80) {
+          const scale = spanY > 80 ? target.height / spanY : 1 / 1024;
+          return target.x + target.width * 0.5 + (mx - (minX + maxX) * 0.5) * scale;
+        }
+        return target.x + ((mx - minX) / spanX) * target.width;
+      };
+
+      const mapY = (my: number): number => {
+        if (spanY < 80) {
+          const scale = spanX > 80 ? target.width / spanX : 1 / 1024;
+          return target.y + target.height * 0.5 + (my - (minY + maxY) * 0.5) * scale;
+        }
+        return target.y + ((my - minY) / spanY) * target.height;
+      };
+
+      return medians.map((flat) => {
+        const pts: Point[] = [];
+        for (let i = 0; i + 1 < flat.length; i += 2) {
+          pts.push({
+            x: mapX(flat[i]),
+            y: mapY(flat[i + 1]),
+          });
+        }
+        return { points: pts, length: measureLength(pts) };
+      });
+    },
+  };
+  return { getCjkStrokeOutlines, computeVectorKaitiTransform, ensureCjkStrokeDataLoaded, cjkStrokeOrderGlyphProvider };
 })();
 
 // --- Module: src/plugins/glyphs/strokeOrderProvider.ts ---
@@ -13182,13 +13663,16 @@ const { penFollowCameraPlugin } = (() => {
 // --- Module: src/plugins/transitions/chalkboardEraserTransition.ts ---
 const { chalkboardEraserTransitionPlugin } = (() => {
   let cachedEraseCanvas: HTMLCanvasElement | null = null;
+  onOffscreenCanvasFactoryChange(() => {
+    cachedEraseCanvas = null;
+  });
   function getEraseCanvas(w: number, h: number): HTMLCanvasElement | null {
-    if (typeof document === 'undefined') return null;
-    if (!cachedEraseCanvas) {
-      cachedEraseCanvas = document.createElement('canvas');
-    }
     const safeW = Math.max(1, w);
     const safeH = Math.max(1, h);
+    if (!cachedEraseCanvas) {
+      cachedEraseCanvas = createOffscreenCanvas(safeW, safeH);
+      if (!cachedEraseCanvas) return null;
+    }
     if (cachedEraseCanvas.width !== safeW || cachedEraseCanvas.height !== safeH) {
       cachedEraseCanvas.width = safeW;
       cachedEraseCanvas.height = safeH;
@@ -13459,7 +13943,7 @@ const { cutTransitionPlugin } = (() => {
 })();
 
 // --- Module: src/plugins/exporters/helpers.ts ---
-const { safeFilename, waitMs, throwIfAborted, createOffscreenCanvas, canvasToBlob, bytesToBase64, buildTarArchive } = (() => {
+const { safeFilename, waitMs, throwIfAborted, canvasToBlob, bytesToBase64, buildTarArchive } = (() => {
   function safeFilename(title: string, ext: string): string {
     const cleaned = title
       .trim()
@@ -13595,7 +14079,7 @@ const { safeFilename, waitMs, throwIfAborted, createOffscreenCanvas, canvasToBlo
 
     return out;
   }
-  return { safeFilename, waitMs, throwIfAborted, createOffscreenCanvas, canvasToBlob, bytesToBase64, buildTarArchive };
+  return { safeFilename, waitMs, throwIfAborted, canvasToBlob, bytesToBase64, buildTarArchive };
 })();
 
 // --- Module: src/plugins/exporters/mediaRecorderExporter.ts ---
@@ -14010,6 +14494,401 @@ const { svgSequenceTarExporterPlugin } = (() => {
   return { svgSequenceTarExporterPlugin };
 })();
 
+// --- Module: src/plugins/exporters/nodeMp4Exporter.ts ---
+const { initNodeCanvasRuntime, nodeMp4ExporterPlugin } = (() => {
+  const NODE_MP4_DEFAULT_FPS = 24;
+  const dynamicImport = new Function('spec', 'return import(spec)') as (
+    spec: string
+  ) => Promise<Record<string, unknown>>;
+  const FONT_ALIAS_TABLE: Array<{ file: string; aliases: string[] }> = [
+    { file: 'Xiaolai-Regular.ttf', aliases: ['Penova Xiaolai', 'Xiaolai'] },
+    {
+      file: 'LXGWMarkerGothic-Regular.ttf',
+      aliases: ['Penova Marker', 'LXGW Marker Gothic'],
+    },
+    { file: 'ZCOOLKuaiLe-Regular.ttf', aliases: ['Penova KuaiLe', 'ZCOOL KuaiLe'] },
+    { file: 'LongCang-Regular.ttf', aliases: ['Penova LongCang', 'Long Cang'] },
+    {
+      file: 'ArchitectsDaughter-Regular.ttf',
+      aliases: ['Penova Architects', 'Architects Daughter'],
+    },
+    {
+      file: 'LXGWWenKai-Regular.ttf',
+      aliases: [
+        'Penova WenKai',
+        'LXGW WenKai',
+        'KaiTi',
+        'STKaiti',
+        'Segoe Print',
+        'Microsoft YaHei',
+        'PingFang SC',
+      ],
+    },
+    {
+      file: 'DejaVuSansMono.ttf',
+      aliases: ['DejaVu Sans Mono', 'JetBrains Mono', 'Consolas'],
+    },
+  ];
+  function getNodeProcess(): NodeProcessLike | undefined {
+    return (globalThis as unknown as { process?: NodeProcessLike }).process;
+  }
+  let activeNodeRuntimeRefs = 0;
+  let cachedCanvasModule: NodeCanvasModuleLike | null = null;
+  const registeredFontPairs = new Set<string>();
+  function isNodeRuntimeEnvironment(): boolean {
+    const proc = getNodeProcess();
+    return Boolean(proc?.versions?.node) && typeof window === 'undefined';
+  }
+  async function resolveNodeCanvasModule(
+    extraModulePaths: string[] = []
+  ): Promise<NodeCanvasModuleLike> {
+    if (cachedCanvasModule) {
+      return cachedCanvasModule;
+    }
+
+    try {
+      const direct = (await dynamicImport(
+        '@napi-rs/canvas'
+      )) as unknown as NodeCanvasModuleLike;
+      if (direct && typeof direct.createCanvas === 'function') {
+        cachedCanvasModule = direct;
+        return direct;
+      }
+    } catch {
+      // Fall through to probing known local/container module directories
+    }
+
+    const mod = (await dynamicImport('node:module')) as {
+      createRequire: (id: string) => (id: string) => unknown;
+    };
+    const fs = (await dynamicImport('node:fs')) as {
+      existsSync: (p: string) => boolean;
+    };
+    const path = (await dynamicImport('node:path')) as {
+      join: (...parts: string[]) => string;
+    };
+
+    const nodeProc = getNodeProcess();
+    const cwd = nodeProc?.cwd() ?? '/';
+    const rawEnvMods = nodeProc?.env?.PENOVA_NODE_MODULES ?? '';
+    const envModules = rawEnvMods ? rawEnvMods.split(':').filter(Boolean) : [];
+    const candidateDirs = [
+      ...extraModulePaths,
+      ...envModules,
+      path.join(cwd, 'node_modules'),
+      '/opt/data/profiles/operation/cache/scratch/penova-raster/node_modules',
+      '/opt/data/profiles/operation/skills/penova-animation/node_modules',
+    ];
+
+    const req = mod.createRequire(path.join(cwd, 'package.json'));
+    for (const dir of candidateDirs) {
+      const pkgDir = path.join(dir, '@napi-rs', 'canvas');
+      if (!fs.existsSync(pkgDir)) continue;
+      try {
+        const loaded = req(pkgDir) as NodeCanvasModuleLike;
+        if (loaded && typeof loaded.createCanvas === 'function') {
+          cachedCanvasModule = loaded;
+          return loaded;
+        }
+      } catch {
+        // Keep probing remaining candidate directories
+      }
+    }
+
+    throw new Error(
+      'node-mp4 exporter requires @napi-rs/canvas. Install it (`npm i @napi-rs/canvas`) or set PENOVA_NODE_MODULES.'
+    );
+  }
+  async function registerRuntimeFonts(
+    canvasMod: NodeCanvasModuleLike,
+    extraFontDirs: string[] = []
+  ): Promise<void> {
+    if (!canvasMod.GlobalFonts?.registerFromPath) return;
+
+    const fs = (await dynamicImport('node:fs')) as {
+      existsSync: (p: string) => boolean;
+    };
+    const path = (await dynamicImport('node:path')) as {
+      join: (...parts: string[]) => string;
+    };
+
+    const nodeProc = getNodeProcess();
+    const cwd = nodeProc?.cwd() ?? '/';
+    const rawEnvFontDirs = nodeProc?.env?.PENOVA_FONT_DIR ?? '';
+    const envDirs = rawEnvFontDirs ? rawEnvFontDirs.split(':').filter(Boolean) : [];
+    const fontDirs = [
+      ...extraFontDirs,
+      ...envDirs,
+      path.join(cwd, 'public', 'fonts'),
+      '/opt/data/profiles/operation/skills/penova-animation/fonts',
+      '/opt/data/profiles/operation/trash/files/xiaoman-c520501173/fonts',
+      '/usr/share/fonts/truetype/dejavu',
+    ];
+
+    for (const spec of FONT_ALIAS_TABLE) {
+      let foundPath: string | null = null;
+      for (const dir of fontDirs) {
+        const candidate = path.join(dir, spec.file);
+        if (fs.existsSync(candidate)) {
+          foundPath = candidate;
+          break;
+        }
+      }
+      if (!foundPath) continue;
+
+      for (const alias of spec.aliases) {
+        const regKey = `${foundPath}=>${alias}`;
+        if (registeredFontPairs.has(regKey)) continue;
+        registeredFontPairs.add(regKey);
+        canvasMod.GlobalFonts.registerFromPath(foundPath, alias);
+      }
+    }
+  }
+  async function initNodeCanvasRuntime(
+    options?: NodeCanvasInitOptions
+  ): Promise<NodeCanvasRuntimeHandle> {
+    if (!isNodeRuntimeEnvironment()) {
+      throw new Error('Node canvas runtime can only run inside Node.js');
+    }
+
+    const canvasMod = await resolveNodeCanvasModule(options?.modulePaths);
+    await registerRuntimeFonts(canvasMod, options?.fontDirs);
+    await ensureCjkStrokeDataLoaded({ includeOutlines: true });
+
+    activeNodeRuntimeRefs += 1;
+    if (activeNodeRuntimeRefs === 1) {
+      setPath2DFactory(
+        canvasMod.Path2D ? (svgPath) => new canvasMod.Path2D!(svgPath) : null
+      );
+      setOffscreenCanvasFactory((width, height) => {
+        return canvasMod.createCanvas(width, height);
+      });
+    }
+
+    let released = false;
+    return {
+      createCanvas: (width, height) => canvasMod.createCanvas(width, height),
+      release: () => {
+        if (released) return;
+        released = true;
+        activeNodeRuntimeRefs = Math.max(0, activeNodeRuntimeRefs - 1);
+        if (activeNodeRuntimeRefs === 0) {
+          setPath2DFactory(null);
+          setOffscreenCanvasFactory(null);
+        }
+      },
+    };
+  }
+  function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
+    let total = 0;
+    for (const c of chunks) total += c.byteLength;
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      out.set(c, offset);
+      offset += c.byteLength;
+    }
+    return out;
+  }
+  const nodeMp4ExporterPlugin: ExportPlugin = {
+    id: 'node-mp4',
+    name: 'Headless Video (Node MP4)',
+    shortLabel: 'Node MP4',
+    category: 'sequence',
+    description:
+      'Render Canvas frames natively in Node.js (@napi-rs/canvas) and pipe RGBA frames directly to FFmpeg without SVG or browser recording',
+    isSupported() {
+      return isNodeRuntimeEnvironment();
+    },
+    async export(source, options) {
+      throwIfAborted(options.signal);
+      const runtime = await initNodeCanvasRuntime();
+      let tmpDir: string | null = null;
+
+      try {
+        const fs = (await dynamicImport('node:fs')) as {
+          promises: {
+            mkdtemp: (prefix: string) => Promise<string>;
+            readFile: (file: string) => Promise<Uint8Array>;
+            rm: (
+              target: string,
+              opts?: { recursive?: boolean; force?: boolean }
+            ) => Promise<void>;
+          };
+        };
+        const os = (await dynamicImport('node:os')) as {
+          tmpdir: () => string;
+        };
+        const path = (await dynamicImport('node:path')) as {
+          join: (...parts: string[]) => string;
+        };
+        const childProc = (await dynamicImport('node:child_process')) as {
+          spawn: (
+            cmd: string,
+            args: string[],
+            opts: { stdio: ['pipe', 'ignore', 'pipe'] }
+          ) => NodeChildProcessLike;
+        };
+        const eventsMod = (await dynamicImport('node:events')) as {
+          once: (emitter: unknown, ev: string) => Promise<unknown[]>;
+        };
+
+        const width = Math.max(2, Math.round(source.width));
+        const height = Math.max(2, Math.round(source.height));
+        const exportFps = Math.max(1, Math.round(source.fps || NODE_MP4_DEFAULT_FPS));
+        const frameIntervalMs = 1000 / exportFps;
+        const totalFrames = Math.max(
+          1,
+          Math.ceil((source.totalDurationMs / 1000) * exportFps)
+        );
+
+        tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'penova-mp4-'));
+        const tmpMp4 = path.join(tmpDir, 'output.mp4');
+        const ffmpegBin = getNodeProcess()?.env?.FFMPEG_PATH || 'ffmpeg';
+
+        const ffArgs = [
+          '-v',
+          'error',
+          '-y',
+          '-f',
+          'rawvideo',
+          '-pix_fmt',
+          'rgba',
+          '-s',
+          `${width}x${height}`,
+          '-r',
+          String(exportFps),
+          '-i',
+          'pipe:0',
+          '-an',
+          '-c:v',
+          'libx264',
+          '-pix_fmt',
+          'yuv420p',
+          '-crf',
+          '18',
+          '-preset',
+          'fast',
+          '-movflags',
+          '+faststart',
+          tmpMp4,
+        ];
+
+        const proc = childProc.spawn(ffmpegBin, ffArgs, {
+          stdio: ['pipe', 'ignore', 'pipe'],
+        });
+        const stderrChunks: Uint8Array[] = [];
+        proc.stderr.on('data', (chunk: Uint8Array) => {
+          stderrChunks.push(chunk);
+        });
+
+        let procError: Error | null = null;
+        let procClosed = false;
+        proc.once('error', (err) => {
+          procError =
+            err instanceof Error ? err : new Error(`FFmpeg error: ${String(err)}`);
+        });
+        proc.once('close', () => {
+          procClosed = true;
+        });
+        const exitPromise = eventsMod.once(proc, 'close');
+
+        const onAbort = () => {
+          try {
+            proc.kill('SIGTERM');
+          } catch {
+            // Ignore kill failure when process already exited
+          }
+        };
+        options.signal?.addEventListener('abort', onAbort, { once: true });
+
+        const canvas = runtime.createCanvas(width, height);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          throw new Error('Failed to create Node 2D canvas rendering context');
+        }
+
+        options.onProgress(0);
+        try {
+          for (let i = 0; i <= totalFrames; i++) {
+            throwIfAborted(options.signal);
+            if (procError) throw procError;
+            if (procClosed) {
+              const msg = new TextDecoder().decode(concatUint8Arrays(stderrChunks));
+              throw new Error(`FFmpeg terminated prematurely: ${msg}`);
+            }
+
+            const tMs = Math.min(source.totalDurationMs, i * frameIntervalMs);
+            source.renderFrame(ctx, width, height, tMs);
+            const imgData = ctx.getImageData(0, 0, width, height);
+            const frameSlice = new Uint8Array(
+              imgData.data.buffer,
+              imgData.data.byteOffset,
+              imgData.data.byteLength
+            );
+
+            if (!proc.stdin.write(frameSlice)) {
+              await eventsMod.once(proc.stdin, 'drain');
+            }
+
+            options.onProgress(
+              Math.min(95, Math.round((i / Math.max(1, totalFrames)) * 95))
+            );
+            if (i % 24 === 0) {
+              await waitMs(0);
+            }
+          }
+
+          proc.stdin.end();
+          const [code] = await exitPromise;
+          if (procError) throw procError;
+          if (code !== 0) {
+            const errText = new TextDecoder()
+              .decode(concatUint8Arrays(stderrChunks))
+              .trim();
+            throw new Error(
+              `FFmpeg exited with code ${String(code)}${errText ? `: ${errText}` : ''}`
+            );
+          }
+        } finally {
+          options.signal?.removeEventListener('abort', onAbort);
+        }
+
+        throwIfAborted(options.signal);
+        const mp4Bytes = await fs.promises.readFile(tmpMp4);
+        options.onProgress(100);
+
+        const frameCount = totalFrames + 1;
+        const mimeType = 'video/mp4';
+        return {
+          blob: new Blob([new Uint8Array(mp4Bytes)], { type: mimeType }),
+          filename: safeFilename(source.title, 'mp4'),
+          mimeType,
+          summary: `${frameCount} frames @ ${exportFps}fps`,
+        };
+      } finally {
+        if (tmpDir) {
+          try {
+            const fs = (await dynamicImport('node:fs')) as {
+              promises: {
+                rm: (
+                  target: string,
+                  opts?: { recursive?: boolean; force?: boolean }
+                ) => Promise<void>;
+              };
+            };
+            await fs.promises.rm(tmpDir, { recursive: true, force: true });
+          } catch {
+            // Ignore temp cleanup failure
+          }
+        }
+        runtime.release();
+      }
+    },
+  };
+  return { initNodeCanvasRuntime, nodeMp4ExporterPlugin };
+})();
+
 // --- Module: src/plugins/exporters/httpBridgeFactory.ts ---
 (() => {
   /**
@@ -14183,6 +15062,7 @@ const { svgSequenceTarExporterPlugin } = (() => {
     presentationRegistry.register(letterPaperPlugin, { override: true });
 
     // Register glyph stroke providers (sorted by priority descending at lookup)
+    glyphProviderRegistry.register(cjkStrokeOrderGlyphProvider, { override: true });
     glyphProviderRegistry.register(strokeOrderGlyphProvider, { override: true });
     glyphProviderRegistry.register(inkGridGlyphProvider, { override: true });
 
@@ -14210,6 +15090,7 @@ const { svgSequenceTarExporterPlugin } = (() => {
     exportRegistry.register(pngSequenceTarExporterPlugin, { override: true });
     exportRegistry.register(posterSvgExporterPlugin, { override: true });
     exportRegistry.register(svgSequenceTarExporterPlugin, { override: true });
+    exportRegistry.register(nodeMp4ExporterPlugin, { override: true });
   }
   registerBuiltinPlugins();
 })();
@@ -14305,10 +15186,13 @@ const { isMonospaceFont, estimateCharAdvanceWidth, defaultMeasureText, wrapText,
   const BOARD_FONT_FAMILY =
     "'Segoe Print', 'KaiTi', 'STKaiti', 'LXGW WenKai', 'Microsoft YaHei', cursive";
   let cachedMeasureCtx: CanvasRenderingContext2D | null = null;
+  onOffscreenCanvasFactoryChange(() => {
+    cachedMeasureCtx = null;
+  });
   function getBrowserMeasureCtx(): CanvasRenderingContext2D | null {
-    if (typeof document === 'undefined') return null;
     if (!cachedMeasureCtx) {
-      const canvas = document.createElement('canvas');
+      const canvas = createOffscreenCanvas(1, 1);
+      if (!canvas) return null;
       cachedMeasureCtx = canvas.getContext('2d');
     }
     return cachedMeasureCtx;
@@ -14864,82 +15748,6 @@ const { isMonospaceFont, estimateCharAdvanceWidth, defaultMeasureText, wrapText,
   return { isMonospaceFont, estimateCharAdvanceWidth, defaultMeasureText, wrapText, measureSceneNode, positionGroupChildren };
 })();
 
-// --- Module: src/engine/render/fonts.ts ---
-const { isSceneFontPreset, resolveSceneFontFamily } = (() => {
-  const SCENE_FONT_PRESETS: readonly SceneFontPresetOption[] = [
-    {
-      id: 'theme-default',
-      labelEn: 'Theme Default',
-      labelZh: '主题默认',
-      loadFamilies: [],
-    },
-    {
-      id: 'xiaolai',
-      labelEn: 'Xiaolai Hand (CN)',
-      labelZh: '小赖手绘 (推荐百搭)',
-      fontFamily: "'Penova Xiaolai', 'Xiaolai', 'Segoe Print', cursive",
-      loadFamilies: ['Penova Xiaolai'],
-    },
-    {
-      id: 'marker',
-      labelEn: 'LXGW Marker (Board)',
-      labelZh: '霞鹜漫黑 (板书粗笔)',
-      fontFamily: "'Penova Marker', 'LXGW Marker Gothic', 'Segoe Print', cursive",
-      loadFamilies: ['Penova Marker'],
-    },
-    {
-      id: 'kuaile',
-      labelEn: 'ZCOOL KuaiLe (Playful)',
-      labelZh: '站酷快乐 (圆润俏皮)',
-      fontFamily: "'Penova KuaiLe', 'ZCOOL KuaiLe', cursive",
-      loadFamilies: ['Penova KuaiLe'],
-    },
-    {
-      id: 'longcang',
-      labelEn: 'Long Cang (Brush)',
-      labelZh: '龙藏手书 (毛笔随性)',
-      fontFamily: "'Penova LongCang', 'Long Cang', cursive",
-      loadFamilies: ['Penova LongCang'],
-    },
-    {
-      id: 'blueprint-hand',
-      labelEn: 'Architects + Xiaolai',
-      labelZh: '建筑师手写 + 小赖',
-      fontFamily:
-        "'Penova Architects', 'Architects Daughter', 'Penova Xiaolai', 'Xiaolai', cursive",
-      loadFamilies: ['Penova Architects', 'Penova Xiaolai'],
-    },
-    {
-      id: 'wenkai',
-      labelEn: 'LXGW WenKai (Classic)',
-      labelZh: '霞鹜文楷 (经典楷书)',
-      fontFamily: "'Penova WenKai', 'LXGW WenKai', 'KaiTi', serif",
-      loadFamilies: ['Penova WenKai'],
-    },
-  ];
-  const FONT_PRESET_MAP = new Map<string, SceneFontPresetOption>(
-    SCENE_FONT_PRESETS.map((p) => [p.id, p])
-  );
-  function isSceneFontPreset(raw: string): raw is SceneFontPreset {
-    return FONT_PRESET_MAP.has(raw);
-  }
-  function getSceneFontPresetOption(
-    preset: SceneFontPreset | undefined
-  ): SceneFontPresetOption {
-    return (
-      (preset ? FONT_PRESET_MAP.get(preset) : undefined) ?? SCENE_FONT_PRESETS[0]
-    );
-  }
-  function resolveSceneFontFamily(
-    scene: Pick<LessonScene, 'theme' | 'font'>,
-    fallbackThemeFont: string
-  ): string {
-    const opt = getSceneFontPresetOption(scene.font);
-    return opt.fontFamily ?? fallbackThemeFont;
-  }
-  return { isSceneFontPreset, resolveSceneFontFamily };
-})();
-
 // --- Module: src/engine/layout/diagramLayout.ts ---
 const { computeDiagramLayout } = (() => {
   function getNodeSearchLabels(node: SceneNode): string[] {
@@ -15213,10 +16021,14 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
   }
   // Automatically invalidate cached glyph strokes whenever providers are registered/unregistered
   glyphProviderRegistry.subscribe(clearGlyphCache);
+  onOffscreenCanvasFactoryChange(() => {
+    measureCanvasCtx = null;
+    clearGlyphCache();
+  });
   function getMeasureCtx(): CanvasRenderingContext2D | null {
-    if (typeof document === 'undefined') return null;
     if (!measureCanvasCtx) {
-      const c = document.createElement('canvas');
+      const c = createOffscreenCanvas(1, 1);
+      if (!c) return null;
       measureCanvasCtx = c.getContext('2d');
     }
     return measureCanvasCtx;
@@ -15358,6 +16170,135 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
 
     return buildFallbackSegments(boxW, boxH, fontSize, char);
   }
+  function applyChalkGrainToCanvas(
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    char: string,
+    theme: ThemeId
+  ): ImageData {
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const imgData = ctx.getImageData(0, 0, cw, ch);
+    const grain = presentationRegistry.getOrDefault(theme).glyphGrain;
+    if (grain?.enabled) {
+      const minFactor = grain.minAlphaFactor ?? 0.8;
+      const range = grain.range ?? 0.24;
+      const pxData = imgData.data;
+      const charSeed = hashString(char);
+      for (let py = 0; py < ch; py++) {
+        for (let px = 0; px < cw; px++) {
+          const idx = (py * cw + px) * 4;
+          const a = pxData[idx + 3];
+          if (a === 0) continue;
+          const h = hash2D(px, py, charSeed);
+          const n = (h & 255) / 255;
+          const factor = minFactor + n * range;
+          pxData[idx + 3] = Math.min(255, Math.round(a * factor));
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }
+    return imgData;
+  }
+  function distSqPointToPolyline(px: number, py: number, pts: Point[]): number {
+    if (pts.length === 0) return Infinity;
+    if (pts.length === 1) {
+      const dx = px - pts[0].x;
+      const dy = py - pts[0].y;
+      return dx * dx + dy * dy;
+    }
+    let best = Infinity;
+    for (let i = 1; i < pts.length; i++) {
+      const ax = pts[i - 1].x;
+      const ay = pts[i - 1].y;
+      const bx = pts[i].x;
+      const by = pts[i].y;
+      const vx = bx - ax;
+      const vy = by - ay;
+      const lenSq = vx * vx + vy * vy;
+      const t =
+        lenSq > 1e-6
+          ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / lenSq))
+          : 0;
+      const cx = ax + vx * t;
+      const cy = ay + vy * t;
+      const dx = px - cx;
+      const dy = py - cy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < best) best = d2;
+    }
+    return best;
+  }
+  function partitionInkToStrokeCanvases(
+    imgData: ImageData,
+    cw: number,
+    ch: number,
+    scale: number,
+    segments: GlyphStrokeSegment[],
+    fontSize: number
+  ): HTMLCanvasElement[] | undefined {
+    if (segments.length < 2) return undefined;
+
+    const numStrokes = segments.length;
+    const strokeCanvases: HTMLCanvasElement[] = [];
+    const strokeBuffers: Uint8ClampedArray[] = [];
+
+    for (let s = 0; s < numStrokes; s++) {
+      const sc = createOffscreenCanvas(cw, ch);
+      if (!sc) return undefined;
+      strokeCanvases.push(sc);
+      strokeBuffers.push(new Uint8ClampedArray(cw * ch * 4));
+    }
+
+    const src = imgData.data;
+    const dists = new Float64Array(numStrokes);
+    const tieSlack = Math.max(0.75, fontSize * 0.035);
+
+    for (let py = 0; py < ch; py++) {
+      const by = (py + 0.5) / scale;
+      const rowOff = py * cw * 4;
+      for (let px = 0; px < cw; px++) {
+        const idx = rowOff + px * 4;
+        const a = src[idx + 3];
+        if (a <= 16) continue;
+
+        const bx = (px + 0.5) / scale;
+        let minD2 = Infinity;
+        for (let s = 0; s < numStrokes; s++) {
+          const d2 = distSqPointToPolyline(bx, by, segments[s].points);
+          dists[s] = d2;
+          if (d2 < minD2) minD2 = d2;
+        }
+
+        // Prefer the earliest stroke within tieSlack so crossings keep earlier strokes intact
+        const tieLimit = Math.sqrt(minD2) + tieSlack;
+        const tieLimitSq = tieLimit * tieLimit;
+        let owner = 0;
+        for (let s = 0; s < numStrokes; s++) {
+          if (dists[s] <= tieLimitSq) {
+            owner = s;
+            break;
+          }
+        }
+
+        const dst = strokeBuffers[owner];
+        dst[idx] = src[idx];
+        dst[idx + 1] = src[idx + 1];
+        dst[idx + 2] = src[idx + 2];
+        dst[idx + 3] = a;
+      }
+    }
+
+    for (let s = 0; s < numStrokes; s++) {
+      const sCtx = strokeCanvases[s].getContext('2d');
+      if (!sCtx) continue;
+      const outImg = sCtx.createImageData(cw, ch);
+      outImg.data.set(strokeBuffers[s]);
+      sCtx.putImageData(outImg, 0, 0);
+    }
+
+    return strokeCanvases;
+  }
   function getGlyphStrokeData(
     char: string,
     font: string,
@@ -15370,7 +16311,7 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
     if (cached) return cached;
 
     const mCtx = getMeasureCtx();
-    if (!mCtx || typeof document === 'undefined') {
+    if (!mCtx || !hasOffscreenCanvasSupport()) {
       const boldBoost =
         font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
       const advanceWidth = estimateCharAdvanceWidth(
@@ -15400,6 +16341,68 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
       return data;
     }
 
+    const vectorOutlines = isVectorKaitiFont(font)
+      ? getCjkStrokeOutlines(char)
+      : undefined;
+    const scale = 2;
+
+    if (vectorOutlines && vectorOutlines.length > 0 && createPath2D('M0 0')) {
+      const advanceWidth = Math.ceil(fontSize * 1.02);
+      const padX = Math.ceil(fontSize * 0.24);
+      const boxW = Math.max(10, Math.ceil(advanceWidth + padX * 2));
+      const boxH = Math.max(14, Math.ceil(fontSize * 1.48));
+      const cw = boxW * scale;
+      const ch = boxH * scale;
+      const segments = resolveGlyphStrokes(char, font, fontSize, boxW, boxH);
+      const totalLength = segments.reduce((acc, s) => acc + s.length, 0);
+
+      const chalkCanvas = createOffscreenCanvas(cw, ch);
+      const mainCtx = chalkCanvas?.getContext('2d');
+      const strokeCanvases: HTMLCanvasElement[] = [];
+
+      if (chalkCanvas && mainCtx) {
+        const { emScale, ox, oy } = computeVectorKaitiTransform(
+          fontSize,
+          boxW,
+          boxH
+        );
+        for (const svgPath of vectorOutlines) {
+          const sc = createOffscreenCanvas(cw, ch);
+          const sCtx = sc?.getContext('2d');
+          if (!sc || !sCtx) continue;
+          sCtx.save();
+          sCtx.scale(scale, scale);
+          sCtx.translate(ox, oy + 900 * emScale);
+          sCtx.scale(emScale, -emScale);
+          sCtx.fillStyle = colorHex;
+          const p2d = createPath2D(svgPath);
+          if (p2d) sCtx.fill(p2d);
+          sCtx.restore();
+          applyChalkGrainToCanvas(sCtx, sc, char, theme);
+          strokeCanvases.push(sc);
+          mainCtx.drawImage(sc, 0, 0);
+        }
+      }
+
+      const vecData: GlyphStrokeData = {
+        char,
+        fontSize,
+        width: boxW,
+        height: boxH,
+        padX,
+        advanceWidth,
+        colorHex,
+        segments,
+        totalLength,
+        chalkCanvas: chalkCanvas ?? undefined,
+        strokeCanvases:
+          strokeCanvases.length === segments.length ? strokeCanvases : undefined,
+        perStrokeRevealWidth: Math.max(4.5, fontSize * 0.28),
+      };
+      cacheGlyphData(key, vecData);
+      return vecData;
+    }
+
     mCtx.font = font;
     const advanceWidth = mCtx.measureText(char).width;
     const padX = Math.ceil(fontSize * 0.24);
@@ -15422,13 +16425,26 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
       return spaceData;
     }
 
-    const scale = 2;
-    const chalkCanvas = document.createElement('canvas');
-    chalkCanvas.width = boxW * scale;
-    chalkCanvas.height = boxH * scale;
+    const chalkCanvas = createOffscreenCanvas(boxW * scale, boxH * scale);
+    if (!chalkCanvas) {
+      const emptyData: GlyphStrokeData = {
+        char,
+        fontSize,
+        width: boxW,
+        height: boxH,
+        padX,
+        advanceWidth,
+        colorHex,
+        segments: [],
+        totalLength: 0,
+      };
+      cacheGlyphData(key, emptyData);
+      return emptyData;
+    }
 
     const gCtx = chalkCanvas.getContext('2d');
     let segments: GlyphStrokeSegment[] = [];
+    let strokeCanvases: HTMLCanvasElement[] | undefined;
 
     if (gCtx) {
       gCtx.scale(scale, scale);
@@ -15438,35 +16454,7 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
       gCtx.textAlign = 'left';
       gCtx.fillText(char, padX, boxH * 0.52);
 
-      const imgData = gCtx.getImageData(
-        0,
-        0,
-        chalkCanvas.width,
-        chalkCanvas.height
-      );
-
-      const grain = presentationRegistry.getOrDefault(theme).glyphGrain;
-      if (grain?.enabled) {
-        const minFactor = grain.minAlphaFactor ?? 0.8;
-        const range = grain.range ?? 0.24;
-        const pxData = imgData.data;
-        const charSeed = hashString(char);
-        const cw = chalkCanvas.width;
-        const ch = chalkCanvas.height;
-        for (let py = 0; py < ch; py++) {
-          for (let px = 0; px < cw; px++) {
-            const idx = (py * cw + px) * 4;
-            const a = pxData[idx + 3];
-            if (a === 0) continue;
-            const h = hash2D(px, py, charSeed);
-            const n = (h & 255) / 255;
-            const factor = minFactor + n * range;
-            pxData[idx + 3] = Math.min(255, Math.round(a * factor));
-          }
-        }
-        gCtx.putImageData(imgData, 0, 0);
-      }
-
+      const imgData = applyChalkGrainToCanvas(gCtx, chalkCanvas, char, theme);
       const inkBounds = computeInkBounds(
         imgData,
         chalkCanvas.width,
@@ -15486,6 +16474,15 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
         chalkCanvas.width,
         chalkCanvas.height
       );
+
+      strokeCanvases = partitionInkToStrokeCanvases(
+        imgData,
+        chalkCanvas.width,
+        chalkCanvas.height,
+        scale,
+        segments,
+        fontSize
+      );
     }
 
     const totalLength = segments.reduce((acc, s) => acc + s.length, 0);
@@ -15500,6 +16497,8 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
       segments,
       totalLength,
       chalkCanvas,
+      strokeCanvases,
+      perStrokeRevealWidth: Math.max(4.0, fontSize * 0.24),
     };
 
     cacheGlyphData(key, result);
@@ -15625,6 +16624,74 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
     const scaleX = cw / glyph.width;
     const scaleY = ch / glyph.height;
 
+    if (
+      glyph.strokeCanvases &&
+      glyph.strokeCanvases.length === glyph.segments.length
+    ) {
+      let remaining = Math.max(0, Math.min(1, progress)) * glyph.totalLength;
+      const revealW =
+        glyph.perStrokeRevealWidth ?? Math.max(4.0, glyph.fontSize * 0.24);
+
+      for (let s = 0; s < glyph.segments.length; s++) {
+        if (remaining <= 0) break;
+        const seg = glyph.segments[s];
+        const strokeCanvas = glyph.strokeCanvases[s];
+
+        if (remaining >= seg.length) {
+          ctx.drawImage(strokeCanvas, boxX, boxY, glyph.width, glyph.height);
+          remaining -= seg.length;
+        } else {
+          const pts = seg.points;
+          if (pts.length > 0) {
+            sCtx.save();
+            try {
+              sCtx.globalCompositeOperation = 'source-over';
+              sCtx.setTransform(1, 0, 0, 1, 0, 0);
+              sCtx.clearRect(0, 0, cw, ch);
+
+              sCtx.scale(scaleX, scaleY);
+              sCtx.strokeStyle = '#ffffff';
+              sCtx.lineCap = 'round';
+              sCtx.lineJoin = 'round';
+              sCtx.lineWidth = revealW;
+
+              sCtx.beginPath();
+              sCtx.moveTo(pts[0].x, pts[0].y);
+              let drawn = 0;
+              for (let i = 1; i < pts.length; i++) {
+                const a = pts[i - 1];
+                const b = pts[i];
+                const len = Math.hypot(b.x - a.x, b.y - a.y);
+                if (drawn + len <= remaining) {
+                  sCtx.lineTo(b.x, b.y);
+                  drawn += len;
+                } else {
+                  const frac = len > 1e-4 ? (remaining - drawn) / len : 0;
+                  sCtx.lineTo(
+                    a.x + (b.x - a.x) * frac,
+                    a.y + (b.y - a.y) * frac
+                  );
+                  break;
+                }
+              }
+              sCtx.stroke();
+
+              sCtx.setTransform(1, 0, 0, 1, 0, 0);
+              sCtx.globalCompositeOperation = 'source-in';
+              sCtx.drawImage(strokeCanvas, 0, 0);
+            } finally {
+              sCtx.globalCompositeOperation = 'source-over';
+              sCtx.restore();
+            }
+            ctx.drawImage(scratchCanvas, boxX, boxY, glyph.width, glyph.height);
+          }
+          remaining = 0;
+          break;
+        }
+      }
+      return;
+    }
+
     sCtx.save();
     try {
       sCtx.globalCompositeOperation = 'source-over';
@@ -15635,7 +16702,7 @@ const { getGlyphStrokeData, getGlyphTipAtProgress, drawProgressiveGlyph } = (() 
       sCtx.strokeStyle = '#ffffff';
       sCtx.lineCap = 'round';
       sCtx.lineJoin = 'round';
-      sCtx.lineWidth = Math.max(5.5, glyph.fontSize * 0.38);
+      sCtx.lineWidth = Math.max(4.2, glyph.fontSize * 0.26);
 
       let remaining = Math.max(0, Math.min(1, progress)) * glyph.totalLength;
 
@@ -16731,6 +17798,7 @@ const { compileProjectTimeline, evaluateProjectAt } = (() => {
   glyphProviderRegistry.subscribe(clearSceneCompileCache);
   sceneNodeRegistry.subscribe(clearSceneCompileCache);
   transitionRegistry.subscribe(clearSceneCompileCache);
+  onOffscreenCanvasFactoryChange(clearSceneCompileCache);
   function compileProjectTimeline(
     project: LessonProject
   ): CompiledProjectTimeline {
@@ -17736,10 +18804,12 @@ const { drawWritingHand } = (() => {
 // --- Module: src/engine/render/sceneRenderer.ts ---
 const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
   let sharedScratchCanvas: HTMLCanvasElement | null = null;
+  onOffscreenCanvasFactoryChange(() => {
+    sharedScratchCanvas = null;
+  });
   function getScratchCanvas(): HTMLCanvasElement | null {
-    if (typeof document === 'undefined') return null;
     if (!sharedScratchCanvas) {
-      sharedScratchCanvas = document.createElement('canvas');
+      sharedScratchCanvas = createOffscreenCanvas(300, 150);
     }
     return sharedScratchCanvas;
   }
@@ -19255,6 +20325,12 @@ const { renderProjectFrame } = (() => {
     fromBufferSlot.key = null;
     toBufferSlot.key = null;
   }
+  onOffscreenCanvasFactoryChange(() => {
+    fromBufferSlot.canvas = null;
+    fromBufferSlot.key = null;
+    toBufferSlot.canvas = null;
+    toBufferSlot.key = null;
+  });
   presentationRegistry.subscribe(clearTransitionBufferCache);
   handRegistry.subscribe(clearTransitionBufferCache);
   cameraRegistry.subscribe(clearTransitionBufferCache);
@@ -19290,11 +20366,11 @@ const { renderProjectFrame } = (() => {
     pixelH: number,
     dpr: number
   ): HTMLCanvasElement | null {
-    if (typeof document === 'undefined') return null;
     const safeW = Math.max(1, Math.round(pixelW));
     const safeH = Math.max(1, Math.round(pixelH));
     if (!slot.canvas) {
-      slot.canvas = document.createElement('canvas');
+      slot.canvas = createOffscreenCanvas(safeW, safeH);
+      if (!slot.canvas) return null;
     }
     const sizeChanged =
       slot.canvas.width !== safeW || slot.canvas.height !== safeH;
@@ -19504,6 +20580,8 @@ const { exportScriptToVideo } = (() => {
     const defaultFps =
       exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
         ? 12
+        : exporterId === 'node-mp4'
+        ? 24
         : 30;
     const source = createSceneFrameSource(
       scene,
@@ -19524,47 +20602,65 @@ const { exportScriptToVideo } = (() => {
     const defaultFps =
       exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
         ? 12
+        : exporterId === 'node-mp4'
+        ? 24
         : 30;
-    const source = createProjectFrameSource(
-      compiledProject,
-      options.fps ?? defaultFps
-    );
-    const plugin = exportRegistry.getOrDefault(exporterId);
-    return plugin.export(source, {
-      onProgress: options.onProgress,
-      signal: options.signal,
-    });
+    const needsRuntime =
+      exporterId === 'node-mp4' && !hasOffscreenCanvasSupport();
+    const nodeRuntime = needsRuntime ? await initNodeCanvasRuntime() : null;
+    try {
+      const effectiveCompiled = needsRuntime
+        ? compileProjectTimeline(compiledProject.project)
+        : compiledProject;
+      const source = createProjectFrameSource(
+        effectiveCompiled,
+        options.fps ?? defaultFps
+      );
+      const plugin = exportRegistry.getOrDefault(exporterId);
+      return await plugin.export(source, {
+        onProgress: options.onProgress,
+        signal: options.signal,
+      });
+    } finally {
+      nodeRuntime?.release();
+    }
   }
   async function exportScriptToVideo(
     scriptText: string,
     options: ExportScriptOptions = {}
   ): Promise<ExportScriptResult> {
-    const parsed = parseProjectScript(scriptText, {
-      fallbackTitle: options.fallbackTitle,
-      fallbackAspectRatio: options.fallbackAspectRatio,
-    });
-    const compiled = compileProjectTimeline(parsed.project);
     const mediaSupported =
       exportRegistry.get('mediarecorder-video')?.isSupported?.() ?? false;
     const exporterId =
       options.exporterId ??
       (mediaSupported ? 'mediarecorder-video' : 'svg-sequence-tar');
 
-    const out = await exportProjectVideo(compiled, {
-      fps: options.fps,
-      exporterId,
-      onProgress: options.onProgress ?? (() => {}),
-      signal: options.signal,
-    });
+    const nodeRuntime =
+      exporterId === 'node-mp4' ? await initNodeCanvasRuntime() : null;
+    try {
+      const parsed = parseProjectScript(scriptText, {
+        fallbackTitle: options.fallbackTitle,
+        fallbackAspectRatio: options.fallbackAspectRatio,
+      });
+      const compiled = compileProjectTimeline(parsed.project);
+      const out = await exportProjectVideo(compiled, {
+        fps: options.fps,
+        exporterId,
+        onProgress: options.onProgress ?? (() => {}),
+        signal: options.signal,
+      });
 
-    return {
-      ...out,
-      project: parsed.project,
-      warnings: parsed.warnings,
-      subtitlesSrt: parsed.project.subtitles
-        ? serializeSubtitlesToSrt(parsed.project.subtitles)
-        : '',
-    };
+      return {
+        ...out,
+        project: parsed.project,
+        warnings: parsed.warnings,
+        subtitlesSrt: parsed.project.subtitles
+          ? serializeSubtitlesToSrt(parsed.project.subtitles)
+          : '',
+      };
+    } finally {
+      nodeRuntime?.release();
+    }
   }
   return { exportScriptToVideo };
 })();
@@ -20030,7 +21126,7 @@ function printUsage(): void {
     [
       'Usage (Self-Contained Penova Skill Runner):',
       '  node render-script.ts --spec',
-      '  node render-script.ts <input.penova.md> [output-dir] [--exporter=poster-svg|svg-sequence-tar] [--fps=12]',
+      '  node render-script.ts <input.penova.md> [output-dir] [--exporter=poster-svg|svg-sequence-tar|node-mp4] [--fps=12|24] [--font-dir=<dir>] [--data-dir=<dir>]',
       '  # On Node < 22.6 use: npx tsx render-script.ts ...',
     ].join('\n')
   );
@@ -20061,10 +21157,19 @@ async function main(): Promise<void> {
   const exporterId = exporterArg
     ? exporterArg.slice('--exporter='.length)
     : 'poster-svg';
+  const fontDirArg = args.find((a) => a.startsWith('--font-dir='));
+  if (fontDirArg) {
+    process.env.PENOVA_FONT_DIR = resolve(fontDirArg.slice('--font-dir='.length));
+  }
+  const dataDirArg = args.find((a) => a.startsWith('--data-dir='));
+  if (dataDirArg) {
+    process.env.PENOVA_DATA_DIR = resolve(dataDirArg.slice('--data-dir='.length));
+  }
   const fpsArg = args.find((a) => a.startsWith('--fps='));
+  const defaultFps = exporterId === 'node-mp4' ? 24 : 12;
   const fps = fpsArg
-    ? Math.max(1, Number(fpsArg.slice('--fps='.length)) || 12)
-    : 12;
+    ? Math.max(1, Number(fpsArg.slice('--fps='.length)) || defaultFps)
+    : defaultFps;
 
   const scriptText = readFileSync(resolve(inputPath), 'utf8');
   const stem = basename(inputPath).replace(/\.(penova\.md|md|txt)$/i, '');

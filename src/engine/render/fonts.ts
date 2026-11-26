@@ -1,5 +1,11 @@
 import { LessonScene, SceneFontPreset } from '../../model/scene';
 
+export const VECTOR_KAITI_FONT_TAG = 'Penova KaiTi Stroke';
+
+export function isVectorKaitiFont(font: string): boolean {
+  return font.includes(VECTOR_KAITI_FONT_TAG);
+}
+
 export interface SceneFontPresetOption {
   id: SceneFontPreset;
   labelEn: string;
@@ -56,6 +62,13 @@ export const SCENE_FONT_PRESETS: readonly SceneFontPresetOption[] = [
     labelEn: 'LXGW WenKai (Classic)',
     labelZh: '霞鹜文楷 (经典楷书)',
     fontFamily: "'Penova WenKai', 'LXGW WenKai', 'KaiTi', serif",
+    loadFamilies: ['Penova WenKai'],
+  },
+  {
+    id: 'kaiti-stroke',
+    labelEn: 'Vector KaiTi (True Strokes)',
+    labelZh: '纯矢量楷书 (真·逐笔轮廓)',
+    fontFamily: `'${VECTOR_KAITI_FONT_TAG}', 'Penova WenKai', 'KaiTi', serif`,
     loadFamilies: ['Penova WenKai'],
   },
 ];

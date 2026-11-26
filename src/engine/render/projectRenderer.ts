@@ -19,6 +19,10 @@ import {
   evaluateProjectAt,
 } from '../timeline/projectTimeline';
 import { CompiledTimeline } from '../timeline/timelineEngine';
+import {
+  createOffscreenCanvas,
+  onOffscreenCanvasFactoryChange,
+} from '../../sdk/offscreenCanvas';
 import { RenderOptions, renderSceneFrame } from './sceneRenderer';
 
 interface EndpointCacheKey {
@@ -41,6 +45,13 @@ export function clearTransitionBufferCache(): void {
   fromBufferSlot.key = null;
   toBufferSlot.key = null;
 }
+
+onOffscreenCanvasFactoryChange(() => {
+  fromBufferSlot.canvas = null;
+  fromBufferSlot.key = null;
+  toBufferSlot.canvas = null;
+  toBufferSlot.key = null;
+});
 
 presentationRegistry.subscribe(clearTransitionBufferCache);
 handRegistry.subscribe(clearTransitionBufferCache);
@@ -79,11 +90,11 @@ function getOrRenderEndpointBuffer(
   pixelH: number,
   dpr: number
 ): HTMLCanvasElement | null {
-  if (typeof document === 'undefined') return null;
   const safeW = Math.max(1, Math.round(pixelW));
   const safeH = Math.max(1, Math.round(pixelH));
   if (!slot.canvas) {
-    slot.canvas = document.createElement('canvas');
+    slot.canvas = createOffscreenCanvas(safeW, safeH);
+    if (!slot.canvas) return null;
   }
   const sizeChanged =
     slot.canvas.width !== safeW || slot.canvas.height !== safeH;

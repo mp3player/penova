@@ -36,6 +36,7 @@ import { writeInlineNodeText } from '../studio/nodeSchemas';
 import { getPresetProjects } from '../model/presets';
 import { Locale, useI18n } from '../i18n';
 import {
+  clearSceneCompileCache,
   compileProjectTimeline,
   evaluateProjectAt,
 } from '../engine/timeline/projectTimeline';
@@ -46,6 +47,7 @@ import {
 } from '../engine/parser/projectScript';
 import { triggerBlobDownload } from '../engine/export/videoExporter';
 import { getSceneFontPresetOption } from '../engine/render/fonts';
+import { ensureCjkStrokeDataLoaded } from '../plugins';
 import { clearGlyphCache } from '../engine/sketch/textStrokes';
 import { safeFilename } from '../plugins/exporters/helpers';
 
@@ -117,6 +119,26 @@ export function useProjectWorkspace({
 
   const [fontVersion, setFontVersion] = useState(0);
   const sceneFontKey = project.scenes.map((s) => s.font ?? '').join('|');
+  const hasVectorKaitiScene = project.scenes.some(
+    (s) => s.font === 'kaiti-stroke'
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    ensureCjkStrokeDataLoaded({ includeOutlines: hasVectorKaitiScene })
+      .then((loaded) => {
+        if (cancelled || !loaded) return;
+        clearGlyphCache();
+        clearSceneCompileCache();
+        setFontVersion((v) => v + 1);
+      })
+      .catch(() => {
+        // Fallback to built-in glyph providers when static data assets are absent
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasVectorKaitiScene]);
 
   useEffect(() => {
     if (typeof document === 'undefined' || !('fonts' in document)) return;
@@ -132,13 +154,14 @@ export function useProjectWorkspace({
     let cancelled = false;
     const tasks: Promise<FontFace[]>[] = [];
     for (const fam of families) {
-      tasks.push(document.fonts.load(`400 20px "${fam}"`));
-      tasks.push(document.fonts.load(`700 20px "${fam}"`));
+      tasks.push(document.fonts.load(`400 20px "${fam}"`, '永Aa'));
+      tasks.push(document.fonts.load(`700 20px "${fam}"`, '永Aa'));
     }
     Promise.all(tasks)
       .then(() => {
         if (cancelled) return;
         clearGlyphCache();
+        clearSceneCompileCache();
         setFontVersion((v) => v + 1);
       })
       .catch(() => {

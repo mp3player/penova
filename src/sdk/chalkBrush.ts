@@ -1,17 +1,25 @@
+import {
+  createOffscreenCanvas,
+  hasOffscreenCanvasSupport,
+  onOffscreenCanvasFactoryChange,
+} from './offscreenCanvas';
 import { hashString, mulberry32 } from './random';
 import { StrokePath } from './strokePath';
 
 const dabCache = new Map<string, HTMLCanvasElement>();
 
+onOffscreenCanvasFactoryChange(() => {
+  dabCache.clear();
+});
+
 function getChalkDab(colorHex: string): HTMLCanvasElement | null {
-  if (typeof document === 'undefined') return null;
+  if (!hasOffscreenCanvasSupport()) return null;
   const cached = dabCache.get(colorHex);
   if (cached) return cached;
 
   const size = 24;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
+  const canvas = createOffscreenCanvas(size, size);
+  if (!canvas) return null;
   const ctx = canvas.getContext('2d');
 
   if (ctx) {

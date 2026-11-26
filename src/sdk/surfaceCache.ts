@@ -1,5 +1,15 @@
+import {
+  createOffscreenCanvas,
+  hasOffscreenCanvasSupport,
+  onOffscreenCanvasFactoryChange,
+} from './offscreenCanvas';
+
 const surfaceCache = new Map<string, HTMLCanvasElement>();
 const MAX_SURFACE_CACHE = 8;
+
+onOffscreenCanvasFactoryChange(() => {
+  surfaceCache.clear();
+});
 
 export type SurfacePainter = (
   ctx: CanvasRenderingContext2D,
@@ -34,7 +44,7 @@ export function drawCachedSurface(
   height: number,
   painter: SurfacePainter
 ): void {
-  if (typeof document === 'undefined') {
+  if (!hasOffscreenCanvasSupport()) {
     painter(ctx, width, height);
     return;
   }
@@ -45,9 +55,11 @@ export function drawCachedSurface(
 
   let cached = surfaceCache.get(fullKey);
   if (!cached) {
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
+    const canvas = createOffscreenCanvas(w, h);
+    if (!canvas) {
+      painter(ctx, width, height);
+      return;
+    }
     const cCtx = canvas.getContext('2d');
     if (cCtx) {
       painter(cCtx, w, h);

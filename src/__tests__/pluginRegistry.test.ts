@@ -71,6 +71,7 @@ describe('pluginRegistry & extensibility contracts', () => {
     ]);
 
     expect(glyphProviderRegistry.list().map((p) => p.id)).toEqual([
+      'cjk-stroke-order',
       'stroke-order-dict',
       'ink-grid-fallback',
     ]);
@@ -102,6 +103,7 @@ describe('pluginRegistry & extensibility contracts', () => {
       'png-sequence-tar',
       'poster-svg',
       'svg-sequence-tar',
+      'node-mp4',
     ]);
   });
 

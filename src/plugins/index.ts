@@ -38,6 +38,12 @@ import { blueprintPlugin } from './presentations/blueprintPlugin';
 import { letterPaperPlugin } from './presentations/letterPaperPlugin';
 
 import {
+  cjkStrokeOrderGlyphProvider,
+  ensureCjkStrokeDataLoaded,
+  registerCjkStrokeMedians,
+  registerCjkStrokeOutlines,
+} from './glyphs/cjkStrokeData';
+import {
   registerStrokeOrderGlyphs,
   strokeOrderGlyphProvider,
 } from './glyphs/strokeOrderProvider';
@@ -64,6 +70,10 @@ import { posterPngExporterPlugin } from './exporters/posterPngExporter';
 import { pngSequenceTarExporterPlugin } from './exporters/pngSequenceTarExporter';
 import { posterSvgExporterPlugin } from './exporters/posterSvgExporter';
 import { svgSequenceTarExporterPlugin } from './exporters/svgSequenceTarExporter';
+import {
+  initNodeCanvasRuntime,
+  nodeMp4ExporterPlugin,
+} from './exporters/nodeMp4Exporter';
 import { createHttpBridgeExportPlugin } from './exporters/httpBridgeFactory';
 
 let initialized = false;
@@ -102,6 +112,7 @@ export function registerBuiltinPlugins(): void {
   presentationRegistry.register(letterPaperPlugin, { override: true });
 
   // Register glyph stroke providers (sorted by priority descending at lookup)
+  glyphProviderRegistry.register(cjkStrokeOrderGlyphProvider, { override: true });
   glyphProviderRegistry.register(strokeOrderGlyphProvider, { override: true });
   glyphProviderRegistry.register(inkGridGlyphProvider, { override: true });
 
@@ -129,6 +140,7 @@ export function registerBuiltinPlugins(): void {
   exportRegistry.register(pngSequenceTarExporterPlugin, { override: true });
   exportRegistry.register(posterSvgExporterPlugin, { override: true });
   exportRegistry.register(svgSequenceTarExporterPlugin, { override: true });
+  exportRegistry.register(nodeMp4ExporterPlugin, { override: true });
 }
 
 registerBuiltinPlugins();
@@ -145,9 +157,15 @@ export * from './contracts';
 export * from './registry';
 export {
   useRegistryList,
+  cjkStrokeOrderGlyphProvider,
+  ensureCjkStrokeDataLoaded,
+  registerCjkStrokeMedians,
+  registerCjkStrokeOutlines,
   registerStrokeOrderGlyphs,
   createImageHandPlugin,
   createHttpBridgeExportPlugin,
+  initNodeCanvasRuntime,
+  nodeMp4ExporterPlugin,
   stripMarkdownFence,
   annotateNodePlugin,
   isMermaidScript,

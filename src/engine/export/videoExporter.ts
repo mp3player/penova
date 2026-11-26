@@ -6,6 +6,8 @@ import {
   ExportOutput,
 } from '../../plugins/contracts';
 import { exportRegistry } from '../../plugins/registry';
+import { initNodeCanvasRuntime } from '../../plugins/exporters/nodeMp4Exporter';
+import { hasOffscreenCanvasSupport } from '../../sdk/offscreenCanvas';
 import {
   parseProjectScript,
   ParseProjectScriptOptions,
@@ -126,6 +128,8 @@ export async function exportSceneVideo(
   const defaultFps =
     exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
       ? 12
+      : exporterId === 'node-mp4'
+      ? 24
       : 30;
   const source = createSceneFrameSource(
     scene,
@@ -147,46 +151,64 @@ export async function exportProjectVideo(
   const defaultFps =
     exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
       ? 12
+      : exporterId === 'node-mp4'
+      ? 24
       : 30;
-  const source = createProjectFrameSource(
-    compiledProject,
-    options.fps ?? defaultFps
-  );
-  const plugin = exportRegistry.getOrDefault(exporterId);
-  return plugin.export(source, {
-    onProgress: options.onProgress,
-    signal: options.signal,
-  });
+  const needsRuntime =
+    exporterId === 'node-mp4' && !hasOffscreenCanvasSupport();
+  const nodeRuntime = needsRuntime ? await initNodeCanvasRuntime() : null;
+  try {
+    const effectiveCompiled = needsRuntime
+      ? compileProjectTimeline(compiledProject.project)
+      : compiledProject;
+    const source = createProjectFrameSource(
+      effectiveCompiled,
+      options.fps ?? defaultFps
+    );
+    const plugin = exportRegistry.getOrDefault(exporterId);
+    return await plugin.export(source, {
+      onProgress: options.onProgress,
+      signal: options.signal,
+    });
+  } finally {
+    nodeRuntime?.release();
+  }
 }
 
 export async function exportScriptToVideo(
   scriptText: string,
   options: ExportScriptOptions = {}
 ): Promise<ExportScriptResult> {
-  const parsed = parseProjectScript(scriptText, {
-    fallbackTitle: options.fallbackTitle,
-    fallbackAspectRatio: options.fallbackAspectRatio,
-  });
-  const compiled = compileProjectTimeline(parsed.project);
   const mediaSupported =
     exportRegistry.get('mediarecorder-video')?.isSupported?.() ?? false;
   const exporterId =
     options.exporterId ??
     (mediaSupported ? 'mediarecorder-video' : 'svg-sequence-tar');
 
-  const out = await exportProjectVideo(compiled, {
-    fps: options.fps,
-    exporterId,
-    onProgress: options.onProgress ?? (() => {}),
-    signal: options.signal,
-  });
+  const nodeRuntime =
+    exporterId === 'node-mp4' ? await initNodeCanvasRuntime() : null;
+  try {
+    const parsed = parseProjectScript(scriptText, {
+      fallbackTitle: options.fallbackTitle,
+      fallbackAspectRatio: options.fallbackAspectRatio,
+    });
+    const compiled = compileProjectTimeline(parsed.project);
+    const out = await exportProjectVideo(compiled, {
+      fps: options.fps,
+      exporterId,
+      onProgress: options.onProgress ?? (() => {}),
+      signal: options.signal,
+    });
 
-  return {
-    ...out,
-    project: parsed.project,
-    warnings: parsed.warnings,
-    subtitlesSrt: parsed.project.subtitles
-      ? serializeSubtitlesToSrt(parsed.project.subtitles)
-      : '',
-  };
+    return {
+      ...out,
+      project: parsed.project,
+      warnings: parsed.warnings,
+      subtitlesSrt: parsed.project.subtitles
+        ? serializeSubtitlesToSrt(parsed.project.subtitles)
+        : '',
+    };
+  } finally {
+    nodeRuntime?.release();
+  }
 }

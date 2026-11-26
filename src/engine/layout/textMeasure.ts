@@ -12,6 +12,10 @@ import {
   PositionedSceneNode,
 } from '../../plugins/contracts';
 import { sceneNodeRegistry, shapeRegistry } from '../../plugins/registry';
+import {
+  createOffscreenCanvas,
+  onOffscreenCanvasFactoryChange,
+} from '../../sdk/offscreenCanvas';
 
 export const BOARD_FONT_FAMILY =
   "'Segoe Print', 'KaiTi', 'STKaiti', 'LXGW WenKai', 'Microsoft YaHei', cursive";
@@ -20,10 +24,14 @@ export type MeasureTextFn = (text: string, font: string) => number;
 
 let cachedMeasureCtx: CanvasRenderingContext2D | null = null;
 
+onOffscreenCanvasFactoryChange(() => {
+  cachedMeasureCtx = null;
+});
+
 function getBrowserMeasureCtx(): CanvasRenderingContext2D | null {
-  if (typeof document === 'undefined') return null;
   if (!cachedMeasureCtx) {
-    const canvas = document.createElement('canvas');
+    const canvas = createOffscreenCanvas(1, 1);
+    if (!canvas) return null;
     cachedMeasureCtx = canvas.getContext('2d');
   }
   return cachedMeasureCtx;

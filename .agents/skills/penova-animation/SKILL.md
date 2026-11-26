@@ -40,6 +40,7 @@ Write a `.penova.md` file with optional project frontmatter followed by `=== sce
    - Optional scene metadata:
      - `spotlight: true` dims previously drawn steps while keeping the active node (and any annotated target) at full brightness, then restores everything during the outro.
      - `pacing: natural | crisp | deliberate | linear` controls drawing rhythm (fast-in/slow-out stroke dynamics, corner pauses, between-part breathing room, and 3-beat pen settle; defaults to `natural`).
+     - `font: theme-default | xiaolai | marker | kuaile | longcang | blueprint-hand | wenkai | kaiti-stroke` sets an optional handwriting font preset for the scene (`kaiti-stroke` renders pure vector stroke-by-stroke KaiTi outlines; custom fonts use per-stroke CJK pixel partitioning).
    - Supports direct **Mermaid flowcharts** (`flowchart LR` / `flowchart TD` / `graph TD` / `subgraph` / `-.->` / chained edges) inside a scene body via auto-detection.
    - Cards: `[root|step|concept|highlight|note] Label | Optional Subtitle {color, shape: rounded|circle|cloud|underline|diamond|none, icon: <iconName>, group, say: "...", pause: <ms>}`
    - Atomic text / shapes: `[text] Content {color, size, bold, align, x, y}`, `[shape:<id>] Name {color, fit, dashed, w, h}`
@@ -74,7 +75,10 @@ node ./scripts/render-script.ts --spec
 # 2. Validate script + export .penova.json, .srt subtitles, and HD vector poster (.svg)
 node ./scripts/render-script.ts path/to/story.penova.md ./out
 
-# 3. Export headless SVG animation frames (.tar) ready for SVG or FFmpeg pipelines
+# 3. Export MP4 directly without SVG or browser (requires @napi-rs/canvas + ffmpeg)
+node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=node-mp4 --fps=24
+
+# 4. Export platform-agnostic SVG animation frames (.tar) when zero-dependency vector output is desired
 node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=svg-sequence-tar --fps=12
 ```
 

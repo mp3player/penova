@@ -2,6 +2,10 @@ import '../../plugins';
 import { LessonScene, Point } from '../../model/scene';
 import { CameraPenHint, ThemePalette } from '../../plugins/contracts';
 import { presentationRegistry } from '../../plugins/registry';
+import {
+  createOffscreenCanvas,
+  onOffscreenCanvasFactoryChange,
+} from '../../sdk/offscreenCanvas';
 import { easeGlyphProgress, StrokePath } from '../../sdk/strokePath';
 import { CameraState, evaluateCameraAt } from '../camera/cameraDirector';
 import { drawProgressiveGlyph } from '../sketch/textStrokes';
@@ -18,10 +22,13 @@ export interface RenderOptions {
 
 let sharedScratchCanvas: HTMLCanvasElement | null = null;
 
+onOffscreenCanvasFactoryChange(() => {
+  sharedScratchCanvas = null;
+});
+
 function getScratchCanvas(): HTMLCanvasElement | null {
-  if (typeof document === 'undefined') return null;
   if (!sharedScratchCanvas) {
-    sharedScratchCanvas = document.createElement('canvas');
+    sharedScratchCanvas = createOffscreenCanvas(300, 150);
   }
   return sharedScratchCanvas;
 }

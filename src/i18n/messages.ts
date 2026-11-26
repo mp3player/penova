@@ -563,7 +563,9 @@ export const PLUGIN_NAMES: Record<Locale, Record<string, string>> = {
     'png-sequence-tar': 'Offline Frames (FFmpeg .tar)',
     'poster-svg': 'Vector Poster (1080P SVG)',
     'svg-sequence-tar': 'Vector Frames (SVG .tar)',
+    'node-mp4': 'Headless Video (Node MP4)',
     // Glyphs
+    'cjk-stroke-order': 'CJK Stroke Order (MakeMeAHanzi)',
     'stroke-order-dict': 'Standard Stroke Order',
     'ink-grid-fallback': 'Ink Grid Fallback',
   },
@@ -613,7 +615,9 @@ export const PLUGIN_NAMES: Record<Locale, Record<string, string>> = {
     'png-sequence-tar': '离线帧包 (FFmpeg .tar)',
     'poster-svg': '矢量海报 (1080P SVG)',
     'svg-sequence-tar': '矢量帧包 (SVG .tar)',
+    'node-mp4': '无头直出视频 (Node MP4)',
     // Glyphs
+    'cjk-stroke-order': '9000+ 汉字标准笔顺库',
     'stroke-order-dict': '标准笔顺骨架库',
     'ink-grid-fallback': '通用墨迹网格追踪',
   },
@@ -626,6 +630,7 @@ export const EXPORTER_SHORT_LABELS: Record<Locale, Record<string, string>> = {
     'png-sequence-tar': 'FFmpeg Tar',
     'poster-svg': 'HD SVG',
     'svg-sequence-tar': 'SVG Tar',
+    'node-mp4': 'Node MP4',
   },
   'zh-CN': {
     'mediarecorder-video': '1080P 视频',
@@ -633,6 +638,7 @@ export const EXPORTER_SHORT_LABELS: Record<Locale, Record<string, string>> = {
     'png-sequence-tar': 'FFmpeg 帧包',
     'poster-svg': '高清 SVG',
     'svg-sequence-tar': 'SVG 帧包',
+    'node-mp4': 'MP4 直出',
   },
 };
 

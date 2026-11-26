@@ -5,11 +5,22 @@ import {
   glyphProviderRegistry,
   presentationRegistry,
 } from '../../plugins/registry';
+import {
+  createOffscreenCanvas,
+  createPath2D,
+  hasOffscreenCanvasSupport,
+  onOffscreenCanvasFactoryChange,
+} from '../../sdk/offscreenCanvas';
 import { hash2D, hashString } from '../../sdk/random';
 import {
   estimateCharAdvanceWidth,
   isMonospaceFont,
 } from '../layout/textMeasure';
+import { isVectorKaitiFont } from '../render/fonts';
+import {
+  computeVectorKaitiTransform,
+  getCjkStrokeOutlines,
+} from '../../plugins/glyphs/cjkStrokeData';
 
 export type { GlyphStrokeSegment };
 
@@ -24,6 +35,8 @@ export interface GlyphStrokeData {
   segments: GlyphStrokeSegment[];
   totalLength: number;
   chalkCanvas?: HTMLCanvasElement;
+  strokeCanvases?: HTMLCanvasElement[];
+  perStrokeRevealWidth?: number;
 }
 
 const MAX_GLYPH_CACHE = 1600;
@@ -36,11 +49,15 @@ export function clearGlyphCache(): void {
 
 // Automatically invalidate cached glyph strokes whenever providers are registered/unregistered
 glyphProviderRegistry.subscribe(clearGlyphCache);
+onOffscreenCanvasFactoryChange(() => {
+  measureCanvasCtx = null;
+  clearGlyphCache();
+});
 
 function getMeasureCtx(): CanvasRenderingContext2D | null {
-  if (typeof document === 'undefined') return null;
   if (!measureCanvasCtx) {
-    const c = document.createElement('canvas');
+    const c = createOffscreenCanvas(1, 1);
+    if (!c) return null;
     measureCanvasCtx = c.getContext('2d');
   }
   return measureCanvasCtx;
@@ -189,6 +206,138 @@ function resolveGlyphStrokes(
   return buildFallbackSegments(boxW, boxH, fontSize, char);
 }
 
+function applyChalkGrainToCanvas(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  char: string,
+  theme: ThemeId
+): ImageData {
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const imgData = ctx.getImageData(0, 0, cw, ch);
+  const grain = presentationRegistry.getOrDefault(theme).glyphGrain;
+  if (grain?.enabled) {
+    const minFactor = grain.minAlphaFactor ?? 0.8;
+    const range = grain.range ?? 0.24;
+    const pxData = imgData.data;
+    const charSeed = hashString(char);
+    for (let py = 0; py < ch; py++) {
+      for (let px = 0; px < cw; px++) {
+        const idx = (py * cw + px) * 4;
+        const a = pxData[idx + 3];
+        if (a === 0) continue;
+        const h = hash2D(px, py, charSeed);
+        const n = (h & 255) / 255;
+        const factor = minFactor + n * range;
+        pxData[idx + 3] = Math.min(255, Math.round(a * factor));
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }
+  return imgData;
+}
+
+function distSqPointToPolyline(px: number, py: number, pts: Point[]): number {
+  if (pts.length === 0) return Infinity;
+  if (pts.length === 1) {
+    const dx = px - pts[0].x;
+    const dy = py - pts[0].y;
+    return dx * dx + dy * dy;
+  }
+  let best = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const ax = pts[i - 1].x;
+    const ay = pts[i - 1].y;
+    const bx = pts[i].x;
+    const by = pts[i].y;
+    const vx = bx - ax;
+    const vy = by - ay;
+    const lenSq = vx * vx + vy * vy;
+    const t =
+      lenSq > 1e-6
+        ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / lenSq))
+        : 0;
+    const cx = ax + vx * t;
+    const cy = ay + vy * t;
+    const dx = px - cx;
+    const dy = py - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < best) best = d2;
+  }
+  return best;
+}
+
+function partitionInkToStrokeCanvases(
+  imgData: ImageData,
+  cw: number,
+  ch: number,
+  scale: number,
+  segments: GlyphStrokeSegment[],
+  fontSize: number
+): HTMLCanvasElement[] | undefined {
+  if (segments.length < 2) return undefined;
+
+  const numStrokes = segments.length;
+  const strokeCanvases: HTMLCanvasElement[] = [];
+  const strokeBuffers: Uint8ClampedArray[] = [];
+
+  for (let s = 0; s < numStrokes; s++) {
+    const sc = createOffscreenCanvas(cw, ch);
+    if (!sc) return undefined;
+    strokeCanvases.push(sc);
+    strokeBuffers.push(new Uint8ClampedArray(cw * ch * 4));
+  }
+
+  const src = imgData.data;
+  const dists = new Float64Array(numStrokes);
+  const tieSlack = Math.max(0.75, fontSize * 0.035);
+
+  for (let py = 0; py < ch; py++) {
+    const by = (py + 0.5) / scale;
+    const rowOff = py * cw * 4;
+    for (let px = 0; px < cw; px++) {
+      const idx = rowOff + px * 4;
+      const a = src[idx + 3];
+      if (a <= 16) continue;
+
+      const bx = (px + 0.5) / scale;
+      let minD2 = Infinity;
+      for (let s = 0; s < numStrokes; s++) {
+        const d2 = distSqPointToPolyline(bx, by, segments[s].points);
+        dists[s] = d2;
+        if (d2 < minD2) minD2 = d2;
+      }
+
+      // Prefer the earliest stroke within tieSlack so crossings keep earlier strokes intact
+      const tieLimit = Math.sqrt(minD2) + tieSlack;
+      const tieLimitSq = tieLimit * tieLimit;
+      let owner = 0;
+      for (let s = 0; s < numStrokes; s++) {
+        if (dists[s] <= tieLimitSq) {
+          owner = s;
+          break;
+        }
+      }
+
+      const dst = strokeBuffers[owner];
+      dst[idx] = src[idx];
+      dst[idx + 1] = src[idx + 1];
+      dst[idx + 2] = src[idx + 2];
+      dst[idx + 3] = a;
+    }
+  }
+
+  for (let s = 0; s < numStrokes; s++) {
+    const sCtx = strokeCanvases[s].getContext('2d');
+    if (!sCtx) continue;
+    const outImg = sCtx.createImageData(cw, ch);
+    outImg.data.set(strokeBuffers[s]);
+    sCtx.putImageData(outImg, 0, 0);
+  }
+
+  return strokeCanvases;
+}
+
 export function getGlyphStrokeData(
   char: string,
   font: string,
@@ -201,7 +350,7 @@ export function getGlyphStrokeData(
   if (cached) return cached;
 
   const mCtx = getMeasureCtx();
-  if (!mCtx || typeof document === 'undefined') {
+  if (!mCtx || !hasOffscreenCanvasSupport()) {
     const boldBoost =
       font.trim().startsWith('700') || font.includes('bold') ? 1.05 : 1.0;
     const advanceWidth = estimateCharAdvanceWidth(
@@ -231,6 +380,68 @@ export function getGlyphStrokeData(
     return data;
   }
 
+  const vectorOutlines = isVectorKaitiFont(font)
+    ? getCjkStrokeOutlines(char)
+    : undefined;
+  const scale = 2;
+
+  if (vectorOutlines && vectorOutlines.length > 0 && createPath2D('M0 0')) {
+    const advanceWidth = Math.ceil(fontSize * 1.02);
+    const padX = Math.ceil(fontSize * 0.24);
+    const boxW = Math.max(10, Math.ceil(advanceWidth + padX * 2));
+    const boxH = Math.max(14, Math.ceil(fontSize * 1.48));
+    const cw = boxW * scale;
+    const ch = boxH * scale;
+    const segments = resolveGlyphStrokes(char, font, fontSize, boxW, boxH);
+    const totalLength = segments.reduce((acc, s) => acc + s.length, 0);
+
+    const chalkCanvas = createOffscreenCanvas(cw, ch);
+    const mainCtx = chalkCanvas?.getContext('2d');
+    const strokeCanvases: HTMLCanvasElement[] = [];
+
+    if (chalkCanvas && mainCtx) {
+      const { emScale, ox, oy } = computeVectorKaitiTransform(
+        fontSize,
+        boxW,
+        boxH
+      );
+      for (const svgPath of vectorOutlines) {
+        const sc = createOffscreenCanvas(cw, ch);
+        const sCtx = sc?.getContext('2d');
+        if (!sc || !sCtx) continue;
+        sCtx.save();
+        sCtx.scale(scale, scale);
+        sCtx.translate(ox, oy + 900 * emScale);
+        sCtx.scale(emScale, -emScale);
+        sCtx.fillStyle = colorHex;
+        const p2d = createPath2D(svgPath);
+        if (p2d) sCtx.fill(p2d);
+        sCtx.restore();
+        applyChalkGrainToCanvas(sCtx, sc, char, theme);
+        strokeCanvases.push(sc);
+        mainCtx.drawImage(sc, 0, 0);
+      }
+    }
+
+    const vecData: GlyphStrokeData = {
+      char,
+      fontSize,
+      width: boxW,
+      height: boxH,
+      padX,
+      advanceWidth,
+      colorHex,
+      segments,
+      totalLength,
+      chalkCanvas: chalkCanvas ?? undefined,
+      strokeCanvases:
+        strokeCanvases.length === segments.length ? strokeCanvases : undefined,
+      perStrokeRevealWidth: Math.max(4.5, fontSize * 0.28),
+    };
+    cacheGlyphData(key, vecData);
+    return vecData;
+  }
+
   mCtx.font = font;
   const advanceWidth = mCtx.measureText(char).width;
   const padX = Math.ceil(fontSize * 0.24);
@@ -253,13 +464,26 @@ export function getGlyphStrokeData(
     return spaceData;
   }
 
-  const scale = 2;
-  const chalkCanvas = document.createElement('canvas');
-  chalkCanvas.width = boxW * scale;
-  chalkCanvas.height = boxH * scale;
+  const chalkCanvas = createOffscreenCanvas(boxW * scale, boxH * scale);
+  if (!chalkCanvas) {
+    const emptyData: GlyphStrokeData = {
+      char,
+      fontSize,
+      width: boxW,
+      height: boxH,
+      padX,
+      advanceWidth,
+      colorHex,
+      segments: [],
+      totalLength: 0,
+    };
+    cacheGlyphData(key, emptyData);
+    return emptyData;
+  }
 
   const gCtx = chalkCanvas.getContext('2d');
   let segments: GlyphStrokeSegment[] = [];
+  let strokeCanvases: HTMLCanvasElement[] | undefined;
 
   if (gCtx) {
     gCtx.scale(scale, scale);
@@ -269,35 +493,7 @@ export function getGlyphStrokeData(
     gCtx.textAlign = 'left';
     gCtx.fillText(char, padX, boxH * 0.52);
 
-    const imgData = gCtx.getImageData(
-      0,
-      0,
-      chalkCanvas.width,
-      chalkCanvas.height
-    );
-
-    const grain = presentationRegistry.getOrDefault(theme).glyphGrain;
-    if (grain?.enabled) {
-      const minFactor = grain.minAlphaFactor ?? 0.8;
-      const range = grain.range ?? 0.24;
-      const pxData = imgData.data;
-      const charSeed = hashString(char);
-      const cw = chalkCanvas.width;
-      const ch = chalkCanvas.height;
-      for (let py = 0; py < ch; py++) {
-        for (let px = 0; px < cw; px++) {
-          const idx = (py * cw + px) * 4;
-          const a = pxData[idx + 3];
-          if (a === 0) continue;
-          const h = hash2D(px, py, charSeed);
-          const n = (h & 255) / 255;
-          const factor = minFactor + n * range;
-          pxData[idx + 3] = Math.min(255, Math.round(a * factor));
-        }
-      }
-      gCtx.putImageData(imgData, 0, 0);
-    }
-
+    const imgData = applyChalkGrainToCanvas(gCtx, chalkCanvas, char, theme);
     const inkBounds = computeInkBounds(
       imgData,
       chalkCanvas.width,
@@ -317,6 +513,15 @@ export function getGlyphStrokeData(
       chalkCanvas.width,
       chalkCanvas.height
     );
+
+    strokeCanvases = partitionInkToStrokeCanvases(
+      imgData,
+      chalkCanvas.width,
+      chalkCanvas.height,
+      scale,
+      segments,
+      fontSize
+    );
   }
 
   const totalLength = segments.reduce((acc, s) => acc + s.length, 0);
@@ -331,6 +536,8 @@ export function getGlyphStrokeData(
     segments,
     totalLength,
     chalkCanvas,
+    strokeCanvases,
+    perStrokeRevealWidth: Math.max(4.0, fontSize * 0.24),
   };
 
   cacheGlyphData(key, result);
@@ -458,6 +665,74 @@ export function drawProgressiveGlyph(
   const scaleX = cw / glyph.width;
   const scaleY = ch / glyph.height;
 
+  if (
+    glyph.strokeCanvases &&
+    glyph.strokeCanvases.length === glyph.segments.length
+  ) {
+    let remaining = Math.max(0, Math.min(1, progress)) * glyph.totalLength;
+    const revealW =
+      glyph.perStrokeRevealWidth ?? Math.max(4.0, glyph.fontSize * 0.24);
+
+    for (let s = 0; s < glyph.segments.length; s++) {
+      if (remaining <= 0) break;
+      const seg = glyph.segments[s];
+      const strokeCanvas = glyph.strokeCanvases[s];
+
+      if (remaining >= seg.length) {
+        ctx.drawImage(strokeCanvas, boxX, boxY, glyph.width, glyph.height);
+        remaining -= seg.length;
+      } else {
+        const pts = seg.points;
+        if (pts.length > 0) {
+          sCtx.save();
+          try {
+            sCtx.globalCompositeOperation = 'source-over';
+            sCtx.setTransform(1, 0, 0, 1, 0, 0);
+            sCtx.clearRect(0, 0, cw, ch);
+
+            sCtx.scale(scaleX, scaleY);
+            sCtx.strokeStyle = '#ffffff';
+            sCtx.lineCap = 'round';
+            sCtx.lineJoin = 'round';
+            sCtx.lineWidth = revealW;
+
+            sCtx.beginPath();
+            sCtx.moveTo(pts[0].x, pts[0].y);
+            let drawn = 0;
+            for (let i = 1; i < pts.length; i++) {
+              const a = pts[i - 1];
+              const b = pts[i];
+              const len = Math.hypot(b.x - a.x, b.y - a.y);
+              if (drawn + len <= remaining) {
+                sCtx.lineTo(b.x, b.y);
+                drawn += len;
+              } else {
+                const frac = len > 1e-4 ? (remaining - drawn) / len : 0;
+                sCtx.lineTo(
+                  a.x + (b.x - a.x) * frac,
+                  a.y + (b.y - a.y) * frac
+                );
+                break;
+              }
+            }
+            sCtx.stroke();
+
+            sCtx.setTransform(1, 0, 0, 1, 0, 0);
+            sCtx.globalCompositeOperation = 'source-in';
+            sCtx.drawImage(strokeCanvas, 0, 0);
+          } finally {
+            sCtx.globalCompositeOperation = 'source-over';
+            sCtx.restore();
+          }
+          ctx.drawImage(scratchCanvas, boxX, boxY, glyph.width, glyph.height);
+        }
+        remaining = 0;
+        break;
+      }
+    }
+    return;
+  }
+
   sCtx.save();
   try {
     sCtx.globalCompositeOperation = 'source-over';
@@ -468,7 +743,7 @@ export function drawProgressiveGlyph(
     sCtx.strokeStyle = '#ffffff';
     sCtx.lineCap = 'round';
     sCtx.lineJoin = 'round';
-    sCtx.lineWidth = Math.max(5.5, glyph.fontSize * 0.38);
+    sCtx.lineWidth = Math.max(4.2, glyph.fontSize * 0.26);
 
     let remaining = Math.max(0, Math.min(1, progress)) * glyph.totalLength;
 

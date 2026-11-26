@@ -1,31 +1,37 @@
 @font-face {
   font-family: 'Penova Xiaolai';
   src: url('/fonts/Xiaolai-Regular.ttf') format('truetype');
+  font-weight: 100 900;
   font-display: swap;
 }
 @font-face {
   font-family: 'Penova Marker';
   src: url('/fonts/LXGWMarkerGothic-Regular.ttf') format('truetype');
+  font-weight: 100 900;
   font-display: swap;
 }
 @font-face {
   font-family: 'Penova KuaiLe';
   src: url('/fonts/ZCOOLKuaiLe-Regular.ttf') format('truetype');
+  font-weight: 100 900;
   font-display: swap;
 }
 @font-face {
   font-family: 'Penova LongCang';
   src: url('/fonts/LongCang-Regular.ttf') format('truetype');
+  font-weight: 100 900;
   font-display: swap;
 }
 @font-face {
   font-family: 'Penova Architects';
   src: url('/fonts/ArchitectsDaughter-Regular.ttf') format('truetype');
+  font-weight: 100 900;
   font-display: swap;
 }
 @font-face {
   font-family: 'Penova WenKai';
   src: url('/fonts/LXGWWenKai-Regular.ttf') format('truetype');
+  font-weight: 100 900;
   font-display: swap;
 }
 

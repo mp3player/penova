@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { buildTarArchive, safeFilename } from '../plugins/exporters/helpers';
-import { createHttpBridgeExportPlugin, exportRegistry } from '../plugins';
+import {
+  createHttpBridgeExportPlugin,
+  exportRegistry,
+  registerCjkStrokeMedians,
+} from '../plugins';
+import {
+  isVectorKaitiFont,
+  SCENE_FONT_PRESETS,
+  VECTOR_KAITI_FONT_TAG,
+} from '../engine/render/fonts';
 import {
   createProjectFrameSource,
   exportProjectVideo,
@@ -11,6 +20,14 @@ import {
   clearGlyphCache,
   getGlyphStrokeData,
 } from '../engine/sketch/textStrokes';
+import {
+  createOffscreenCanvas,
+  createPath2D,
+  hasOffscreenCanvasSupport,
+  onOffscreenCanvasFactoryChange,
+  setOffscreenCanvasFactory,
+  setPath2DFactory,
+} from '../sdk/offscreenCanvas';
 import { compileProjectTimeline } from '../engine/timeline/projectTimeline';
 import { PRESET_SCENES } from '../model/presets';
 import { createProjectFromScene } from '../model/project';
@@ -260,5 +277,85 @@ describe('exporters infrastructure & plugins', () => {
     const lpCompiled = compileProjectTimeline(letterProj);
     const lpSvg = renderProjectFrameSvg(lpCompiled, 500, 1280, 720);
     expect(lpSvg).toContain('rgba(194, 96, 84, 0.24)');
+  });
+
+  it('registers headless node-mp4 exporter and supports offscreen canvas factory switching', () => {
+    const plugin = exportRegistry.get('node-mp4');
+    expect(plugin).toBeDefined();
+    expect(plugin?.isSupported?.()).toBe(true);
+
+    let resetCount = 0;
+    const unsub = onOffscreenCanvasFactoryChange(() => {
+      resetCount++;
+    });
+    try {
+      expect(hasOffscreenCanvasSupport()).toBe(false);
+      expect(createOffscreenCanvas(64, 64)).toBeNull();
+
+      setOffscreenCanvasFactory((w, h) => ({ width: w, height: h }) as HTMLCanvasElement);
+      expect(hasOffscreenCanvasSupport()).toBe(true);
+      const fake = createOffscreenCanvas(120, 80);
+      expect(fake?.width).toBe(120);
+      expect(fake?.height).toBe(80);
+      expect(resetCount).toBe(1);
+
+      setOffscreenCanvasFactory(null);
+      expect(hasOffscreenCanvasSupport()).toBe(false);
+      expect(resetCount).toBe(2);
+
+      const testProj = createProjectFromScene(PRESET_SCENES[0]);
+      const firstCompiled = compileProjectTimeline(testProj);
+      setOffscreenCanvasFactory(
+        (w, h) =>
+          ({
+            width: w,
+            height: h,
+            getContext: () => null,
+          }) as unknown as HTMLCanvasElement
+      );
+      const secondCompiled = compileProjectTimeline(testProj);
+      expect(secondCompiled.segments[0].timeline).not.toBe(
+        firstCompiled.segments[0].timeline
+      );
+    } finally {
+      unsub();
+      setOffscreenCanvasFactory(null);
+    }
+  });
+
+  it('supports CJK MakeMeAHanzi stroke medians, kaiti-stroke preset, and Path2D factory', () => {
+    expect(SCENE_FONT_PRESETS.some((p) => p.id === 'kaiti-stroke')).toBe(true);
+    expect(isVectorKaitiFont(`700 24px '${VECTOR_KAITI_FONT_TAG}', serif`)).toBe(
+      true
+    );
+    expect(isVectorKaitiFont("700 24px 'Penova Xiaolai', cursive")).toBe(false);
+
+    registerCjkStrokeMedians({
+      測: [
+        [100, 100, 200, 200],
+        [300, 150, 300, 750],
+        [450, 200, 750, 200, 750, 780],
+        [480, 420, 700, 420],
+        [480, 680, 700, 680],
+      ],
+    });
+    clearGlyphCache();
+    const cjkGlyph = getGlyphStrokeData(
+      '測',
+      "700 24px 'Penova Xiaolai', sans-serif",
+      24,
+      '#ffffff',
+      'chalkboard'
+    );
+    expect(cjkGlyph.segments.length).toBe(5);
+
+    try {
+      expect(createPath2D('M 0 0 L 10 10 Z')).toBeNull();
+      const fakePath = { __tag: 'fake-path' } as unknown as Path2D;
+      setPath2DFactory(() => fakePath);
+      expect(createPath2D('M 0 0 L 10 10 Z')).toBe(fakePath);
+    } finally {
+      setPath2DFactory(null);
+    }
   });
 });

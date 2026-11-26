@@ -1,15 +1,23 @@
 import { Point } from '../../model/scene';
+import {
+  createOffscreenCanvas,
+  onOffscreenCanvasFactoryChange,
+} from '../../sdk/offscreenCanvas';
 import { TransitionPlugin } from '../contracts';
 
 let cachedEraseCanvas: HTMLCanvasElement | null = null;
 
+onOffscreenCanvasFactoryChange(() => {
+  cachedEraseCanvas = null;
+});
+
 function getEraseCanvas(w: number, h: number): HTMLCanvasElement | null {
-  if (typeof document === 'undefined') return null;
-  if (!cachedEraseCanvas) {
-    cachedEraseCanvas = document.createElement('canvas');
-  }
   const safeW = Math.max(1, w);
   const safeH = Math.max(1, h);
+  if (!cachedEraseCanvas) {
+    cachedEraseCanvas = createOffscreenCanvas(safeW, safeH);
+    if (!cachedEraseCanvas) return null;
+  }
   if (cachedEraseCanvas.width !== safeW || cachedEraseCanvas.height !== safeH) {
     cachedEraseCanvas.width = safeW;
     cachedEraseCanvas.height = safeH;

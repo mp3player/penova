@@ -1,4 +1,8 @@
 import { drawSmoothLineStroke } from '../../sdk/chalkBrush';
+import {
+  createOffscreenCanvas,
+  onOffscreenCanvasFactoryChange,
+} from '../../sdk/offscreenCanvas';
 import { hash2D } from '../../sdk/random';
 import {
   drawCachedSurface,
@@ -50,13 +54,15 @@ const palette: ThemePalette = {
 const PAPER_GRAIN_TILE_SIZE = 128;
 let cachedPaperGrainTile: HTMLCanvasElement | null = null;
 
+onOffscreenCanvasFactoryChange(() => {
+  cachedPaperGrainTile = null;
+});
+
 function getPaperGrainTile(): HTMLCanvasElement | null {
-  if (typeof document === 'undefined') return null;
   if (cachedPaperGrainTile) return cachedPaperGrainTile;
 
-  const tile = document.createElement('canvas');
-  tile.width = PAPER_GRAIN_TILE_SIZE;
-  tile.height = PAPER_GRAIN_TILE_SIZE;
+  const tile = createOffscreenCanvas(PAPER_GRAIN_TILE_SIZE, PAPER_GRAIN_TILE_SIZE);
+  if (!tile) return null;
   const tCtx = tile.getContext('2d');
   if (!tCtx) return null;
 

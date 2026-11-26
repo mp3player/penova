@@ -174,7 +174,8 @@ export type SceneFontPreset =
   | 'kuaile'
   | 'longcang'
   | 'blueprint-hand'
-  | 'wenkai';
+  | 'wenkai'
+  | 'kaiti-stroke';
 
 export type ScenePacingOption = PacingPreset | Partial<ScenePacingConfig>;
 
