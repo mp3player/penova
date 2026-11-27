@@ -77,8 +77,10 @@ Used by `flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, and `fre
 - **Built-in visual widget nodes**:
   - `[node:icon] Label {color: cyan, icon: rocket, size: 32}`
   - `[node:sketch] Art {color: pink, icon: cat, title: "Caption", svg: "<svg or path d>", w: 180, h: 140}`
-  - `[node:code] Snippet {color: cyan, title: "plugin.ts", lines: "const a = 1;\\nreturn a;", w: 320}`
-  - `[node:chart] Speedup {color: orange, title: "Speed", values: "18,45,80,100", labels: "Manual,Tpl,Code,Penova", highlight: 3}`
+  - `[node:code] Snippet {color: cyan, title: "plugin.ts", lines: "const a = 1;\\nreturn a;", highlight: "1", w: 320}`
+  - `[node:chart] Speedup {color: orange, title: "Speed", values: "18,45,80,100", labels: "Manual,Tpl,Code,Penova", highlight: 3}` (or add `frames: "20,45,75,100 | 68,92,38,72", speed: 1.0` for post-draw multi-snapshot bar interpolation)
+  - `[node:wave] Fourier {color: cyan, title: "Fourier Series", fn: "sum(k, 1, 5, sin((2*k-1)*(x - 2*t)) / (2*k-1))", domain: "0..6.283", speed: 1.0}` (supports safe formula `fn` with `x`/`t`/`sum(...)`, real data `values: "12,18,42,38"`, or presets `type: sine|square|fourier|audio|ecg`, with optional `yrange`, `freq`, `amp`, `harmonics`, `speed`)
+  - `[node:annotate] Focus {style: circle, target: "Speedup", label: "Key bottleneck", color: pink}` (zero-displacement overlay emphasis)
 - **Custom plugin node (`[node:<kind>]`)**:
   `[node:<kind>] Display Name {color: green, customKey: "value with, comma", numericKey: 42, say: "..."}`
   Note: On `[node:<kind>]`, all keys except `color`, `group`/`zone`, `x`, `y`, `say`, and `pause` are preserved in `node.props` (including `caption`, `title`, `lines`, etc.). Quote strings containing commas, colons, spaces, or numeric/boolean literals (`"404"`, `"true"`).
@@ -122,5 +124,7 @@ Used by `layout: document` (Letter / Narrative Doc):
   `node ./scripts/render-script.ts --spec`
 - Export `.penova.json` + `.srt` + `.svg` poster:
   `node ./scripts/render-script.ts <input.penova.md> [output-dir]`
+- Export 24fps MP4 video directly (`node-mp4`, requires `@napi-rs/canvas` + `ffmpeg`):
+  `node ./scripts/render-script.ts <input.penova.md> [output-dir] --exporter=node-mp4 --fps=24`
 - Export `.tar` SVG animation frame sequence (`svg-sequence-tar`):
   `node ./scripts/render-script.ts <input.penova.md> [output-dir] --exporter=svg-sequence-tar --fps=12`

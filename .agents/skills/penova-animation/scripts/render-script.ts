@@ -812,7 +812,12 @@ interface SceneNodeTextLineInput {
 interface SceneNodeCompileHelpers {
   theme: ThemeId;
   fontFamily: string;
-  pushStroke(stroke: StrokePath, gapAfterMs?: number): void;
+  pushStroke(
+    stroke: StrokePath,
+    gapAfterMs?: number,
+    animate?: (elapsedMs: number) => StrokePath,
+    animateOptions?: { sync?: 'item' | 'node' }
+  ): void;
   pushTextLine(input: SceneNodeTextLineInput): void;
 }
 
@@ -936,6 +941,42 @@ interface SketchPostProcessInput {
   polylines: SketchRawPolyline[];
   options: SketchPipelineOptions;
 }
+
+// --- Types: src/sdk/mathExpr.ts ---
+
+/**
+ * Safe, zero-eval recursive-descent math expression parser and evaluator
+ * for formula-driven dynamic Penova animations (e.g. Fourier series, waves).
+ */
+
+interface CompiledMathExpr {
+  source: string;
+  evaluate(vars: Record<string, number>): number;
+}
+
+type MathAst =
+  | { kind: 'number'; value: number }
+  | { kind: 'var'; name: string }
+  | { kind: 'unary'; op: '+' | '-'; arg: MathAst }
+  | { kind: 'binary'; op: '+' | '-' | '*' | '/' | '%' | '^'; left: MathAst; right: MathAst }
+  | { kind: 'call'; name: string; args: MathAst[] }
+  | { kind: 'sum'; varName: string; start: MathAst; end: MathAst; body: MathAst };
+
+type Token =
+  | { kind: 'number'; value: number }
+  | { kind: 'ident'; value: string }
+  | { kind: 'op'; value: '+' | '-' | '*' | '/' | '%' | '^' }
+  | { kind: 'lparen' }
+  | { kind: 'rparen' }
+  | { kind: 'comma' };
+
+interface EvalBudget {
+  steps: number;
+}
+
+// --- Types: src/plugins/nodes/waveNodePlugin.ts ---
+
+type WavePresetType = (typeof WAVE_TYPES)[number];
 
 // --- Types: src/model/builders.ts ---
 
@@ -1249,6 +1290,8 @@ interface CompiledStrokeItem {
   endMs: number;
   color: ChalkColor;
   stroke: StrokePath;
+  animate?: (elapsedMs: number) => StrokePath;
+  animateStartMs?: number;
   cumTime?: number[];
   startPoint: Point;
   endPoint: Point;
@@ -4670,42 +4713,84 @@ const { chartNodePlugin } = (() => {
       step: 1,
       description: '0-based highlighted bar index',
     }),
+    frames: prop.string({
+      default: '',
+      description:
+        'Optional pipe-separated data snapshots for post-draw bar animation, e.g. "20,45,75,100 | 60,85,40,90"',
+    }),
+    speed: prop.number({
+      default: 1.0,
+      min: 0,
+      max: 6,
+      step: 0.1,
+      description: 'Post-draw transitions per second across frames (0 = static)',
+    }),
     width: prop.number({ min: 180, step: 10, aliases: ['w'] }),
     height: prop.number({ min: 140, step: 10, aliases: ['h'] }),
   });
+  function parseNumberSeries(raw: string): number[] {
+    return raw
+      .split(',')
+      .map((v) => Number.parseFloat(v.trim()))
+      .filter((n) => Number.isFinite(n) && n >= 0);
+  }
   function parseChartData(node: CustomSceneNode): {
     title: string;
     values: number[];
+    frames: number[][];
     labels: string[];
     highlightIdx: number;
+    speed: number;
   } {
     const title =
       (chartProps.readField(node.props, 'title') ?? '').trim() ||
       node.name ||
       'Metrics';
 
-    const rawValuesStr = (chartProps.readField(node.props, 'values') ?? '').trim();
-    const rawValues = rawValuesStr
-      ? rawValuesStr
-          .split(',')
-          .map((v) => Number.parseFloat(v.trim()))
-          .filter((n) => Number.isFinite(n) && n >= 0)
+    const rawFramesStr = (chartProps.readField(node.props, 'frames') ?? '').trim();
+    const parsedFrames = rawFramesStr
+      ? rawFramesStr
+          .split('|')
+          .map((chunk) => parseNumberSeries(chunk).slice(0, 8))
+          .filter((arr) => arr.length >= 2)
       : [];
-    const values = rawValues.length >= 2 ? rawValues.slice(0, 8) : [25, 48, 76, 100];
+
+    const rawValuesStr = (chartProps.readField(node.props, 'values') ?? '').trim();
+    const rawValues = rawValuesStr ? parseNumberSeries(rawValuesStr) : [];
+    const baseValues =
+      parsedFrames.length >= 1
+        ? parsedFrames[0]
+        : rawValues.length >= 2
+        ? rawValues.slice(0, 8)
+        : [25, 48, 76, 100];
+
+    const barCount = baseValues.length;
+    const normalizedFrames = parsedFrames.map((frame) =>
+      Array.from({ length: barCount }, (_, idx) => frame[idx] ?? baseValues[idx])
+    );
 
     const rawLabelsStr = (chartProps.readField(node.props, 'labels') ?? '').trim();
     const rawLabels = rawLabelsStr
       ? rawLabelsStr.split(',').map((s) => s.trim())
       : [];
-    const labels = values.map((_, idx) => rawLabels[idx] || `#${idx + 1}`);
+    const labels = baseValues.map((_, idx) => rawLabels[idx] || `#${idx + 1}`);
 
     const resolvedHi = chartProps.readField(node.props, 'highlight');
     const highlightIdx =
-      resolvedHi !== undefined && resolvedHi < values.length
+      resolvedHi !== undefined && resolvedHi < baseValues.length
         ? Math.round(resolvedHi)
-        : values.length - 1;
+        : baseValues.length - 1;
 
-    return { title, values, labels, highlightIdx };
+    const speed = chartProps.readField(node.props, 'speed') ?? 1.0;
+
+    return {
+      title,
+      values: baseValues,
+      frames: normalizedFrames,
+      labels,
+      highlightIdx,
+      speed,
+    };
   }
   const chartNodePlugin: SceneNodePlugin = {
     id: 'chart',
@@ -4760,7 +4845,7 @@ const { chartNodePlugin } = (() => {
         return;
       }
       const node = positioned.node;
-      const { title, values, labels, highlightIdx } = parseChartData(node);
+      const { title, values, frames, labels, highlightIdx, speed } = parseChartData(node);
       const x = positioned.cx - positioned.width / 2;
       const y = positioned.cy - positioned.height / 2;
       const rand = mulberry32(hashString(`chart:${positioned.id}`));
@@ -4849,12 +4934,108 @@ const { chartNodePlugin } = (() => {
         26
       );
 
-      // 4. Bars + Excalidraw-style diagonal hachure on highlighted bar
-      const maxVal = Math.max(1e-3, ...values);
+      // 4. Bars + Excalidraw-style diagonal hachure on highlighted bar (or animated multi-frame bars)
+      const isAnimated = frames.length >= 2 && speed > 0;
+      const allFrameVals = isAnimated ? frames.flat() : values;
+      const maxVal = Math.max(1e-3, ...allFrameVals);
       const slotW = plotW / values.length;
       const barW = Math.min(44, Math.max(18, slotW * 0.58));
       const barColors: ChalkColor[] = ['cyan', 'green', 'yellow', 'orange'];
       const barTopPoints: Point[] = [];
+
+      const evalBarValue = (barIdx: number, elapsedMs: number): number => {
+        if (!isAnimated) return values[barIdx];
+        const cyclePos = Math.max(0, (elapsedMs / 1000) * speed);
+        const fIdx = Math.floor(cyclePos) % frames.length;
+        const nextIdx = (fIdx + 1) % frames.length;
+        const frac = cyclePos - Math.floor(cyclePos);
+        // Hold 25% on each snapshot, then smoothstep transition across the remaining 75%
+        const u = frac < 0.25 ? 0 : (frac - 0.25) / 0.75;
+        const ease = u * u * (3 - 2 * u);
+        const a = frames[fIdx][barIdx];
+        const b = frames[nextIdx][barIdx];
+        return a + (b - a) * ease;
+      };
+
+      const barTopAt = (idx: number, val: number): Point => {
+        const barH = Math.max(10, (val / maxVal) * (plotH - 14));
+        const bx = plotLeft + slotW * (idx + 0.5) - barW / 2;
+        const by = plotBottom - barH;
+        return { x: bx + barW / 2, y: Math.max(plotTop + 4, by - 7) };
+      };
+
+      const buildStaticBarStroke = (
+        idx: number,
+        val: number,
+        barColor: ChalkColor,
+        isHi: boolean
+      ) => {
+        const barH = Math.max(10, (val / maxVal) * (plotH - 14));
+        const bx = plotLeft + slotW * (idx + 0.5) - barW / 2;
+        const by = plotBottom - barH;
+        const barPts = buildRoundedRectPoints(bx, by, barW, barH, 3, rand, 1.5);
+        return buildStrokePath(`${positioned.id}-bar-${idx}`, barPts, {
+          width: isHi ? 2.6 : 2.1,
+          color: barColor,
+          opacity: 0.94,
+          fillOpacity: 1,
+          speedFactor: 1.35,
+        });
+      };
+
+      const buildSmoothBarStroke = (
+        idx: number,
+        val: number,
+        barColor: ChalkColor,
+        isHi: boolean,
+        jitterX: number[],
+        jitterY: number[]
+      ) => {
+        const barH = Math.max(10, (val / maxVal) * (plotH - 14));
+        const bx = plotLeft + slotW * (idx + 0.5) - barW / 2;
+        const by = plotBottom - barH;
+        const r = Math.min(3, barW * 0.25, barH * 0.35);
+        const pts: Point[] = [];
+        const addSeg = (ax: number, ay: number, bx2: number, by2: number, steps: number) => {
+          for (let s = 1; s < steps; s++) {
+            const u = s / steps;
+            pts.push({ x: ax + (bx2 - ax) * u, y: ay + (by2 - ay) * u });
+          }
+        };
+        const addArc = (cx: number, cy: number, startAng: number, endAng: number) => {
+          for (let s = 0; s <= 3; s++) {
+            const a = startAng + ((endAng - startAng) * s) / 3;
+            pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+          }
+        };
+
+        // Fixed point topology regardless of barH prevents subdivision jumps when morphing
+        pts.push({ x: bx + r - 0.8, y: by });
+        addSeg(bx + r, by, bx + barW - r, by, 4);
+        addArc(bx + barW - r, by + r, -Math.PI / 2, 0);
+        addSeg(bx + barW, by + r, bx + barW, by + barH - r, 4);
+        addArc(bx + barW - r, by + barH - r, 0, Math.PI / 2);
+        addSeg(bx + barW - r, by + barH, bx + r, by + barH, 4);
+        addArc(bx + r, by + barH - r, Math.PI / 2, Math.PI);
+        addSeg(bx, by + barH - r, bx, by + r, 4);
+        addArc(bx + r, by + r, Math.PI, Math.PI * 1.5);
+        pts.push({ x: bx + r + 1.5, y: by });
+
+        for (let k = 0; k < pts.length; k++) {
+          pts[k] = {
+            x: pts[k].x + (jitterX[k] ?? 0),
+            y: pts[k].y + (jitterY[k] ?? 0),
+          };
+        }
+
+        return buildStrokePath(`${positioned.id}-bar-${idx}`, pts, {
+          width: isHi ? 2.6 : 2.1,
+          color: barColor,
+          opacity: 0.94,
+          fillOpacity: 1,
+          speedFactor: 1.35,
+        });
+      };
 
       values.forEach((val, idx) => {
         const barH = Math.max(10, (val / maxVal) * (plotH - 14));
@@ -4865,20 +5046,34 @@ const { chartNodePlugin } = (() => {
           ? 'orange'
           : barColors[idx % barColors.length];
 
-        const barPts = buildRoundedRectPoints(bx, by, barW, barH, 3, rand, 1.5);
-        helpers.pushStroke(
-          buildStrokePath(`${positioned.id}-bar-${idx}`, barPts, {
-            width: isHi ? 2.6 : 2.1,
-            color: barColor,
-            opacity: 0.94,
-            fillOpacity: 1,
-            speedFactor: 1.35,
-          }),
-          14
-        );
+        if (isAnimated) {
+          const jRand = mulberry32(hashString(`chart-bar-jitter:${positioned.id}:${idx}`));
+          const jitterX: number[] = [];
+          const jitterY: number[] = [];
+          for (let k = 0; k < 30; k++) {
+            jitterX.push((jRand() - 0.5) * 1.1);
+            jitterY.push((jRand() - 0.5) * 1.1);
+          }
+          helpers.pushStroke(
+            buildSmoothBarStroke(idx, val, barColor, isHi, jitterX, jitterY),
+            14,
+            (elapsedMs) =>
+              buildSmoothBarStroke(
+                idx,
+                evalBarValue(idx, elapsedMs),
+                barColor,
+                isHi,
+                jitterX,
+                jitterY
+              ),
+            { sync: 'node' }
+          );
+        } else {
+          helpers.pushStroke(buildStaticBarStroke(idx, val, barColor, isHi), 14);
+        }
 
-        // Hand-drawn diagonal hachure stripes inside the highlighted bar
-        if (isHi && barH > 16) {
+        // Hand-drawn diagonal hachure stripes inside the highlighted bar (static mode)
+        if (!isAnimated && isHi && barH > 16) {
           const pitch = 9;
           let hatchIdx = 0;
           for (let hy = by + 7; hy < plotBottom - 4; hy += pitch) {
@@ -4907,7 +5102,7 @@ const { chartNodePlugin } = (() => {
           }
         }
 
-        barTopPoints.push({ x: bx + barW / 2, y: Math.max(plotTop + 4, by - 7) });
+        barTopPoints.push(barTopAt(idx, val));
 
         helpers.pushTextLine({
           id: `${positioned.id}-lbl-${idx}`,
@@ -4926,30 +5121,871 @@ const { chartNodePlugin } = (() => {
 
       // 5. Trend curve above bars
       if (barTopPoints.length >= 2) {
-        const trendPts: Point[] = [];
-        for (let i = 1; i < barTopPoints.length; i++) {
-          const seg = sketchSegment(
-            barTopPoints[i - 1],
-            barTopPoints[i],
-            rand,
-            0.9,
-            14
+        if (isAnimated) {
+          const TREND_SEG_STEPS = 6;
+          const trendRand = mulberry32(hashString(`chart-trend:${positioned.id}`));
+          const segJitterX: number[][] = [];
+          const segJitterY: number[][] = [];
+          for (let i = 1; i < values.length; i++) {
+            const jx: number[] = [];
+            const jy: number[] = [];
+            for (let s = 0; s <= TREND_SEG_STEPS; s++) {
+              const env = Math.sin((s / TREND_SEG_STEPS) * Math.PI);
+              jx.push((trendRand() - 0.5) * 1.1 * env);
+              jy.push((trendRand() - 0.5) * 1.3 * env);
+            }
+            segJitterX.push(jx);
+            segJitterY.push(jy);
+          }
+
+          const buildSmoothTrendStroke = (elapsedMs: number) => {
+            const ptsNow = values.map((_, idx) =>
+              barTopAt(idx, evalBarValue(idx, elapsedMs))
+            );
+            const trendPts: Point[] = [ptsNow[0]];
+            for (let i = 1; i < ptsNow.length; i++) {
+              const a = ptsNow[i - 1];
+              const b = ptsNow[i];
+              const jx = segJitterX[i - 1];
+              const jy = segJitterY[i - 1];
+              for (let s = 1; s <= TREND_SEG_STEPS; s++) {
+                const u = s / TREND_SEG_STEPS;
+                trendPts.push({
+                  x: a.x + (b.x - a.x) * u + jx[s],
+                  y: a.y + (b.y - a.y) * u + jy[s],
+                });
+              }
+            }
+            return buildStrokePath(`${positioned.id}-trend`, trendPts, {
+              width: 2.2,
+              color: 'yellow',
+              opacity: 0.9,
+              speedFactor: 1.4,
+            });
+          };
+
+          helpers.pushStroke(
+            buildSmoothTrendStroke(0),
+            24,
+            buildSmoothTrendStroke,
+            { sync: 'node' }
           );
-          trendPts.push(...(i === 1 ? seg : seg.slice(1)));
+        } else {
+          const trendPts: Point[] = [];
+          for (let i = 1; i < barTopPoints.length; i++) {
+            const seg = sketchSegment(
+              barTopPoints[i - 1],
+              barTopPoints[i],
+              rand,
+              0.9,
+              14
+            );
+            trendPts.push(...(i === 1 ? seg : seg.slice(1)));
+          }
+          helpers.pushStroke(
+            buildStrokePath(`${positioned.id}-trend`, trendPts, {
+              width: 2.2,
+              color: 'yellow',
+              opacity: 0.9,
+              speedFactor: 1.4,
+            }),
+            24
+          );
         }
-        helpers.pushStroke(
-          buildStrokePath(`${positioned.id}-trend`, trendPts, {
-            width: 2.2,
-            color: 'yellow',
-            opacity: 0.9,
-            speedFactor: 1.4,
-          }),
-          24
-        );
       }
     },
   };
   return { chartNodePlugin };
+})();
+
+// --- Module: src/sdk/mathExpr.ts ---
+const { compileMathExpr } = (() => {
+  const CONSTANTS: Record<string, number> = {
+    pi: Math.PI,
+    tau: Math.PI * 2,
+    e: Math.E,
+  };
+  const MAX_SUM_ITERATIONS = 64;
+  const MAX_PARSE_DEPTH = 48;
+  const MAX_EVAL_STEPS = 2048;
+  const UNARY_FNS: Record<string, (v: number) => number> = {
+    sin: Math.sin,
+    cos: Math.cos,
+    tan: Math.tan,
+    asin: Math.asin,
+    acos: Math.acos,
+    atan: Math.atan,
+    sinh: Math.sinh,
+    cosh: Math.cosh,
+    tanh: Math.tanh,
+    abs: Math.abs,
+    sqrt: (v) => (v >= 0 ? Math.sqrt(v) : 0),
+    exp: Math.exp,
+    log: (v) => (v > 0 ? Math.log(v) : 0),
+    ln: (v) => (v > 0 ? Math.log(v) : 0),
+    floor: Math.floor,
+    ceil: Math.ceil,
+    round: Math.round,
+    sign: Math.sign,
+    fract: (v) => v - Math.floor(v),
+  };
+  const BINARY_FNS: Record<string, (a: number, b: number) => number> = {
+    pow: Math.pow,
+    min: Math.min,
+    max: Math.max,
+    mod: (a, b) => (b === 0 ? 0 : a - Math.floor(a / b) * b),
+    atan2: Math.atan2,
+    step: (edge, x) => (x < edge ? 0 : 1),
+  };
+  const TERNARY_FNS: Record<string, (a: number, b: number, c: number) => number> = {
+    clamp: (v, lo, hi) => (lo <= hi ? Math.max(lo, Math.min(hi, v)) : Math.max(hi, Math.min(lo, v))),
+    lerp: (a, b, t) => a + (b - a) * t,
+    smoothstep: (edge0, edge1, x) => {
+      if (edge1 === edge0) return x < edge0 ? 0 : 1;
+      const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+      return t * t * (3 - 2 * t);
+    },
+  };
+  function tokenize(source: string): Token[] | null {
+    const tokens: Token[] = [];
+    const len = source.length;
+    let i = 0;
+
+    while (i < len) {
+      const ch = source[i];
+      if (ch <= ' ') {
+        i++;
+        continue;
+      }
+
+      if ((ch >= '0' && ch <= '9') || (ch === '.' && i + 1 < len && source[i + 1] >= '0' && source[i + 1] <= '9')) {
+        const start = i;
+        let hasDot = ch === '.';
+        i++;
+        while (i < len) {
+          const c = source[i];
+          if (c >= '0' && c <= '9') {
+            i++;
+          } else if (c === '.' && !hasDot) {
+            hasDot = true;
+            i++;
+          } else {
+            break;
+          }
+        }
+        if (i < len && (source[i] === 'e' || source[i] === 'E')) {
+          const expPos = i;
+          i++;
+          if (i < len && (source[i] === '+' || source[i] === '-')) {
+            i++;
+          }
+          const digitStart = i;
+          while (i < len && source[i] >= '0' && source[i] <= '9') {
+            i++;
+          }
+          if (i === digitStart) {
+            i = expPos;
+          }
+        }
+        const num = Number.parseFloat(source.slice(start, i));
+        if (!Number.isFinite(num)) return null;
+        tokens.push({ kind: 'number', value: num });
+        continue;
+      }
+
+      if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_') {
+        const start = i;
+        i++;
+        while (i < len) {
+          const c = source[i];
+          if (
+            (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c === '_'
+          ) {
+            i++;
+          } else {
+            break;
+          }
+        }
+        tokens.push({ kind: 'ident', value: source.slice(start, i).toLowerCase() });
+        continue;
+      }
+
+      if (ch === '+' || ch === '-' || ch === '*' || ch === '/' || ch === '%' || ch === '^') {
+        tokens.push({ kind: 'op', value: ch });
+        i++;
+        continue;
+      }
+      if (ch === '(') {
+        tokens.push({ kind: 'lparen' });
+        i++;
+        continue;
+      }
+      if (ch === ')') {
+        tokens.push({ kind: 'rparen' });
+        i++;
+        continue;
+      }
+      if (ch === ',') {
+        tokens.push({ kind: 'comma' });
+        i++;
+        continue;
+      }
+
+      return null;
+    }
+
+    return tokens;
+  }
+  function parseTokens(tokens: Token[]): MathAst | null {
+    let pos = 0;
+    let depth = 0;
+
+    const peek = (): Token | undefined => tokens[pos];
+    const consume = (): Token | undefined => tokens[pos++];
+
+    const parseAddSub = (): MathAst | null => {
+      let left = parseMulDiv();
+      if (!left) return null;
+      while (pos < tokens.length) {
+        const tok = peek();
+        if (tok?.kind === 'op' && (tok.value === '+' || tok.value === '-')) {
+          consume();
+          const right = parseMulDiv();
+          if (!right) return null;
+          left = { kind: 'binary', op: tok.value, left, right };
+        } else {
+          break;
+        }
+      }
+      return left;
+    };
+
+    const parseMulDiv = (): MathAst | null => {
+      let left = parseUnary();
+      if (!left) return null;
+      while (pos < tokens.length) {
+        const tok = peek();
+        if (tok?.kind === 'op' && (tok.value === '*' || tok.value === '/' || tok.value === '%')) {
+          consume();
+          const right = parseUnary();
+          if (!right) return null;
+          left = { kind: 'binary', op: tok.value, left, right };
+        } else {
+          break;
+        }
+      }
+      return left;
+    };
+
+    const parseUnary = (): MathAst | null => {
+      const tok = peek();
+      if (tok?.kind === 'op' && (tok.value === '+' || tok.value === '-')) {
+        if (++depth > MAX_PARSE_DEPTH) return null;
+        consume();
+        const arg = parseUnary();
+        depth--;
+        if (!arg) return null;
+        return { kind: 'unary', op: tok.value, arg };
+      }
+      return parsePower();
+    };
+
+    const parsePower = (): MathAst | null => {
+      const base = parsePrimary();
+      if (!base) return null;
+      const tok = peek();
+      if (tok?.kind === 'op' && tok.value === '^') {
+        if (++depth > MAX_PARSE_DEPTH) return null;
+        consume();
+        const exponent = parseUnary();
+        depth--;
+        if (!exponent) return null;
+        return { kind: 'binary', op: '^', left: base, right: exponent };
+      }
+      return base;
+    };
+
+    const parsePrimary = (): MathAst | null => {
+      const tok = consume();
+      if (!tok) return null;
+
+      if (tok.kind === 'number') {
+        return { kind: 'number', value: tok.value };
+      }
+
+      if (tok.kind === 'lparen') {
+        if (++depth > MAX_PARSE_DEPTH) return null;
+        const inner = parseAddSub();
+        depth--;
+        if (!inner || peek()?.kind !== 'rparen') return null;
+        consume();
+        return inner;
+      }
+
+      if (tok.kind === 'ident') {
+        if (peek()?.kind === 'lparen') {
+          if (++depth > MAX_PARSE_DEPTH) return null;
+          consume();
+          const args: MathAst[] = [];
+          if (peek()?.kind !== 'rparen') {
+            while (true) {
+              const arg = parseAddSub();
+              if (!arg) {
+                depth--;
+                return null;
+              }
+              args.push(arg);
+              if (peek()?.kind === 'comma') {
+                consume();
+              } else {
+                break;
+              }
+            }
+          }
+          depth--;
+          if (peek()?.kind !== 'rparen') return null;
+          consume();
+
+          if (tok.value === 'sum') {
+            if (args.length !== 4 || args[0].kind !== 'var') {
+              return null;
+            }
+            return {
+              kind: 'sum',
+              varName: args[0].name,
+              start: args[1],
+              end: args[2],
+              body: args[3],
+            };
+          }
+
+          if (
+            (args.length === 1 && tok.value in UNARY_FNS) ||
+            (args.length === 2 && tok.value in BINARY_FNS) ||
+            (args.length === 3 && tok.value in TERNARY_FNS)
+          ) {
+            return { kind: 'call', name: tok.value, args };
+          }
+          return null;
+        }
+
+        return { kind: 'var', name: tok.value };
+      }
+
+      return null;
+    };
+
+    const ast = parseAddSub();
+    if (!ast || pos !== tokens.length) return null;
+    return ast;
+  }
+  function evalAst(node: MathAst, env: Record<string, number>, budget: EvalBudget): number {
+    if (++budget.steps > MAX_EVAL_STEPS) {
+      return 0;
+    }
+    let out = 0;
+    switch (node.kind) {
+      case 'number':
+        out = node.value;
+        break;
+      case 'var':
+        out = Object.prototype.hasOwnProperty.call(env, node.name)
+          ? env[node.name]
+          : node.name in CONSTANTS
+          ? CONSTANTS[node.name]
+          : 0;
+        break;
+      case 'unary': {
+        const val = evalAst(node.arg, env, budget);
+        out = node.op === '-' ? -val : val;
+        break;
+      }
+      case 'binary': {
+        const l = evalAst(node.left, env, budget);
+        const r = evalAst(node.right, env, budget);
+        if (node.op === '+') out = l + r;
+        else if (node.op === '-') out = l - r;
+        else if (node.op === '*') out = l * r;
+        else if (node.op === '/') out = r === 0 ? 0 : l / r;
+        else if (node.op === '%') out = r === 0 ? 0 : l % r;
+        else out = Math.pow(l, r);
+        break;
+      }
+      case 'call': {
+        if (node.args.length === 1) {
+          const fn = UNARY_FNS[node.name];
+          out = fn ? fn(evalAst(node.args[0], env, budget)) : 0;
+        } else if (node.args.length === 2) {
+          const fn = BINARY_FNS[node.name];
+          out = fn
+            ? fn(evalAst(node.args[0], env, budget), evalAst(node.args[1], env, budget))
+            : 0;
+        } else if (node.args.length === 3) {
+          const fn = TERNARY_FNS[node.name];
+          out = fn
+            ? fn(
+                evalAst(node.args[0], env, budget),
+                evalAst(node.args[1], env, budget),
+                evalAst(node.args[2], env, budget)
+              )
+            : 0;
+        }
+        break;
+      }
+      case 'sum': {
+        const startVal = Math.round(evalAst(node.start, env, budget));
+        const endVal = Math.round(evalAst(node.end, env, budget));
+        if (!Number.isFinite(startVal) || !Number.isFinite(endVal) || endVal < startVal) {
+          return 0;
+        }
+        const count = Math.min(MAX_SUM_ITERATIONS, endVal - startVal + 1);
+        const hadPrev = Object.prototype.hasOwnProperty.call(env, node.varName);
+        const prevVal = env[node.varName];
+        let total = 0;
+        for (let i = 0; i < count; i++) {
+          if (budget.steps >= MAX_EVAL_STEPS) break;
+          env[node.varName] = startVal + i;
+          const term = evalAst(node.body, env, budget);
+          if (Number.isFinite(term)) {
+            total += term;
+          }
+        }
+        if (hadPrev) {
+          env[node.varName] = prevVal;
+        } else {
+          delete env[node.varName];
+        }
+        out = total;
+        break;
+      }
+    }
+    return Number.isFinite(out) ? out : 0;
+  }
+  /**
+   * Compile a math expression string into a safe evaluator.
+   * Returns null when the expression is empty or invalid.
+   */
+  function compileMathExpr(source: string): CompiledMathExpr | null {
+    const trimmed = source.trim();
+    if (!trimmed) return null;
+    const tokens = tokenize(trimmed);
+    if (!tokens || tokens.length === 0) return null;
+    const ast = parseTokens(tokens);
+    if (!ast) return null;
+
+    return {
+      source: trimmed,
+      evaluate(vars: Record<string, number>): number {
+        const env: Record<string, number> = {};
+        for (const [k, v] of Object.entries(vars)) {
+          if (Number.isFinite(v)) {
+            env[k.toLowerCase()] = v;
+          }
+        }
+        return evalAst(ast, env, { steps: 0 });
+      },
+    };
+  }
+  return { compileMathExpr };
+})();
+
+// --- Module: src/plugins/nodes/waveNodePlugin.ts ---
+const { waveNodePlugin } = (() => {
+  const WAVE_TYPES = ['sine', 'square', 'fourier', 'audio', 'ecg'] as const;
+  const waveProps = defineProps({
+    title: prop.string({ default: 'Waveform', description: 'Waveform plot title' }),
+    type: prop.enum(WAVE_TYPES, {
+      default: 'sine',
+      aliases: ['preset', 'mode'],
+      description: 'Preset wave generator (sine, square, fourier, audio, ecg)',
+    }),
+    fn: prop.string({
+      default: '',
+      aliases: ['expr', 'formula'],
+      description: 'Math formula f(x, t), e.g. "sum(k, 1, 5, sin((2*k-1)*(x - 2*t)) / (2*k-1))"',
+    }),
+    values: prop.string({
+      default: '',
+      aliases: ['data', 'series'],
+      description: 'Comma-separated data points for scrolling real-data waveform',
+    }),
+    domain: prop.string({
+      default: '0..6.283',
+      description: 'Domain range "min..max" for x when fn is specified',
+    }),
+    yrange: prop.string({
+      default: '',
+      description: 'Optional fixed vertical range "min..max"',
+    }),
+    freq: prop.number({
+      default: 2,
+      min: 0.25,
+      max: 12,
+      step: 0.25,
+      description: 'Preset wave spatial cycles across plot width',
+    }),
+    amp: prop.number({
+      default: 0.8,
+      min: 0.1,
+      max: 1.0,
+      step: 0.05,
+      description: 'Preset amplitude ratio relative to half plot height',
+    }),
+    harmonics: prop.number({
+      default: 4,
+      min: 1,
+      max: 12,
+      step: 1,
+      description: 'Harmonic count for preset fourier square-wave approximation',
+    }),
+    speed: prop.number({
+      default: 1.0,
+      min: 0,
+      max: 6,
+      step: 0.1,
+      description: 'Post-draw animation speed multiplier (0 = static)',
+    }),
+    samples: prop.number({
+      default: 56,
+      min: 16,
+      max: 120,
+      step: 4,
+      description: 'Horizontal curve sample count',
+    }),
+    width: prop.number({ min: 200, step: 10, aliases: ['w'] }),
+    height: prop.number({ min: 140, step: 10, aliases: ['h'] }),
+  });
+  function parseRangePair(raw: string | undefined): [number, number] | null {
+    if (!raw) return null;
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const parts = trimmed.includes('..') ? trimmed.split('..') : trimmed.split(',');
+    if (parts.length !== 2) return null;
+    const lo = Number.parseFloat(parts[0].trim());
+    const hi = Number.parseFloat(parts[1].trim());
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {
+      return null;
+    }
+    return [lo, hi];
+  }
+  function parseValuesList(raw: string | undefined): number[] {
+    if (!raw) return [];
+    return raw
+      .split(',')
+      .map((s) => Number.parseFloat(s.trim()))
+      .filter((n) => Number.isFinite(n));
+  }
+  function parseWaveConfig(node: CustomSceneNode) {
+    const resolved = waveProps.resolve(node.props);
+    const title = resolved.title.trim() || node.name || 'Waveform';
+    const presetType = (resolved.type ?? 'sine') as WavePresetType;
+    const fnSource = (waveProps.readField(node.props, 'fn') ?? '').trim();
+    const compiledFn = fnSource ? compileMathExpr(fnSource) : null;
+    const dataValues = parseValuesList(waveProps.readField(node.props, 'values'));
+    const domainRange = parseRangePair(resolved.domain) ?? [0, Math.PI * 2];
+    const explicitYRange = parseRangePair(waveProps.readField(node.props, 'yrange'));
+
+    return {
+      title,
+      presetType,
+      compiledFn,
+      dataValues,
+      domainRange,
+      explicitYRange,
+      freq: resolved.freq,
+      amp: resolved.amp,
+      harmonics: Math.max(1, Math.round(resolved.harmonics)),
+      speed: resolved.speed,
+      samples: Math.max(16, Math.round(resolved.samples)),
+    };
+  }
+  function evalPresetWave(
+    type: WavePresetType,
+    u: number,
+    phase: number,
+    freq: number,
+    harmonics: number
+  ): number {
+    const baseArg = u * freq * Math.PI * 2 - phase;
+    switch (type) {
+      case 'square':
+        return Math.tanh(6 * Math.sin(baseArg));
+      case 'fourier': {
+        let sum = 0;
+        for (let k = 1; k <= harmonics; k++) {
+          const n = 2 * k - 1;
+          sum += Math.sin(n * baseArg) / n;
+        }
+        return sum * (4 / Math.PI) * 0.78;
+      }
+      case 'audio': {
+        const carrier =
+          0.52 * Math.sin(u * freq * Math.PI * 4 - phase * 1.35) +
+          0.33 * Math.sin(u * freq * Math.PI * 7.4 + phase * 0.9) +
+          0.24 * Math.cos(u * freq * Math.PI * 2.2 - phase * 2.1);
+        const envelope = 0.25 + 0.75 * Math.sin(u * Math.PI);
+        return carrier * envelope;
+      }
+      case 'ecg': {
+        const cyc = ((u * freq - phase / (Math.PI * 2)) % 1 + 1) % 1;
+        const pWave = 0.16 * Math.exp(-Math.pow((cyc - 0.18) / 0.045, 2));
+        const qDip = -0.22 * Math.exp(-Math.pow((cyc - 0.36) / 0.016, 2));
+        const rPeak = 0.98 * Math.exp(-Math.pow((cyc - 0.40) / 0.018, 2));
+        const sDip = -0.32 * Math.exp(-Math.pow((cyc - 0.44) / 0.017, 2));
+        const tWave = 0.28 * Math.exp(-Math.pow((cyc - 0.68) / 0.065, 2));
+        return pWave + qDip + rPeak + sDip + tWave - 0.1;
+      }
+      case 'sine':
+      default:
+        return Math.sin(baseArg);
+    }
+  }
+  const waveNodePlugin: SceneNodePlugin = {
+    id: 'wave',
+    name: 'Dynamic Wave',
+    defaultName: 'Waveform',
+    defaultColor: 'cyan',
+    defaultProps: waveProps.defaults,
+    snippet:
+      '[node:wave] Fourier {color: cyan, title: "Fourier Series", fn: "sum(k, 1, 5, sin((2*k-1)*(x - 2*t)) / (2*k-1))"}',
+    propFields: waveProps.fields,
+    measure(node, ctx) {
+      const explicitW = waveProps.readField(node.props, 'width');
+      const explicitH = waveProps.readField(node.props, 'height');
+      let width = 320;
+      if (explicitW !== undefined) {
+        width = explicitW;
+      } else {
+        const { title } = parseWaveConfig(node);
+        const titleW = ctx.measureText(title, `700 15px ${ctx.fontFamily}`);
+        width = Math.max(320, Math.min(560, Math.ceil(titleW + 64)));
+      }
+      const height = explicitH ?? 196;
+      return { width, height };
+    },
+    clipRay(positioned, toward, extraMargin) {
+      return clipRayToRect(
+        positioned.cx,
+        positioned.cy,
+        positioned.width,
+        positioned.height,
+        toward,
+        extraMargin
+      );
+    },
+    compile(positioned, helpers) {
+      if (!isCustomSceneNode(positioned.node)) {
+        return;
+      }
+      const node = positioned.node;
+      const cfg = parseWaveConfig(node);
+      const x = positioned.cx - positioned.width / 2;
+      const y = positioned.cy - positioned.height / 2;
+      const rand = mulberry32(hashString(`wave:${positioned.id}`));
+
+      // 1. Card backdrop
+      const framePts = buildRoundedRectPoints(
+        x,
+        y,
+        positioned.width,
+        positioned.height,
+        14,
+        rand,
+        3
+      );
+      helpers.pushStroke(
+        buildStrokePath(`${positioned.id}-card`, framePts, {
+          width: 2.4,
+          color: node.color,
+          opacity: 0.9,
+          fillOpacity: 1,
+          surfaceShadow: true,
+          speedFactor: 1.25,
+        }),
+        35
+      );
+
+      // 2. Title
+      helpers.pushTextLine({
+        id: `${positioned.id}-title`,
+        text: cfg.title,
+        boxLeftX: x + 16,
+        boxWidth: positioned.width - 32,
+        centerY: y + 22,
+        align: 'center',
+        fontSize: 15,
+        fontWeight: 700,
+        color: node.color,
+        msPerChar: 55,
+        gapAfterMs: 28,
+      });
+
+      // 3. Plot area & Y-range calibration
+      const plotLeft = x + 26;
+      const plotRight = x + positioned.width - 22;
+      const plotTop = y + 48;
+      const plotBottom = y + positioned.height - 24;
+      const plotW = Math.max(80, plotRight - plotLeft);
+      const plotH = Math.max(50, plotBottom - plotTop);
+
+      let yMin = -1.1;
+      let yMax = 1.1;
+      const useFormula = cfg.compiledFn !== null;
+      const useData = !useFormula && cfg.dataValues.length >= 2;
+
+      if (cfg.explicitYRange) {
+        [yMin, yMax] = cfg.explicitYRange;
+      } else if (useFormula && cfg.compiledFn) {
+        let minProbe = Infinity;
+        let maxProbe = -Infinity;
+        const [dMin, dMax] = cfg.domainRange;
+        for (const tProbe of [0, 0.5, 1.0, 2.0, 3.5, 5.0]) {
+          for (let i = 0; i <= 24; i++) {
+            const xVal = dMin + ((dMax - dMin) * i) / 24;
+            const v = cfg.compiledFn.evaluate({ x: xVal, t: tProbe });
+            if (v < minProbe) minProbe = v;
+            if (v > maxProbe) maxProbe = v;
+          }
+        }
+        if (!Number.isFinite(minProbe) || !Number.isFinite(maxProbe)) {
+          minProbe = -1;
+          maxProbe = 1;
+        }
+        if (Math.abs(maxProbe - minProbe) < 1e-4) {
+          yMin = minProbe - 1;
+          yMax = maxProbe + 1;
+        } else if (minProbe < 0 && maxProbe > 0) {
+          const absMax = Math.max(Math.abs(minProbe), Math.abs(maxProbe)) * 1.12;
+          yMin = -absMax;
+          yMax = absMax;
+        } else {
+          const pad = (maxProbe - minProbe) * 0.14;
+          yMin = minProbe - pad;
+          yMax = maxProbe + pad;
+        }
+      } else if (useData) {
+        const minD = Math.min(...cfg.dataValues);
+        const maxD = Math.max(...cfg.dataValues);
+        if (Math.abs(maxD - minD) < 1e-4) {
+          yMin = minD - 1;
+          yMax = maxD + 1;
+        } else {
+          const pad = (maxD - minD) * 0.16;
+          yMin = minD - pad;
+          yMax = maxD + pad;
+        }
+      }
+
+      const mapValueToY = (val: number): number => {
+        const norm = (val - yMin) / Math.max(1e-6, yMax - yMin);
+        const rawY = plotBottom - norm * plotH;
+        return Math.max(plotTop + 2, Math.min(plotBottom - 2, rawY));
+      };
+
+      const baselineVal = yMin <= 0 && yMax >= 0 ? 0 : (yMin + yMax) / 2;
+      const baseY = mapValueToY(baselineVal);
+
+      // Y-axis + dashed baseline
+      helpers.pushStroke(
+        buildStrokePath(
+          `${positioned.id}-y-axis`,
+          sketchSegment(
+            { x: plotLeft, y: plotBottom },
+            { x: plotLeft, y: plotTop },
+            rand,
+            0.75,
+            12
+          ),
+          {
+            width: 1.9,
+            color: 'white',
+            opacity: 0.72,
+            speedFactor: 1.5,
+          }
+        ),
+        14
+      );
+      helpers.pushStroke(
+        buildStrokePath(
+          `${positioned.id}-baseline`,
+          sketchSegment(
+            { x: plotLeft, y: baseY },
+            { x: plotRight, y: baseY },
+            rand,
+            0.55,
+            14
+          ),
+          {
+            width: 1.4,
+            color: 'white',
+            opacity: 0.36,
+            dashed: true,
+            speedFactor: 1.7,
+          }
+        ),
+        20
+      );
+
+      // 4. Precompute deterministic per-sample micro-jitter (zero frame-to-frame flicker)
+      const sampleCount = cfg.samples;
+      const jitterRand = mulberry32(hashString(`wave-jitter:${positioned.id}`));
+      const jitterX: number[] = [];
+      const jitterY: number[] = [];
+      for (let i = 0; i <= sampleCount; i++) {
+        jitterX.push((jitterRand() - 0.5) * 1.1);
+        jitterY.push((jitterRand() - 0.5) * 1.2);
+      }
+
+      const buildWaveStroke = (elapsedMs: number) => {
+        const tSec = Math.max(0, elapsedMs / 1000) * cfg.speed;
+        const pts: Point[] = [];
+        const [dMin, dMax] = cfg.domainRange;
+        const dataLen = cfg.dataValues.length;
+        const phase = tSec * Math.PI * 1.6;
+
+        for (let i = 0; i <= sampleCount; i++) {
+          const u = i / sampleCount;
+          let val = 0;
+
+          if (useFormula && cfg.compiledFn) {
+            const xVal = dMin + (dMax - dMin) * u;
+            val = cfg.compiledFn.evaluate({ x: xVal, t: tSec });
+          } else if (useData) {
+            const shift = tSec * 1.4;
+            const idxPos = u * (dataLen - 1) + shift;
+            const i0 = ((Math.floor(idxPos) % dataLen) + dataLen) % dataLen;
+            const i1 = (i0 + 1) % dataLen;
+            const frac = idxPos - Math.floor(idxPos);
+            const smoothFrac = (1 - Math.cos(frac * Math.PI)) * 0.5;
+            val = cfg.dataValues[i0] + (cfg.dataValues[i1] - cfg.dataValues[i0]) * smoothFrac;
+          } else {
+            val = evalPresetWave(cfg.presetType, u, phase, cfg.freq, cfg.harmonics) * cfg.amp;
+          }
+
+          const px = plotLeft + 2 + u * (plotW - 4) + jitterX[i];
+          const py = mapValueToY(val) + jitterY[i];
+          pts.push({ x: px, y: py });
+        }
+
+        return buildStrokePath(`${positioned.id}-wave`, pts, {
+          width: 2.8,
+          color: node.color,
+          opacity: 0.96,
+          speedFactor: 1.15,
+        });
+      };
+
+      helpers.pushStroke(
+        buildWaveStroke(0),
+        28,
+        cfg.speed > 0 ? buildWaveStroke : undefined
+      );
+    },
+  };
+  return { waveNodePlugin };
 })();
 
 // --- Module: src/plugins/nodes/annotateNodePlugin.ts ---
@@ -15045,6 +16081,7 @@ const { initNodeCanvasRuntime, nodeMp4ExporterPlugin } = (() => {
     sceneNodeRegistry.register(sketchNodePlugin, { override: true });
     sceneNodeRegistry.register(codeNodePlugin, { override: true });
     sceneNodeRegistry.register(chartNodePlugin, { override: true });
+    sceneNodeRegistry.register(waveNodePlugin, { override: true });
     sceneNodeRegistry.register(annotateNodePlugin, { override: true });
 
     // Register layouts
@@ -17041,8 +18078,14 @@ const { compileTimeline } = (() => {
       const items: CompiledItem[] = [];
       const stepRects: Rect[] = [];
       let currentNodeId: string | undefined;
+      let activeNodeSyncItems: CompiledStrokeItem[] | null = null;
 
-      const pushStroke = (stroke: StrokePath, gapAfterMs = pacing.innerGapMs) => {
+      const pushStroke = (
+        stroke: StrokePath,
+        gapAfterMs = pacing.innerGapMs,
+        animate?: (elapsedMs: number) => StrokePath,
+        animateOptions?: { sync?: 'item' | 'node' }
+      ) => {
         const dur = strokeDurationMs(stroke);
         const cumTime = buildStrokeCornerTimeTable(stroke, pacing.cornerSlowdown);
         const item: CompiledStrokeItem = {
@@ -17052,12 +18095,16 @@ const { compileTimeline } = (() => {
           endMs: itemCursor + dur,
           color: stroke.color,
           stroke,
+          ...(animate ? { animate } : {}),
           ...(cumTime ? { cumTime } : {}),
           startPoint: samplePointAlongStroke(stroke, 0),
           endPoint: samplePointAlongStroke(stroke, 1),
           stepIndex,
           nodeId: currentNodeId,
         };
+        if (animate && animateOptions?.sync === 'node' && activeNodeSyncItems) {
+          activeNodeSyncItems.push(item);
+        }
         items.push(item);
         allItems.push(item);
         itemCursor = item.endMs + gapAfterMs;
@@ -17251,41 +18298,60 @@ const { compileTimeline } = (() => {
             if (plugin?.compile) {
               let customTextSeq = 0;
               const nodeColor = curr.node.color;
-              plugin.compile(curr, {
-                theme: scene.theme,
-                fontFamily: boardFontFamily,
-                pushStroke,
-                pushTextLine: (input) => {
-                  const fontSize = input.fontSize ?? 18;
-                  const weight = input.fontWeight ?? 400;
-                  const lineFontFamily = input.fontFamily ?? boardFontFamily;
-                  const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
-                  const tItem = compileTextLineItem(
-                    input.id ?? `${curr.id}-text-${customTextSeq++}`,
-                    input.text,
-                    input.boxLeftX,
-                    input.boxWidth,
-                    input.centerY,
-                    input.align ?? 'center',
-                    input.indentPx ?? 0,
-                    lineFont,
-                    fontSize,
-                    input.color ?? nodeColor,
-                    scene.theme,
-                    itemCursor,
-                    input.msPerChar ?? (fontSize >= 20 ? 122 : 88),
-                    { lastCharSlowdown: pacing.lastCharSlowdown }
-                  );
-                  tItem.stepIndex = stepIndex;
-                  tItem.nodeId = curr.id;
-                  items.push(tItem);
-                  allItems.push(tItem);
-                  const defaultLineGap = isMonospaceFont(lineFontFamily)
-                    ? pacing.codeLineGapMs
-                    : pacing.innerGapMs;
-                  itemCursor = tItem.endMs + (input.gapAfterMs ?? defaultLineGap);
-                },
-              });
+              const prevSyncItems = activeNodeSyncItems;
+              const nodeSyncItems: CompiledStrokeItem[] = [];
+              const startItemLen = items.length;
+              activeNodeSyncItems = nodeSyncItems;
+              try {
+                plugin.compile(curr, {
+                  theme: scene.theme,
+                  fontFamily: boardFontFamily,
+                  pushStroke,
+                  pushTextLine: (input) => {
+                    const fontSize = input.fontSize ?? 18;
+                    const weight = input.fontWeight ?? 400;
+                    const lineFontFamily = input.fontFamily ?? boardFontFamily;
+                    const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
+                    const tItem = compileTextLineItem(
+                      input.id ?? `${curr.id}-text-${customTextSeq++}`,
+                      input.text,
+                      input.boxLeftX,
+                      input.boxWidth,
+                      input.centerY,
+                      input.align ?? 'center',
+                      input.indentPx ?? 0,
+                      lineFont,
+                      fontSize,
+                      input.color ?? nodeColor,
+                      scene.theme,
+                      itemCursor,
+                      input.msPerChar ?? (fontSize >= 20 ? 122 : 88),
+                      { lastCharSlowdown: pacing.lastCharSlowdown }
+                    );
+                    tItem.stepIndex = stepIndex;
+                    tItem.nodeId = curr.id;
+                    items.push(tItem);
+                    allItems.push(tItem);
+                    const defaultLineGap = isMonospaceFont(lineFontFamily)
+                      ? pacing.codeLineGapMs
+                      : pacing.innerGapMs;
+                    itemCursor = tItem.endMs + (input.gapAfterMs ?? defaultLineGap);
+                  },
+                });
+              } finally {
+                activeNodeSyncItems = prevSyncItems;
+                if (nodeSyncItems.length > 0) {
+                  let nodeEndMs = 0;
+                  for (let k = startItemLen; k < items.length; k++) {
+                    if (items[k].endMs > nodeEndMs) {
+                      nodeEndMs = items[k].endMs;
+                    }
+                  }
+                  for (const syncItem of nodeSyncItems) {
+                    syncItem.animateStartMs = nodeEndMs;
+                  }
+                }
+              }
               return;
             }
             for (const child of curr.children ?? []) {
@@ -18977,15 +20043,20 @@ const { worldToScreen, getActiveCamera, renderSceneFrame } = (() => {
       if (item.kind !== 'stroke') continue;
       const p = evalState.itemProgress.get(item.id) ?? 0;
       if (p <= 0) continue;
+      const animStart = item.animateStartMs ?? item.endMs;
+      const activeStroke =
+        item.animate && p >= 0.999 && evalState.tMs > animStart
+          ? item.animate(evalState.tMs - animStart)
+          : item.stroke;
       const itemAlpha = evalState.itemOpacity?.get(item.id) ?? 1;
       const strokeToDraw =
         itemAlpha < 0.999
-          ? { ...item.stroke, opacity: item.stroke.opacity * itemAlpha }
-          : item.stroke;
-      const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
+          ? { ...activeStroke, opacity: activeStroke.opacity * itemAlpha }
+          : activeStroke;
+      const fillHex = palette.colors[activeStroke.color] ?? palette.colors.white;
       drawStrokeInteriorFill(
         ctx,
-        item.stroke,
+        activeStroke,
         fillHex,
         p,
         cardFillOpacity,
@@ -19344,13 +20415,18 @@ const { evaluateSceneFrameSnapshot, evaluateProjectFrameSnapshot, renderSceneFra
           stroke: item.stroke,
         });
       } else if (item.kind === 'stroke') {
+        const animStart = item.animateStartMs ?? item.endMs;
+        const activeStroke =
+          item.animate && p >= 0.999 && evalState.tMs > animStart
+            ? item.animate(evalState.tMs - animStart)
+            : item.stroke;
         strokes.push({
           id: item.id,
-          color: item.color,
-          colorHex: resolveColorHex(scene.theme, item.color),
+          color: activeStroke.color,
+          colorHex: resolveColorHex(scene.theme, activeStroke.color),
           progress: p,
           ...opacityProp,
-          stroke: item.stroke,
+          stroke: activeStroke,
         });
       } else if (item.kind === 'text-line') {
         const spans: EvaluatedGlyphSnapshot[] = [];

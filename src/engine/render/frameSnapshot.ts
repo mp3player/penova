@@ -239,13 +239,18 @@ export function evaluateSceneFrameSnapshot(
         stroke: item.stroke,
       });
     } else if (item.kind === 'stroke') {
+      const animStart = item.animateStartMs ?? item.endMs;
+      const activeStroke =
+        item.animate && p >= 0.999 && evalState.tMs > animStart
+          ? item.animate(evalState.tMs - animStart)
+          : item.stroke;
       strokes.push({
         id: item.id,
-        color: item.color,
-        colorHex: resolveColorHex(scene.theme, item.color),
+        color: activeStroke.color,
+        colorHex: resolveColorHex(scene.theme, activeStroke.color),
         progress: p,
         ...opacityProp,
-        stroke: item.stroke,
+        stroke: activeStroke,
       });
     } else if (item.kind === 'text-line') {
       const spans: EvaluatedGlyphSnapshot[] = [];

@@ -31,10 +31,11 @@ Penova 采用 **两层分离** 的编译器架构：
 
 ### 0. 自定义节点插件 (`SceneNodePlugin` / `sceneNodeRegistry`)
 
-无需修改核心布局器或时间轴编译器，即可按两级模式扩展全新 `SceneNode` 类型（内置提供 [src/plugins/nodes/](../src/plugins/nodes/) 下的 `icon`、`sketch`、`code`、`chart`）：
+无需修改核心布局器或时间轴编译器，即可按两级模式扩展全新 `SceneNode` 类型（内置提供 [src/plugins/nodes/](../src/plugins/nodes/) 下的 `icon`、`sketch`、`code`、`chart`、`wave`、`annotate`）：
 
 - **组合模式 (`compose(node) => SceneNode`)**：用现有 `group` / `text` / `shape` 拼装出复合结构，引擎自动完成测量、连线裁剪与逐笔书写动画；
 - **原语模式 (`measure(node, ctx)` + `compile(positioned, helpers)`)**：自主计算包围盒并通过 `helpers.pushStroke` / `helpers.pushTextLine` 输出自定义粉笔笔画与文字行；
+- **画后连续动态笔画契约**：`helpers.pushStroke(stroke, gapAfterMs?, animate?, { sync?: 'item' | 'node' })` 支持传入纯时间函数 `(elapsedMs) => StrokePath`，在 Canvas 实时渲染（`sceneRenderer.ts`）与无头 SVG（`frameSnapshot.ts`）双路径上于绘制结束后连续求值；传入 `{ sync: 'node' }` 时会将节点内所有动态笔画统一对齐到整节点绘制结束时刻 `animateStartMs` 同步运动（如多帧 `[node:chart]` 柱子与趋势折线）；
 - **纯数据属性元数据 (`propFields`)**：通过 [src/sdk/propSchema.ts](../src/sdk/propSchema.ts) 的 `defineProps(...)` 声明，既不在核心引擎层引入任何 UI 词汇，又能自动驱动工作室表单、双向不可变更新及 `generateScriptSpec()` 中的 `[node:<id>] props:` 规范输出。
 
 ```ts
@@ -348,6 +349,15 @@ studioNodeUiRegistry.register({
 
 - **[src/sdk/sketchPipeline.ts](../src/sdk/sketchPipeline.ts)**：SVG 路径与位图简笔画矢量化管线，内置 20 枚常用图标；支持 `registerSketchIcon` 动态扩展，并通过 `subscribeSketchIcons` / `listSketchIcons` 向工作室选择器提供响应式图标订阅。
 - **[src/sdk/workflowDag.ts](../src/sdk/workflowDag.ts)**：面向自定义图谱与流水线布局插件的递归可组合 DAG 排版内核。
+- **[src/sdk/mathExpr.ts](../src/sdk/mathExpr.ts)**：零 `eval` 安全数学表达式递归下降解析与求值器（`compileMathExpr`），支持 `x`/`t` 变量、三角与限幅函数及带嵌套深度/步数预算保护的 `sum(k, start, end, expr)` 级数展开，驱动 `[node:wave]` 等公式动画节点。
 - **零位移覆盖标注插件（`SceneNodePlugin.isOverlay`）**：声明 `isOverlay: true` 的节点插件（如内置 `[node:annotate]`）不参与 DAG / 树 / 栏位排版计算，而是在 `computeDiagramLayout` 阶段按 `target` 节点包围盒原地叠绘，并在开启 `spotlight: true` 时与其目标节点同步保持高亮。
 - **聚光灯聚焦变暗（`LessonScene.spotlight`）**：场景元数据开启 `spotlight: true` 后，引擎在逐步讲解过程中会将非当前焦点步骤元素平滑变暗（`0.26` 基底透明度、`260ms` 过渡），并在片尾收束阶段统一恢复全亮，同时作用于 Canvas 实时渲染与无头 SVG 导出。
 - **原生 Mermaid 导入（`src/plugins/codecs/mermaidCodec.ts`）**：通过 `mermaidScriptCodec` 与 `parseScriptToScene` 自动识别，可直接解析 `flowchart` / `graph`、`subgraph` 区块、多形状节点以及虚线/标签/链式边并编译为标准场景图。
+
+---
+
+## 六、后续架构演进路径
+
+- **动态文字层支持 (`CompiledTextLineItem`)**：当前动态钩子聚焦在笔画层（`CompiledStrokeItem`），文字写完后保持静态。后续如需支持“柱状图实时数字跳动”或“傅里叶阶数 `N = 1 -> 5` 动态标注”，可沿相同纯时间求值思路向 `CompiledTextLineItem` 扩展轻量响应式文字钩子。
+- **单节点场景停留与通用微动效**：后续可补充场景级画后停留控制，并沉淀可组合的通用轻动效修饰（悬浮呼吸、脉冲、流动虚线箭头）。
+- **检查器模式条件显隐**：借助 `defineProps` 的 `when(values)` 谓词为 `[node:wave]` 不同输入模式（公式 / 数据 / 预设）自动折叠无关参数，并在脚本面板补充快捷片段按钮。

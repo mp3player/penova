@@ -26,16 +26,16 @@
 
 - **通用 `SceneNode` 组合节点树 IR**：统一抽象 `text`、`shape`、`connector`、`group` 与可扩展 `custom` 节点，支持流程图、思维导图、概念图谱、视觉微件、手写信纸文稿与自由画布等多种形态。
 - **九大无头可插拔扩展注册表 (9-Registry Headless Plugin System)**：
-  - **自定义视觉节点 (`SceneNodePlugin`)**：内置 `icon`、`sketch`、`code`、`chart` 四大视觉组件与卡片 `icon:` 属性；通过纯数据声明 `defineProps`（[src/sdk/propSchema.ts](src/sdk/propSchema.ts)）实现工作室双向绑定与 `--spec` 规范自动生成。
+  - **自定义视觉节点 (`SceneNodePlugin`)**：内置 `icon`、`sketch`、`code`、`chart`、`wave`、`annotate` 六大视觉组件与卡片 `icon:` 属性；通过纯数据声明 `defineProps`（[src/sdk/propSchema.ts](src/sdk/propSchema.ts)）实现工作室双向绑定与 `--spec` 规范自动生成；其中 `[node:wave]`（公式 / 实测数据 / 预设波形）与多帧 `[node:chart]`（`frames:`）支持**先手绘、画完自动连续运动**。
   - **外形插件 (`ShapePlugin`)**：`rounded`（圆角框）、`circle`（椭圆圈）、`cloud`（云朵框）、`underline`（双下划线）、`diamond`（菱形判断）、`divider`（手绘分割线）。
   - **布局插件 (`LayoutPlugin`)**：`flow-horizontal`（横向流程）、`flow-vertical`（纵向流程）、`mindmap`（思维导图）、`concept-graph`（概念图谱）、`document`（信纸文稿）、`freeform`（自由画布），在图谱布局中集成**避障连线路由** (`routeObstacleAwareConnector`)，并配套可逆文本编解码器 (`graphScriptCodec` / `documentScriptCodec`)。
   - **表现形式 (`PresentationPlugin`)**：`chalkboard`（黑板粉笔）、`whiteboard`（白板马克笔）、`blueprint`（蓝图线稿）、`letter-paper`（信纸钢笔）。
-  - **字形笔画源 (`GlyphProviderPlugin`)**：`stroke-order-dict` 笔顺库（涵盖拉丁字母、数字与基础汉字，支持 `registerStrokeOrderGlyphs` 动态注入） + `ink-grid-fallback` 任意 Unicode 字符墨迹网格追踪兜底。
+  - **字形笔画源 (`GlyphProviderPlugin`)**：`cjk-stroke-order`（9,500+ 汉字标准笔顺库，支持自定义字体 Voronoi 笔画切分与矢量楷书笔顺）、`stroke-order-dict` 笔顺库（涵盖拉丁字母、数字与基础汉字，支持 `registerStrokeOrderGlyphs` 动态注入） + `ink-grid-fallback` 任意 Unicode 字符墨迹网格追踪兜底。
   - **执笔手势 (`HandPlugin`)**：`hand-chalk`（手握画笔）、`hand-minimal`（极简线稿手）、`tip-only`（仅笔杆）、`hidden`（隐藏），支持 `createImageHandPlugin` 快速接入实拍手图 PNG。
   - **运镜策略 (`CameraPlugin`)**：`auto-follow`（智能聚焦）、`progressive-fit`（渐进全景）、`static-overview`（固定全景）、`pen-follow`（跟写滚屏）。
   - **多幕转场 (`TransitionPlugin`)**：`chalkboard-eraser`（黑板擦擦除）、`page-turn`（翻页滑切）、`crossfade`（柔和淡化）、`cut`（直接硬切）。
-  - **成品导出 (`ExportPlugin`)**：按 `category`（`'snapshot' | 'sequence'`）分组——零后端导出 **1080P 视频**（`mediarecorder-video`）、**高清 PNG 海报**（`poster-png`）、**离线 FFmpeg PNG 帧包**（`png-sequence-tar`），以及零 Canvas 依赖的矢量 **HD SVG**（`poster-svg`）与 **SVG 帧序列包 `.tar`**（`svg-sequence-tar`），并提供 `createHttpBridgeExportPlugin` 对接本地/云端合成服务。
-- **SDK 扩展原语 (`src/sdk/`)**：提供递归可组合 DAG 内核（`workflowDag.ts`）、支持 20 个内置图标的 SVG/位图简笔画矢量化管线（`sketchPipeline.ts`）以及零依赖 `defineProps` 属性协议（`propSchema.ts`）。
+  - **成品导出 (`ExportPlugin`)**：按 `category`（`'snapshot' | 'sequence'`）分组——零后端导出 **1080P 视频**（`mediarecorder-video`）、**高清 PNG 海报**（`poster-png`）、**离线 FFmpeg PNG 帧包**（`png-sequence-tar`）、无头矢量 **HD SVG**（`poster-svg`）与 **SVG 帧序列包 `.tar`**（`svg-sequence-tar`）、以及无头直出 **Node MP4**（`node-mp4`，基于 `@napi-rs/canvas` + FFmpeg），并提供 `createHttpBridgeExportPlugin` 对接本地/云端合成服务。
+- **SDK 扩展原语 (`src/sdk/`)**：提供递归可组合 DAG 内核（`workflowDag.ts`）、支持 20 个内置图标的 SVG/位图简笔画矢量化管线（`sketchPipeline.ts`）、零 `eval` 安全公式求值器（`mathExpr.ts`，支持 `sum(...)` 等级数表达式）以及零依赖 `defineProps` 属性协议（`propSchema.ts`）。
 - **声明式多幕脚本管道与 AI Agent Skill（`.penova.md` → 自动组装插件 → 视频）**：支持使用纯文本 `.penova.md` 声明各幕 `theme`、`layout`、`camera`、`hand` 与 `transition` 插件，通过 `generateScriptSpec()` 实时导出插件语法规范，并已内置 [.agents/skills/penova-animation/SKILL.md](.agents/skills/penova-animation/SKILL.md) 供 AI 直接规划分镜、生成脚本并无头导出动画产物（示例见 [docs/examples/penova-intro.penova.md](docs/examples/penova-intro.penova.md)）。
 - **内置双语体验 (`EN / 简体中文`)**：界面默认英文，顶栏菜单一键切换 `EN / 中文`，且自带 6 套中英双语教学演示预设模板；第三方插件只需提供默认 `name`，无需感知多语言字典即可自动显示。
 - **完整工作室能力与引擎/UI 严格解耦**：支持画布点击自动暂停并选中、双击节点行内快编、快捷键（`Delete`/`Backspace`、`Ctrl/Cmd+D`、`Esc`）、缩放与快捷操作浮窗、单幕循环开关、定格/视频统一导出菜单、带行号/错误高亮/快捷片段芯片的脚本编辑器、字幕（`.srt`）与配音同步、撤销/重做，以及仅在浏览器端生效的伴生 UI 扩展注册表 [src/studio/uiRegistry.ts](src/studio/uiRegistry.ts)。
@@ -112,6 +112,14 @@ const customVerticalLayout: LayoutPlugin = {
 
 layoutRegistry.register(customVerticalLayout);
 ```
+
+---
+
+## 后续规划与演进路径
+
+- **动态文字与实时读数联动**：后续评估为 `CompiledTextLineItem` 增加轻量动态更新能力，支持柱状图升降时柱顶数值实时跳动、或傅里叶叠加旁动态显示当前阶数 `N = 1 -> 5`。
+- **单节点场景停留控制与通用微动效**：支持针对单元素场景显式延长画后动态停留时长，并逐步抽离通用画后轻动效修饰（呼吸、微幅浮动、流动虚线箭头等）。
+- **工作室属性表单条件显隐优化**：利用 `propSchema` 已有 `when` 谓词按 `[node:wave]` 模式（公式 / 数据 / 预设）折叠无关字段，并补充脚本快捷插入按钮。
 
 ---
 

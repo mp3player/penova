@@ -201,15 +201,20 @@ export function renderSceneFrame(
     if (item.kind !== 'stroke') continue;
     const p = evalState.itemProgress.get(item.id) ?? 0;
     if (p <= 0) continue;
+    const animStart = item.animateStartMs ?? item.endMs;
+    const activeStroke =
+      item.animate && p >= 0.999 && evalState.tMs > animStart
+        ? item.animate(evalState.tMs - animStart)
+        : item.stroke;
     const itemAlpha = evalState.itemOpacity?.get(item.id) ?? 1;
     const strokeToDraw =
       itemAlpha < 0.999
-        ? { ...item.stroke, opacity: item.stroke.opacity * itemAlpha }
-        : item.stroke;
-    const fillHex = palette.colors[item.stroke.color] ?? palette.colors.white;
+        ? { ...activeStroke, opacity: activeStroke.opacity * itemAlpha }
+        : activeStroke;
+    const fillHex = palette.colors[activeStroke.color] ?? palette.colors.white;
     drawStrokeInteriorFill(
       ctx,
-      item.stroke,
+      activeStroke,
       fillHex,
       p,
       cardFillOpacity,

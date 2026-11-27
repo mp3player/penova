@@ -16,6 +16,7 @@ import {
 } from './nodes/sketchNodePlugin';
 import { codeNodePlugin } from './nodes/codeNodePlugin';
 import { chartNodePlugin } from './nodes/chartNodePlugin';
+import { waveNodePlugin } from './nodes/waveNodePlugin';
 import { annotateNodePlugin } from './nodes/annotateNodePlugin';
 
 import { roundedShapePlugin } from './shapes/roundedShape';
@@ -95,6 +96,7 @@ export function registerBuiltinPlugins(): void {
   sceneNodeRegistry.register(sketchNodePlugin, { override: true });
   sceneNodeRegistry.register(codeNodePlugin, { override: true });
   sceneNodeRegistry.register(chartNodePlugin, { override: true });
+  sceneNodeRegistry.register(waveNodePlugin, { override: true });
   sceneNodeRegistry.register(annotateNodePlugin, { override: true });
 
   // Register layouts

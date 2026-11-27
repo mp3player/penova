@@ -233,8 +233,14 @@ export function compileTimeline(
     const items: CompiledItem[] = [];
     const stepRects: Rect[] = [];
     let currentNodeId: string | undefined;
+    let activeNodeSyncItems: CompiledStrokeItem[] | null = null;
 
-    const pushStroke = (stroke: StrokePath, gapAfterMs = pacing.innerGapMs) => {
+    const pushStroke = (
+      stroke: StrokePath,
+      gapAfterMs = pacing.innerGapMs,
+      animate?: (elapsedMs: number) => StrokePath,
+      animateOptions?: { sync?: 'item' | 'node' }
+    ) => {
       const dur = strokeDurationMs(stroke);
       const cumTime = buildStrokeCornerTimeTable(stroke, pacing.cornerSlowdown);
       const item: CompiledStrokeItem = {
@@ -244,12 +250,16 @@ export function compileTimeline(
         endMs: itemCursor + dur,
         color: stroke.color,
         stroke,
+        ...(animate ? { animate } : {}),
         ...(cumTime ? { cumTime } : {}),
         startPoint: samplePointAlongStroke(stroke, 0),
         endPoint: samplePointAlongStroke(stroke, 1),
         stepIndex,
         nodeId: currentNodeId,
       };
+      if (animate && animateOptions?.sync === 'node' && activeNodeSyncItems) {
+        activeNodeSyncItems.push(item);
+      }
       items.push(item);
       allItems.push(item);
       itemCursor = item.endMs + gapAfterMs;
@@ -443,41 +453,60 @@ export function compileTimeline(
           if (plugin?.compile) {
             let customTextSeq = 0;
             const nodeColor = curr.node.color;
-            plugin.compile(curr, {
-              theme: scene.theme,
-              fontFamily: boardFontFamily,
-              pushStroke,
-              pushTextLine: (input) => {
-                const fontSize = input.fontSize ?? 18;
-                const weight = input.fontWeight ?? 400;
-                const lineFontFamily = input.fontFamily ?? boardFontFamily;
-                const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
-                const tItem = compileTextLineItem(
-                  input.id ?? `${curr.id}-text-${customTextSeq++}`,
-                  input.text,
-                  input.boxLeftX,
-                  input.boxWidth,
-                  input.centerY,
-                  input.align ?? 'center',
-                  input.indentPx ?? 0,
-                  lineFont,
-                  fontSize,
-                  input.color ?? nodeColor,
-                  scene.theme,
-                  itemCursor,
-                  input.msPerChar ?? (fontSize >= 20 ? 122 : 88),
-                  { lastCharSlowdown: pacing.lastCharSlowdown }
-                );
-                tItem.stepIndex = stepIndex;
-                tItem.nodeId = curr.id;
-                items.push(tItem);
-                allItems.push(tItem);
-                const defaultLineGap = isMonospaceFont(lineFontFamily)
-                  ? pacing.codeLineGapMs
-                  : pacing.innerGapMs;
-                itemCursor = tItem.endMs + (input.gapAfterMs ?? defaultLineGap);
-              },
-            });
+            const prevSyncItems = activeNodeSyncItems;
+            const nodeSyncItems: CompiledStrokeItem[] = [];
+            const startItemLen = items.length;
+            activeNodeSyncItems = nodeSyncItems;
+            try {
+              plugin.compile(curr, {
+                theme: scene.theme,
+                fontFamily: boardFontFamily,
+                pushStroke,
+                pushTextLine: (input) => {
+                  const fontSize = input.fontSize ?? 18;
+                  const weight = input.fontWeight ?? 400;
+                  const lineFontFamily = input.fontFamily ?? boardFontFamily;
+                  const lineFont = `${weight} ${fontSize}px ${lineFontFamily}`;
+                  const tItem = compileTextLineItem(
+                    input.id ?? `${curr.id}-text-${customTextSeq++}`,
+                    input.text,
+                    input.boxLeftX,
+                    input.boxWidth,
+                    input.centerY,
+                    input.align ?? 'center',
+                    input.indentPx ?? 0,
+                    lineFont,
+                    fontSize,
+                    input.color ?? nodeColor,
+                    scene.theme,
+                    itemCursor,
+                    input.msPerChar ?? (fontSize >= 20 ? 122 : 88),
+                    { lastCharSlowdown: pacing.lastCharSlowdown }
+                  );
+                  tItem.stepIndex = stepIndex;
+                  tItem.nodeId = curr.id;
+                  items.push(tItem);
+                  allItems.push(tItem);
+                  const defaultLineGap = isMonospaceFont(lineFontFamily)
+                    ? pacing.codeLineGapMs
+                    : pacing.innerGapMs;
+                  itemCursor = tItem.endMs + (input.gapAfterMs ?? defaultLineGap);
+                },
+              });
+            } finally {
+              activeNodeSyncItems = prevSyncItems;
+              if (nodeSyncItems.length > 0) {
+                let nodeEndMs = 0;
+                for (let k = startItemLen; k < items.length; k++) {
+                  if (items[k].endMs > nodeEndMs) {
+                    nodeEndMs = items[k].endMs;
+                  }
+                }
+                for (const syncItem of nodeSyncItems) {
+                  syncItem.animateStartMs = nodeEndMs;
+                }
+              }
+            }
             return;
           }
           for (const child of curr.children ?? []) {

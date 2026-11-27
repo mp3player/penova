@@ -48,7 +48,8 @@ Write a `.penova.md` file with optional project frontmatter followed by `=== sce
      - `[node:icon] Name {color, icon: <iconName>, size: 30}`
      - `[node:sketch] Name {color, icon: <iconName>, svg: "<path d...>", title: "Caption", w, h}`
      - `[node:code] Name {color, title: "file.ts", lines: "line1\\nline2", highlight: "2,4-5", highlightColor: yellow, w}`
-     - `[node:chart] Name {color, title: "Metrics", values: "20,50,100", labels: "A,B,C", highlight: 2}`
+     - `[node:chart] Name {color, title: "Metrics", values: "20,50,100", labels: "A,B,C", highlight: 2}` (or add `frames: "20,50,100 | 80,35,60", speed: 1.0` for post-draw statistical bar animation)
+     - `[node:wave] Name {color, title: "Fourier Series", fn: "sum(k, 1, 5, sin((2*k-1)*(x - 2*t)) / (2*k-1))"}` (or real-data scrolling `values: "12,18,42,38"`, or presets `type: sine|square|fourier|audio|ecg`, with optional `domain`, `yrange`, `speed`)
      - `[node:annotate] Name {style: circle|cross|highlight|underline|check, target: "Target Label or #id", label: "Callout", color: pink}` (zero-displacement overlay emphasis)
      - Built-in icon names: `browser`, `server`, `database`, `globe`, `lock`, `handshake`, `cpu`, `brain`, `spark`, `code`, `puzzle`, `user`, `document`, `rocket`, `lightbulb`, `cat`, `chart`, `gear`, `check`, `layers`
      - Generic custom plugin: `[node:<kind>] Name {color, <prop>: <val>, say: "..."}`

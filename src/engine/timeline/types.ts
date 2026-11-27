@@ -27,6 +27,8 @@ export interface CompiledStrokeItem {
   endMs: number;
   color: ChalkColor;
   stroke: StrokePath;
+  animate?: (elapsedMs: number) => StrokePath;
+  animateStartMs?: number;
   cumTime?: number[];
   startPoint: Point;
   endPoint: Point;

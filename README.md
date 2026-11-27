@@ -28,16 +28,16 @@ All six scenes below ship inside the built-in **`Penova Product Intro (6 Scenes)
 
 - **Universal `SceneNode` Composite IR**: Abstracts `text`, `shape`, `connector`, `group`, and extensible `custom` nodes uniformly to power flowcharts, mind maps, zoned concept graphs, visual widgets, long-form handwritten letters, and freeform boards.
 - **9-Registry Headless Plugin Architecture**:
-  - **Custom Scene Nodes (`SceneNodePlugin`)**: Built-in visual widgets (`icon`, `sketch`, `code`, `chart`) plus optional card `icon:` attributes, backed by pure-data `defineProps` schemas ([src/sdk/propSchema.ts](src/sdk/propSchema.ts)) for symmetric two-way Studio binding and automatic `--spec` docs.
+  - **Custom Scene Nodes (`SceneNodePlugin`)**: Built-in visual widgets (`icon`, `sketch`, `code`, `chart`, `wave`, `annotate`) plus optional card `icon:` attributes, backed by pure-data `defineProps` schemas ([src/sdk/propSchema.ts](src/sdk/propSchema.ts)) for symmetric two-way Studio binding and automatic `--spec` docs. Both `[node:wave]` (formula / real-data / preset waves) and multi-frame `[node:chart]` (`frames:`) support seamless **post-draw continuous animation**.
   - **Shapes (`ShapePlugin`)**: `rounded`, `circle`, `cloud`, `underline`, `diamond`, `divider`.
   - **Layouts (`LayoutPlugin`)**: `flow-horizontal`, `flow-vertical`, `mindmap`, `concept-graph`, `document` (Letter / Doc), `freeform`, with **obstacle-aware connector routing** (`routeObstacleAwareConnector`) across graph layouts and two-way text codecs (`graphScriptCodec`, `documentScriptCodec`).
   - **Presentations (`PresentationPlugin`)**: `chalkboard`, `whiteboard`, `blueprint`, `letter-paper`.
-  - **Glyph Stroke Providers (`GlyphProviderPlugin`)**: `stroke-order-dict` (Latin, numerals, and foundational CJK strokes, extensible via `registerStrokeOrderGlyphs`) + `ink-grid-fallback` (14×14 momentum ink-tracing for any arbitrary Unicode character).
+  - **Glyph Stroke Providers (`GlyphProviderPlugin`)**: `cjk-stroke-order` (9,500+ MakeMeAHanzi CJK stroke orders with Voronoi font partitioning & KaiTi outlines), `stroke-order-dict` (Latin, numerals, and foundational CJK strokes, extensible via `registerStrokeOrderGlyphs`), and `ink-grid-fallback` (14×14 momentum ink-tracing for any arbitrary Unicode character).
   - **Hand Gestures (`HandPlugin`)**: `hand-chalk`, `hand-minimal`, `tip-only`, `hidden`, plus `createImageHandPlugin` to plug in real hand PNGs in 5 lines.
   - **Camera Directors (`CameraPlugin`)**: `auto-follow`, `progressive-fit`, `static-overview`, `pen-follow` (scrolling chase camera for long letters).
   - **Scene Transitions (`TransitionPlugin`)**: `chalkboard-eraser`, `page-turn`, `crossfade`, `cut`.
-  - **Exporters (`ExportPlugin`)**: Grouped by `category` (`'snapshot' | 'sequence'`)—zero-backend **1080P Video** (`mediarecorder-video`), **HD Poster PNG** (`poster-png`), **Offline FFmpeg PNG Tar** (`png-sequence-tar`), and headless vector **HD SVG** (`poster-svg`) & **SVG Frame Sequence `.tar`** (`svg-sequence-tar`), plus `createHttpBridgeExportPlugin` for custom render servers.
-- **SDK Extension Primitives (`src/sdk/`)**: Ships a recursive composable DAG kernel (`workflowDag.ts`), an SVG/bitmap sketch-to-stroke pipeline with 20 built-in icons (`sketchPipeline.ts`), and the zero-dependency `defineProps` property schema (`propSchema.ts`).
+  - **Exporters (`ExportPlugin`)**: Grouped by `category` (`'snapshot' | 'sequence'`)—zero-backend **1080P Video** (`mediarecorder-video`), **HD Poster PNG** (`poster-png`), **Offline FFmpeg PNG Tar** (`png-sequence-tar`), headless vector **HD SVG** (`poster-svg`) & **SVG Frame Sequence `.tar`** (`svg-sequence-tar`), headless **Node MP4** (`node-mp4` via `@napi-rs/canvas` + FFmpeg), plus `createHttpBridgeExportPlugin` for custom render servers.
+- **SDK Extension Primitives (`src/sdk/`)**: Ships a recursive composable DAG kernel (`workflowDag.ts`), an SVG/bitmap sketch-to-stroke pipeline with 20 built-in icons (`sketchPipeline.ts`), a safe zero-`eval` formula parser supporting `sum(...)` (`mathExpr.ts`), and the zero-dependency `defineProps` property schema (`propSchema.ts`).
 - **Declarative `.penova.md` Text-to-Video Pipeline & Agent Skill**: Author multi-scene boards as pure Markdown/script text declaring `theme`, `layout`, `camera`, `hand`, and `transition` plugins (`parseProjectScript` / `serializeProjectScript`), inspect live grammar rules via `generateScriptSpec()`, or equip AI agents directly via the workspace skill at [.agents/skills/penova-animation/SKILL.md](.agents/skills/penova-animation/SKILL.md) (with [docs/examples/penova-intro.penova.md](docs/examples/penova-intro.penova.md)).
 - **Built-in Bilingual Studio (`EN / 简体中文`)**: Ships with an instant `EN / 中文` switcher in the top bar menu and 6 bilingual showcase presets; third-party plugins automatically fall back to their own `name` without needing i18n keys.
 - **Full Studio Workflow & Strict Engine/UI Separation**: Direct canvas click-to-pause & select, double-click inline quick-editing, keyboard shortcuts (`Delete`/`Backspace`, `Ctrl/Cmd+D`, `Esc`), zoom/quick-action HUD, single-scene loop toggle, unified Snapshot & Video `Export` popover, scroll-synced line-numbered script editor with warning highlights & snippet chips, auto subtitles (`.srt`), audio sync, Undo/Redo, and browser-only companion UI customization via [src/studio/uiRegistry.ts](src/studio/uiRegistry.ts).
@@ -114,6 +114,14 @@ const customVerticalLayout: LayoutPlugin = {
 
 layoutRegistry.register(customVerticalLayout);
 ```
+
+---
+
+## Roadmap & Future Directions
+
+- **Dynamic Text & Live Readouts**: Extend post-draw reactive evaluation to `CompiledTextLineItem` (e.g., live numeric readouts tracking animated chart bars or harmonic order labels `N = 1 -> 5`).
+- **Scene-Level Hold & Universal Motion Modifiers**: Dedicated scene hold duration for single-widget animations, plus composable subtle post-draw motion modifiers (breathe, gentle float, flowing dashed connectors).
+- **Conditional Studio Inspector UX**: Mode-aware `when` visibility predicates for `[node:wave]` fields (`fn` / `values` / preset parameters) and a quick-insert script chip.
 
 ---
 

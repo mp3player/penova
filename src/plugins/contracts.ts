@@ -513,7 +513,12 @@ export interface SceneNodeTextLineInput {
 export interface SceneNodeCompileHelpers {
   theme: ThemeId;
   fontFamily: string;
-  pushStroke(stroke: StrokePath, gapAfterMs?: number): void;
+  pushStroke(
+    stroke: StrokePath,
+    gapAfterMs?: number,
+    animate?: (elapsedMs: number) => StrokePath,
+    animateOptions?: { sync?: 'item' | 'node' }
+  ): void;
   pushTextLine(input: SceneNodeTextLineInput): void;
 }
 

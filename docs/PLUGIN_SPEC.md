@@ -31,10 +31,11 @@ All public contracts and registries are exported from [src/plugins/index.ts](../
 
 ### 0. `SceneNodePlugin` (`sceneNodeRegistry`)
 
-Extends `SceneNode` cleanly in two modes without modifying core layout or timeline compilers (built-in visual plugins in [src/plugins/nodes/](../src/plugins/nodes/): `icon`, `sketch`, `code`, `chart`):
+Extends `SceneNode` cleanly in two modes without modifying core layout or timeline compilers (built-in visual plugins in [src/plugins/nodes/](../src/plugins/nodes/): `icon`, `sketch`, `code`, `chart`, `wave`, `annotate`):
 
 - **Composite Mode (`compose(node) => SceneNode`)**: Return a composite `group` / `text` / `shape` tree; Penova automatically measures, clips connectors, and compiles handwriting strokes.
 - **Primitive Mode (`measure(node, ctx)` + `compile(positioned, helpers)`)**: Compute custom dimensions and emit `StrokePath` strokes (`helpers.pushStroke`) or animated text lines (`helpers.pushTextLine`) directly.
+- **Post-Draw Dynamic Strokes**: `helpers.pushStroke(stroke, gapAfterMs?, animate?, { sync?: 'item' | 'node' })` accepts an optional pure callback `(elapsedMs) => StrokePath` evaluated identically across Canvas (`sceneRenderer.ts`) and headless SVG (`frameSnapshot.ts`) once drawing finishes. Passing `{ sync: 'node' }` locks all animated strokes inside a node (e.g., multi-frame `[node:chart]` bars and trend curve) to start simultaneously after the node finishes drawing (`animateStartMs`).
 - **Pure-Data Property Metadata (`propFields`)**: Declared via `defineProps(...)` ([src/sdk/propSchema.ts](../src/sdk/propSchema.ts)), keeping plugin contracts 100% free of UI vocabulary while automatically powering Studio inspector fields, symmetric two-way edits, and `[node:<id>] props:` lines in `generateScriptSpec()`.
 
 ```ts
@@ -346,6 +347,15 @@ studioNodeUiRegistry.register({
 
 - **`src/sdk/sketchPipeline.ts`**: Headless SVG path & bitmap sketch-to-stroke pipeline with 20 built-in icons, extensible via `registerSketchIcon` and observed reactively by Studio pickers via `subscribeSketchIcons` / `listSketchIcons`.
 - **`src/sdk/workflowDag.ts`**: Recursive composable DAG layout & edge-routing kernel for custom graph/pipeline plugins.
+- **`src/sdk/mathExpr.ts`**: Safe, zero-`eval` recursive-descent math expression parser and evaluator (`compileMathExpr`) supporting `x`/`t` variables, trig/clamping functions, and bounded `sum(k, start, end, expr)` expansions (with parse depth & step-budget guards) for formula-driven dynamic nodes such as `[node:wave]`.
 - **Zero-Displacement Overlay Nodes (`SceneNodePlugin.isOverlay`)**: Plugins marked `isOverlay: true` (such as built-in `[node:annotate]`) are excluded from DAG/tree/column vertex allocation, resolved post-layout against their `target` node's bounds in `computeDiagramLayout`, and kept co-focused under scene `spotlight: true` dimming.
 - **Timeline Focus Dimming (`LessonScene.spotlight`)**: Optional per-scene metadata (`spotlight: true`) dims prior unfocused items (`0.26` floor with `260ms` transition) and smoothly restores full opacity at scene outro across both Canvas and headless SVG exports.
 - **Native Mermaid Import (`src/plugins/codecs/mermaidCodec.ts`)**: `mermaidScriptCodec` and auto-detection inside `parseScriptToScene` import `flowchart`/`graph` diagrams (including `subgraph`, shapes, dashed/labeled/chained edges) directly into standard `LessonScene` nodes.
+
+---
+
+## 6. Roadmap & Future Architecture Extensions
+
+- **Reactive Text Layer (`CompiledTextLineItem`)**: Dynamic stroke hooks currently operate at the stroke layer while text glyphs remain static once written. Extending dynamic evaluation to `CompiledTextLineItem` is reserved as a future step (for live bar counters, evolving equation labels like `N = 1 -> 5`, etc.).
+- **Scene Hold & Composable Motion Modifiers**: Optional post-draw hold timing for single-widget dynamic scenes, plus reusable node/stroke motion modifiers (gentle float, pulse, flowing dashed edges).
+- **Schema-Driven Mode Filtering (`when`)**: Adding pure-data `when(values)` predicates on `[node:wave]` props to streamline the Studio Inspector per input mode (`fn` vs `values` vs presets).

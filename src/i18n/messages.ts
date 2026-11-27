@@ -535,6 +535,7 @@ export const PLUGIN_NAMES: Record<Locale, Record<string, string>> = {
     sketch: 'Hand-Drawn Sketch',
     code: 'Code Window',
     chart: 'Bar Chart',
+    wave: 'Dynamic Wave',
     // Layouts
     'flow-horizontal': 'Horizontal Flow',
     'flow-vertical': 'Vertical Flow',
@@ -587,6 +588,7 @@ export const PLUGIN_NAMES: Record<Locale, Record<string, string>> = {
     sketch: '手绘简笔画',
     code: '代码窗口',
     chart: '柱状图',
+    wave: '动态波形',
     // Layouts
     'flow-horizontal': '横向流程',
     'flow-vertical': '纵向流程',
