@@ -62,6 +62,7 @@ Write a `.penova.md` file with optional project frontmatter followed by `=== sce
 For full grammar details, escaping rules (`\|`, `\\n`, quoted strings), and custom cue blocks, read [SCRIPT_GRAMMAR.md](./references/SCRIPT_GRAMMAR.md).
 
 Use these local templates inside this skill as starting points:
+- [product-promo-showcase.penova.md](./examples/product-promo-showcase.penova.md) — high-impact 4-scene product promo blueprint (blueprints + live Fourier/data animations + RAG concept graph + KaiTi handwritten letter)
 - [lesson-explainer.penova.md](./examples/lesson-explainer.penova.md) — 4-scene multi-layout curriculum explainer
 - [freeform-and-groups.penova.md](./examples/freeform-and-groups.penova.md) — frameless typography, nested `[group]` stacks, and free arrows
 
@@ -83,14 +84,28 @@ node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=node-mp
 node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=svg-sequence-tar --fps=12
 ```
 
-### Step 4: Quality Checklist & Visual Anti-Patterns
+### Step 4: Quality Checklist, Promo Director Playbook & Anti-Patterns
+
+#### Promo & Explainer Director Playbook (How to Make Videos Feel Alive, Not Slide-Like)
+1. **Show, Don't Tell (Zero-Placeholder Rule)**:
+   - **Never** repeat empty 2-word toys across scenes (`提问 -> 验证`, `A -> B`, `Step 1 -> Step 2`), dummy bar charts (`甲 20 / 乙 40`), 2-line dummy code (`explain(topic)`), or defensive on-screen disclaimers (`示例数据 · 非性能对比`, `配置摘录，非完整脚本`).
+   - Always prove capabilities through **concrete, recognizable micro-examples** (e.g. a real 4-node RAG pipeline, a real Fourier wave `[node:wave]` with `fn: "sum(k, 1, 5, ...)"`, real multi-stage `[node:chart]` with `frames:`, crisp config snippet `[node:code]`).
+2. **Keep Penova's Tactile Identity**:
+   - Default to `hand: hand-chalk` (avoid `tip-only` everywhere), active camera tracking (`auto-follow`, `progressive-fit`, `pen-follow`), and tactile transitions (`chalkboard-eraser`, `page-turn`). Do not reduce the board to static `freeform` slides with hard `cut` transitions across every scene.
+   - Pair `spotlight: true` with `[node:annotate]` + `icon:`/`[group]` structure so each board grows organically on screen with clear visual hierarchy.
+3. **Skip Off-Topic Hand-Coded SVG Art**:
+   - Never burn effort computing hundreds of raw SVG path coordinates for unrelated illustrations (leaves, trees, buildings). Use Penova's structured boards, icons, `[node:wave]` dynamic formulas/data, `[node:chart]` dynamic frames, and `font: kaiti-stroke` / `wenkai` stroke penmanship to let the product sell itself.
+4. **Fast Visual Alignment (Anti-Thrash Workflow)**:
+   - Keep promos tight: **3–5 scenes, ~35–60s total**. Before doing multi-round internal self-audits or full TTS dubbing, render a 1-image multi-scene keyframe contact sheet and align composition & copy with the user early.
+
+#### Checklist & Hard Anti-Patterns
 
 1. Verify zero parser warnings from [render-script.ts](./scripts/render-script.ts) — no unknown colors, shapes, or plugins.
 2. Verify every connected label matches its node declaration (use `#id` whenever two nodes share a label or contain `:`, `|`, or `->`).
 3. Include `{say: "..."}` narration cues on key nodes when `subtitles: auto` is enabled so subtitles read as natural spoken sentences.
-4. Include `{pause: 800..1500}` after dense visual reveals so viewers have time to read before the camera pans away.
+4. Include `{pause: 600..1500}` after dense visual reveals (or `{pause: 1500}` on dynamic `[node:wave]`/`[node:chart]` payoffs) so viewers have time to appreciate the motion before the camera pans away.
 
 Avoid these common anti-patterns when producing multi-scene explainers or video renders:
 
-- **Do NOT lock every scene to `chalkboard` + `flow-horizontal` + `camera: static-overview`**: Vary `theme` (`chalkboard`, `blueprint`, `whiteboard`, `letter-paper`), `layout` (`mindmap`, `concept-graph`, `flow-vertical`, `freeform`, `document`), and `camera` (`auto-follow` / `progressive-fit` / `pen-follow`) across scenes so the explainer feels alive rather than 4 identical slide rows.
+- **Do NOT lock every scene to `chalkboard` + `flow-horizontal` + `camera: static-overview`** (nor `freeform` + `tip-only` + `cut`): Vary `theme` (`chalkboard`, `blueprint`, `whiteboard`, `letter-paper`), `layout` (`mindmap`, `concept-graph`, `flow-vertical`, `freeform`, `document`), and `camera` (`auto-follow` / `progressive-fit` / `pen-follow`) across scenes so the explainer feels alive rather than identical slide rows.
 - **Do NOT replace Penova's handwriting font with industrial sans-serif (e.g. `Noto Sans`) or inject static PPT header overlays**: Preserve the handwritten feel (`LXGW WenKai` / `KaiTi` / `Segoe Print`) when rasterizing SVGs to PNG/MP4, and use `subtitles: auto` + scene framing instead of pasting static slide chrome on top of the board.
