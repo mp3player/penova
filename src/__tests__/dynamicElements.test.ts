@@ -6,6 +6,7 @@ import { CompiledStrokeItem } from '../engine/timeline/types';
 import { parseProjectScript, serializeProjectScript } from '../engine/parser/projectScript';
 import { createCustomNode } from '../model/builders';
 import { isCustomSceneNode, LessonScene } from '../model/scene';
+import { fitBounds } from '../plugins/cameras/helpers';
 import { compileMathExpr } from '../sdk/mathExpr';
 
 describe('safe mathExpr parser & post-draw dynamic elements', () => {
@@ -298,5 +299,62 @@ describe('safe mathExpr parser & post-draw dynamic elements', () => {
     if (chartNode && isCustomSceneNode(chartNode)) {
       expect(chartNode.props?.frames).toBe('20,45,75,100 | 68,92,38,72');
     }
+  });
+
+  it('uses >= 140 smooth samples for progressive Fourier convergence with guide stroke and scales 1080p camera zoom cleanly', () => {
+    const scene: LessonScene = {
+      id: 'fourier-progressive-test',
+      title: 'Progressive Fourier & 1080p Framing',
+      theme: 'chalkboard',
+      layoutMode: 'flow-horizontal',
+      cameraMode: 'static-overview',
+      aspectRatio: '16:9',
+      handStyle: 'hand-chalk',
+      nodes: [
+        createCustomNode({
+          id: 'w-fourier',
+          kind: 'wave',
+          name: 'Fourier',
+          color: 'cyan',
+          props: {
+            title: 'Progressive Fourier',
+            type: 'fourier',
+            harmonics: 5,
+            freq: 1.5,
+            speed: 1.0,
+          },
+        }),
+      ],
+    };
+
+    const layout = computeDiagramLayout(scene);
+    const timeline = compileTimeline(scene, layout);
+    const refStroke = timeline.allItems.find(
+      (i): i is CompiledStrokeItem =>
+        i.kind === 'stroke' && i.id === 'w-fourier-fourier-ref'
+    );
+    const waveStroke = timeline.allItems.find(
+      (i): i is CompiledStrokeItem =>
+        i.kind === 'stroke' && i.id === 'w-fourier-wave'
+    );
+
+    expect(refStroke).toBeDefined();
+    expect(refStroke!.stroke.dashed).toBe(true);
+    expect(waveStroke).toBeDefined();
+    expect(waveStroke!.stroke.points.length).toBeGreaterThanOrEqual(141);
+
+    // Start point (theta = 0) stays anchored at zero; trough converges from -4/pi*amp toward -amp
+    const s0 = waveStroke!.animate!(0);
+    const sConv = waveStroke!.animate!(3400);
+    expect(sConv.points[0].y).toBeCloseTo(s0.points[0].y, 4);
+    const quarterIdx = Math.floor(s0.points.length * 0.08);
+    expect(sConv.points[quarterIdx].y).not.toBeCloseTo(s0.points[quarterIdx].y, 0);
+
+    // Camera framing: 960x540 keeps <= 1.35 maxZoom, 1920x1080 scales boldly past 1.55
+    const box = { x: -170, y: -108, width: 340, height: 215 };
+    const cam540 = fitBounds(box, 960, 540, 56, 0.22, 1.35);
+    const cam1080 = fitBounds(box, 1920, 1080, 56, 0.22, 1.35);
+    expect(cam540.zoom).toBeCloseTo(1.35, 3);
+    expect(cam1080.zoom).toBeGreaterThan(1.55);
   });
 });

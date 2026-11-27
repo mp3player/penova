@@ -356,7 +356,7 @@ async function main(): Promise<void> {
     process.env.PENOVA_DATA_DIR = resolve(dataDirArg.slice('--data-dir='.length));
   }
   const fpsArg = args.find((a) => a.startsWith('--fps='));
-  const defaultFps = exporterId === 'node-mp4' ? 24 : 12;
+  const defaultFps = exporterId === 'node-mp4' ? 30 : 12;
   const fps = fpsArg
     ? Math.max(1, Number(fpsArg.slice('--fps='.length)) || defaultFps)
     : defaultFps;

@@ -34,7 +34,7 @@ font: wenkai
 transition: chalkboard-eraser
 transitionDuration: 950
 ---
-[node:wave#fourier] 傅里叶叠加 {color: cyan, title: "公式驱动：傅里叶方波 (k=1..5)", fn: "sum(k, 1, 5, sin((2*k-1)*(x - 2.4*t)) / (2*k-1))", domain: "0..6.283", speed: 1.15, w: 325, h: 205, say: "更酷的是，写上数学公式，波形画完就会按公式自己实时波动。"}
+[node:wave#fourier] 傅里叶叠加 {color: cyan, title: "公式驱动：傅里叶逐阶逼近方波", type: fourier, harmonics: 5, freq: 1.5, speed: 1.0, w: 325, h: 205, say: "更酷的是，写上傅里叶级数，波形画完就会从基波逐阶叠加逼近方波。"}
 [node:wave#signal] 实时曲线 {color: green, title: "数据驱动：吞吐波动流", values: "18,28,24,52,74,60,34,46,82,92,64,30", speed: 1.25, w: 325, h: 205, say: "也可以直接传入监控指标序列，画完自动平滑滚动。"}
 [node:chart#metrics] 多期指标 {color: orange, title: "统计进化：三阶段实测对比", frames: "22,45,70,96 | 64,88,42,74 | 94,58,86,48", labels: "Q1,Q2,Q3,Q4", speed: 1.15, highlight: 3, w: 325, h: 205, pause: 1500, say: "多组统计数据画完后还会同步联动变化，趋势一目了然。"}
 #fourier -> #signal : 公式与数据双引擎

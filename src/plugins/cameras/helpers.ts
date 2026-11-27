@@ -37,8 +37,10 @@ export function fitBounds(
   const bw = Math.max(40, bounds.width);
   const bh = Math.max(40, bounds.height);
 
+  const vpScale = Math.max(1, Math.min(viewportW, viewportH) / 600);
+  const effMaxZoom = Math.min(2.0, maxZoom * vpScale);
   const rawZoom = Math.min(safeW / bw, safeH / bh);
-  const zoom = Math.max(minZoom, Math.min(maxZoom, rawZoom));
+  const zoom = Math.max(minZoom, Math.min(effMaxZoom, rawZoom));
 
   return {
     cx: bounds.x + bounds.width / 2,

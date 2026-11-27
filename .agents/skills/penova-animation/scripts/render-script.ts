@@ -5651,7 +5651,7 @@ const { waveNodePlugin } = (() => {
     samples: prop.number({
       default: 56,
       min: 16,
-      max: 120,
+      max: 240,
       step: 4,
       description: 'Horizontal curve sample count',
     }),
@@ -5702,9 +5702,51 @@ const { waveNodePlugin } = (() => {
       samples: Math.max(16, Math.round(resolved.samples)),
     };
   }
+  function smooth01(x: number): number {
+    const t = Math.max(0, Math.min(1, x));
+    return t * t * (3 - 2 * t);
+  }
+  function evalFourierProgressive(
+    u: number,
+    tSec: number,
+    freq: number,
+    harmonics: number
+  ): number {
+    const theta = u * freq * Math.PI * 2;
+    const h = Math.max(1, harmonics);
+    let fadeOut = 1;
+    let addSec = 0;
+
+    if (h >= 2) {
+      const stepDur = 0.75;
+      const addDur = (h - 1) * stepDur;
+      const holdDur = 1.4;
+      const resetDur = 0.6;
+      const period = addDur + holdDur + resetDur;
+      const ct = ((tSec % period) + period) % period;
+      if (ct <= addDur) {
+        addSec = ct / stepDur;
+      } else if (ct <= addDur + holdDur) {
+        addSec = h - 1;
+      } else {
+        addSec = h - 1;
+        fadeOut = 1 - smooth01((ct - (addDur + holdDur)) / resetDur);
+      }
+    }
+
+    let sum = 0;
+    for (let k = 1; k <= h; k++) {
+      const w = k === 1 ? 1 : smooth01(addSec - (k - 2)) * fadeOut;
+      if (w <= 1e-4) continue;
+      const n = 2 * k - 1;
+      sum += (w * Math.sin(n * theta)) / n;
+    }
+    return sum * (4 / Math.PI);
+  }
   function evalPresetWave(
     type: WavePresetType,
     u: number,
+    tSec: number,
     phase: number,
     freq: number,
     harmonics: number
@@ -5713,14 +5755,8 @@ const { waveNodePlugin } = (() => {
     switch (type) {
       case 'square':
         return Math.tanh(6 * Math.sin(baseArg));
-      case 'fourier': {
-        let sum = 0;
-        for (let k = 1; k <= harmonics; k++) {
-          const n = 2 * k - 1;
-          sum += Math.sin(n * baseArg) / n;
-        }
-        return sum * (4 / Math.PI) * 0.78;
-      }
+      case 'fourier':
+        return evalFourierProgressive(u, tSec, freq, harmonics);
       case 'audio': {
         const carrier =
           0.52 * Math.sin(u * freq * Math.PI * 4 - phase * 1.35) +
@@ -5835,9 +5871,14 @@ const { waveNodePlugin } = (() => {
       let yMax = 1.1;
       const useFormula = cfg.compiledFn !== null;
       const useData = !useFormula && cfg.dataValues.length >= 2;
+      const isFourierPreset = !useFormula && !useData && cfg.presetType === 'fourier';
+      const isMathCurve = useFormula || isFourierPreset;
 
       if (cfg.explicitYRange) {
         [yMin, yMax] = cfg.explicitYRange;
+      } else if (isFourierPreset) {
+        yMin = -1.28;
+        yMax = 1.28;
       } else if (useFormula && cfg.compiledFn) {
         let minProbe = Infinity;
         let maxProbe = -Infinity;
@@ -5929,14 +5970,37 @@ const { waveNodePlugin } = (() => {
         20
       );
 
-      // 4. Precompute deterministic per-sample micro-jitter (zero frame-to-frame flicker)
-      const sampleCount = cfg.samples;
+      // 4. Higher resolution & zero random vertex jitter for mathematical/formula precision
+      const sampleCount = isMathCurve ? Math.max(cfg.samples, 140) : cfg.samples;
+
+      if (isFourierPreset) {
+        const refPts: Point[] = [];
+        for (let i = 0; i <= sampleCount; i++) {
+          const u = i / sampleCount;
+          const sq = Math.sign(Math.sin(u * cfg.freq * Math.PI * 2)) * cfg.amp;
+          refPts.push({
+            x: plotLeft + 2 + u * (plotW - 4),
+            y: mapValueToY(sq),
+          });
+        }
+        helpers.pushStroke(
+          buildStrokePath(`${positioned.id}-fourier-ref`, refPts, {
+            width: 1.35,
+            color: 'white',
+            opacity: 0.24,
+            dashed: true,
+            speedFactor: 1.6,
+          }),
+          14
+        );
+      }
+
       const jitterRand = mulberry32(hashString(`wave-jitter:${positioned.id}`));
       const jitterX: number[] = [];
       const jitterY: number[] = [];
       for (let i = 0; i <= sampleCount; i++) {
-        jitterX.push((jitterRand() - 0.5) * 1.1);
-        jitterY.push((jitterRand() - 0.5) * 1.2);
+        jitterX.push(isMathCurve ? 0 : (jitterRand() - 0.5) * 1.1);
+        jitterY.push(isMathCurve ? 0 : (jitterRand() - 0.5) * 1.2);
       }
 
       const buildWaveStroke = (elapsedMs: number) => {
@@ -5962,7 +6026,9 @@ const { waveNodePlugin } = (() => {
             const smoothFrac = (1 - Math.cos(frac * Math.PI)) * 0.5;
             val = cfg.dataValues[i0] + (cfg.dataValues[i1] - cfg.dataValues[i0]) * smoothFrac;
           } else {
-            val = evalPresetWave(cfg.presetType, u, phase, cfg.freq, cfg.harmonics) * cfg.amp;
+            val =
+              evalPresetWave(cfg.presetType, u, tSec, phase, cfg.freq, cfg.harmonics) *
+              cfg.amp;
           }
 
           const px = plotLeft + 2 + u * (plotW - 4) + jitterX[i];
@@ -14457,8 +14523,10 @@ const { clamp01, easeInOutCubic, lerpCamera, fitBounds, findActiveStepIndex, eva
     const bw = Math.max(40, bounds.width);
     const bh = Math.max(40, bounds.height);
 
+    const vpScale = Math.max(1, Math.min(viewportW, viewportH) / 600);
+    const effMaxZoom = Math.min(2.0, maxZoom * vpScale);
     const rawZoom = Math.min(safeW / bw, safeH / bh);
-    const zoom = Math.max(minZoom, Math.min(maxZoom, rawZoom));
+    const zoom = Math.max(minZoom, Math.min(effMaxZoom, rawZoom));
 
     return {
       cx: bounds.x + bounds.width / 2,
@@ -15532,7 +15600,7 @@ const { svgSequenceTarExporterPlugin } = (() => {
 
 // --- Module: src/plugins/exporters/nodeMp4Exporter.ts ---
 const { initNodeCanvasRuntime, nodeMp4ExporterPlugin } = (() => {
-  const NODE_MP4_DEFAULT_FPS = 24;
+  const NODE_MP4_DEFAULT_FPS = 30;
   const dynamicImport = new Function('spec', 'return import(spec)') as (
     spec: string
   ) => Promise<Record<string, unknown>>;
@@ -21656,8 +21724,6 @@ const { exportScriptToVideo } = (() => {
     const defaultFps =
       exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
         ? 12
-        : exporterId === 'node-mp4'
-        ? 24
         : 30;
     const source = createSceneFrameSource(
       scene,
@@ -21678,8 +21744,6 @@ const { exportScriptToVideo } = (() => {
     const defaultFps =
       exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
         ? 12
-        : exporterId === 'node-mp4'
-        ? 24
         : 30;
     const needsRuntime =
       exporterId === 'node-mp4' && !hasOffscreenCanvasSupport();
@@ -22242,7 +22306,7 @@ async function main(): Promise<void> {
     process.env.PENOVA_DATA_DIR = resolve(dataDirArg.slice('--data-dir='.length));
   }
   const fpsArg = args.find((a) => a.startsWith('--fps='));
-  const defaultFps = exporterId === 'node-mp4' ? 24 : 12;
+  const defaultFps = exporterId === 'node-mp4' ? 30 : 12;
   const fps = fpsArg
     ? Math.max(1, Number(fpsArg.slice('--fps='.length)) || defaultFps)
     : defaultFps;

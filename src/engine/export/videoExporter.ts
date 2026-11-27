@@ -128,8 +128,6 @@ export async function exportSceneVideo(
   const defaultFps =
     exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
       ? 12
-      : exporterId === 'node-mp4'
-      ? 24
       : 30;
   const source = createSceneFrameSource(
     scene,
@@ -151,8 +149,6 @@ export async function exportProjectVideo(
   const defaultFps =
     exporterId === 'png-sequence-tar' || exporterId === 'svg-sequence-tar'
       ? 12
-      : exporterId === 'node-mp4'
-      ? 24
       : 30;
   const needsRuntime =
     exporterId === 'node-mp4' && !hasOffscreenCanvasSupport();

@@ -6,7 +6,7 @@ import {
 import { ensureCjkStrokeDataLoaded } from '../glyphs/cjkStrokeData';
 import { safeFilename, throwIfAborted, waitMs } from './helpers';
 
-const NODE_MP4_DEFAULT_FPS = 24;
+const NODE_MP4_DEFAULT_FPS = 30;
 const dynamicImport = new Function('spec', 'return import(spec)') as (
   spec: string
 ) => Promise<Record<string, unknown>>;

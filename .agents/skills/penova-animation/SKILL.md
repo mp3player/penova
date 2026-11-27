@@ -78,7 +78,7 @@ node ./scripts/render-script.ts --spec
 node ./scripts/render-script.ts path/to/story.penova.md ./out
 
 # 3. Export MP4 directly without SVG or browser (requires @napi-rs/canvas + ffmpeg)
-node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=node-mp4 --fps=24
+node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=node-mp4 --fps=30
 
 # 4. Export platform-agnostic SVG animation frames (.tar) when zero-dependency vector output is desired
 node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=svg-sequence-tar --fps=12
@@ -87,16 +87,20 @@ node ./scripts/render-script.ts path/to/story.penova.md ./out --exporter=svg-seq
 ### Step 4: Quality Checklist, Promo Director Playbook & Anti-Patterns
 
 #### Promo & Explainer Director Playbook (How to Make Videos Feel Alive, Not Slide-Like)
-1. **Show, Don't Tell (Zero-Placeholder Rule)**:
+1. **Product Protagonist Rule & Core Identity (CRITICAL)**:
+   - When making a **product promo** (e.g., for Penova), **the product MUST remain the protagonist from second 0 onward**. Never spend 80% of the video teaching an unrelated domain lesson (e.g. a 50-second Redis cache or SQL tutorial) and only mention Penova in the final 10 seconds!
+   - Any concrete technical example (code snippet, Fourier wave, RAG diagram, metrics chart) is a **5–8s proof beat** demonstrating *"write script -> Penova draws & animates it"*, NOT a standalone CS lecture.
+   - **Never undersell Penova as "just 4 themes"**: Built-in themes, layouts, hands, and widgets are only the starting point — Penova's real soul is its **9-registry headless customizable engine** (`Presentation`, `Layout`, `Shape`, `SceneNode`, `GlyphProvider`, `Hand`, `Camera`, `Transition`, `Export`). Explicitly highlight full-stack customizability (e.g., registering bespoke dynamic nodes via `sceneNodeRegistry.register(...)`, custom brushes/layouts/exporters).
+2. **Show, Don't Tell (Zero-Placeholder Rule)**:
    - **Never** repeat empty 2-word toys across scenes (`提问 -> 验证`, `A -> B`, `Step 1 -> Step 2`), dummy bar charts (`甲 20 / 乙 40`), 2-line dummy code (`explain(topic)`), or defensive on-screen disclaimers (`示例数据 · 非性能对比`, `配置摘录，非完整脚本`).
-   - Always prove capabilities through **concrete, recognizable micro-examples** (e.g. a real 4-node RAG pipeline, a real Fourier wave `[node:wave]` with `fn: "sum(k, 1, 5, ...)"`, real multi-stage `[node:chart]` with `frames:`, crisp config snippet `[node:code]`).
-2. **Keep Penova's Tactile Identity**:
+   - Always prove capabilities through **concrete, recognizable micro-examples** (e.g. `[node:wave]` with `type: fourier, harmonics: 5, freq: 1.5` for progressive Fourier convergence with ideal square-wave guide, or smooth `fn:` with `x`/`t`, `[node:chart]` with `frames:`, or a crisp 4-node architecture flow).
+3. **Keep Penova's Tactile Identity, Clean Annotations & Audio**:
    - Default to `hand: hand-chalk` (avoid `tip-only` everywhere), active camera tracking (`auto-follow`, `progressive-fit`, `pen-follow`), and tactile transitions (`chalkboard-eraser`, `page-turn`). Do not reduce the board to static `freeform` slides with hard `cut` transitions across every scene.
-   - Pair `spotlight: true` with `[node:annotate]` + `icon:`/`[group]` structure so each board grows organically on screen with clear visual hierarchy.
-3. **Skip Off-Topic Hand-Coded SVG Art**:
+   - Pair `spotlight: true` with `[node:annotate]` + `icon:`/`[group]` structure so each board grows organically on screen with clear visual hierarchy. When annotating wide `[node:chart]` or `[node:wave]` widgets, prefer `style: underline` (or `style: circle, pad: 22`) so the ellipse clears bottom axis labels. When TTS voiceover tools are available, synthesize & mux spoken narration rather than shipping a 60s silent video.
+4. **Skip Off-Topic Hand-Coded SVG Art**:
    - Never burn effort computing hundreds of raw SVG path coordinates for unrelated illustrations (leaves, trees, buildings). Use Penova's structured boards, icons, `[node:wave]` dynamic formulas/data, `[node:chart]` dynamic frames, and `font: kaiti-stroke` / `wenkai` stroke penmanship to let the product sell itself.
-4. **Fast Visual Alignment (Anti-Thrash Workflow)**:
-   - Keep promos tight: **3–5 scenes, ~35–60s total**. Before doing multi-round internal self-audits or full TTS dubbing, render a 1-image multi-scene keyframe contact sheet and align composition & copy with the user early.
+5. **Fast Visual Alignment (Anti-Thrash Workflow)**:
+   - Keep promos tight: **3–5 scenes, ~35–60s total**, exported at **`--fps=30`** for smooth motion. Before doing multi-round internal self-audits or full TTS dubbing, render a 1-image multi-scene keyframe contact sheet and align composition & copy with the user early.
 
 #### Checklist & Hard Anti-Patterns
 
